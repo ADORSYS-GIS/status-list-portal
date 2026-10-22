@@ -16,7 +16,7 @@ docker compose up -d    # Postgres
 cargo run               # http://localhost:8080
 ```
 
-Signing in needs a [GitHub OAuth app](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) with the callback URL `http://localhost:8080/api/v1/session/github/callback`. Put its client ID and secret in `.env`, next to a session key.
+Signing in needs a [GitHub OAuth app](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) with the callback URL `http://localhost:8080/api/v1/session/github/callback`. Put its client ID and secret in `.env`, next to a session key. The portal also signs its calls to the server's [admin API](https://github.com/adorsys/status-list-server/blob/develop/docs/openapi-admin.yaml) with a key of its own; `.env.template` shows how to make one.
 
 ## Test
 

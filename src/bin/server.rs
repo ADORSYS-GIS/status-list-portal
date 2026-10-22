@@ -2,6 +2,7 @@
 
 use anyhow::Context;
 use secrecy::ExposeSecret;
+use status_list_portal::admin_api::AdminApi;
 use status_list_portal::config::Config;
 use status_list_portal::github::GitHub;
 use status_list_portal::{ServerContext, ServerContextInner, build_handler, db, util};
@@ -19,9 +20,15 @@ async fn main() -> anyhow::Result<()> {
     db::run_migrations(config.database.url.expose_secret()).await?;
     let db = db::pool(&config.database)?;
     let github = GitHub::new(&config.github, &config.server.origin)?;
+    let admin_api = AdminApi::new(&config.admin_api)?;
 
     let bind_address = config.server.bind_address;
-    let ctx = ServerContext::new(ServerContextInner { config, db, github });
+    let ctx = ServerContext::new(ServerContextInner {
+        config,
+        db,
+        github,
+        admin_api,
+    });
 
     let terminate = terminate_signal()?;
     let listener = TcpListener::bind(bind_address)

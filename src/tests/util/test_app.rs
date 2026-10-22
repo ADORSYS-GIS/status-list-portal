@@ -10,6 +10,7 @@ use axum_extra::extract::cookie::Cookie;
 use diesel_async::AsyncPgConnection;
 use http::header::SET_COOKIE;
 use secrecy::SecretString;
+use status_list_portal::admin_api::{AdminApi, SigningAlgorithm};
 use status_list_portal::auth::Session;
 use status_list_portal::config::{self, Config, PublicOrigin, SessionKey};
 use status_list_portal::github::GitHub;
@@ -26,6 +27,14 @@ pub const ORIGIN: &str = "https://portal.example.com";
 
 /// Nothing listens on port 1, so connections are refused at once.
 const UNREACHABLE_DATABASE_URL: &str = "postgres://portal@127.0.0.1:1/portal";
+/// What the app signs its admin tokens as, and with.
+pub const ADMIN_PRINCIPAL: &str = "portal";
+pub const ADMIN_AUDIENCE: &str = "test-admin-audience";
+pub const ADMIN_KEY_ID: &str = "test-admin-key";
+pub const ADMIN_SIGNING_KEY_FILE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/test_data/admin-keys/es256.pem"
+);
 
 static NEXT_GH_ID: AtomicI64 = AtomicI64::new(1);
 
@@ -33,6 +42,9 @@ struct TestAppInner {
     router: Router,
     /// Stands in for GitHub's sign-in pages and API.
     github: MockServer,
+    /// Stands in for the Status List Server's admin API.
+    admin_api: MockServer,
+    ctx: ServerContext,
     session_key: SessionKey,
     db: Option<TestDatabase>,
 }
@@ -55,6 +67,15 @@ impl TestApp {
 
     pub fn github(&self) -> &MockServer {
         &self.0.github
+    }
+
+    pub fn admin_api(&self) -> &MockServer {
+        &self.0.admin_api
+    }
+
+    /// The state the app's handlers share, such as its admin API client.
+    pub fn ctx(&self) -> &ServerContext {
+        &self.0.ctx
     }
 
     pub async fn db_conn(&self) -> AsyncPgConnection {
@@ -128,20 +149,32 @@ impl TestAppBuilder {
         };
         let github = MockServer::start().await;
         let github_url = Url::parse(&github.uri()).expect("the mock server has a valid URL");
+        let admin_api = MockServer::start().await;
+        let admin_api_url = Url::parse(&admin_api.uri()).expect("the mock server has a valid URL");
         let session_key = SessionKey::generate();
 
-        let config = simple_config(database_url, &github_url, session_key.clone());
+        let config = simple_config(
+            database_url,
+            &github_url,
+            admin_api_url,
+            session_key.clone(),
+        );
         let db = db::pool(&config.database).expect("failed to build the database pool");
         let github_client = GitHub::new(&config.github, &config.server.origin)
             .expect("failed to build the GitHub client");
+        let admin_api_client =
+            AdminApi::new(&config.admin_api).expect("failed to build the admin API client");
         let ctx = ServerContext::new(ServerContextInner {
             config,
             db,
             github: github_client,
+            admin_api: admin_api_client,
         });
         let app = TestApp(Arc::new(TestAppInner {
-            router: build_handler(ctx),
+            router: build_handler(ctx.clone()),
             github,
+            admin_api,
+            ctx,
             session_key,
             db: test_db,
         }));
@@ -150,7 +183,12 @@ impl TestAppBuilder {
     }
 }
 
-fn simple_config(database_url: String, github_url: &Url, session_key: SessionKey) -> Config {
+fn simple_config(
+    database_url: String,
+    github_url: &Url,
+    admin_api_url: Url,
+    session_key: SessionKey,
+) -> Config {
     Config {
         env: Env::Test,
         log_format: LogFormat::Text,
@@ -168,6 +206,14 @@ fn simple_config(database_url: String, github_url: &Url, session_key: SessionKey
             client_secret: SecretString::from("test-client-secret"),
             web_url: github_url.clone(),
             api_url: github_url.clone(),
+        },
+        admin_api: config::AdminApi {
+            url: admin_api_url,
+            principal: ADMIN_PRINCIPAL.to_string(),
+            audience: ADMIN_AUDIENCE.to_string(),
+            signing_key_file: ADMIN_SIGNING_KEY_FILE.into(),
+            key_id: ADMIN_KEY_ID.to_string(),
+            algorithm: SigningAlgorithm::Es256,
         },
     }
 }

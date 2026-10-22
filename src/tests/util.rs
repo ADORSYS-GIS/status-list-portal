@@ -1,7 +1,9 @@
 mod test_app;
 mod test_db;
 
-pub use test_app::{ORIGIN, TestApp};
+pub use test_app::{
+    ADMIN_AUDIENCE, ADMIN_KEY_ID, ADMIN_PRINCIPAL, ADMIN_SIGNING_KEY_FILE, ORIGIN, TestApp,
+};
 pub use test_db::TestDatabase;
 
 use axum::body::{Body, Bytes};

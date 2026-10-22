@@ -4,6 +4,7 @@
 //! Status List Server's admin API on their behalf. Routes are declared in the `router`
 //! module and implemented in [`controllers`].
 
+pub mod admin_api;
 pub mod auth;
 pub mod config;
 pub mod controllers;
