@@ -29,6 +29,7 @@ path = "src/tests/mod.rs"
 [dependencies]
 anyhow = "1.0"
 axum = { version = "0.8", features = ["macros"] }
+axum-extra = { version = "0.12", features = ["cookie-private"] }
 config = { version = "0.15", default-features = false }
 deadpool = { version = "0.13", default-features = false, features = ["managed", "rt_tokio_1"] }
 derive_more = { version = "2.1", features = ["deref", "display"] }
@@ -36,16 +37,22 @@ diesel = { version = "2.3", features = ["postgres_backend", "time"] }
 diesel-async = { version = "0.9", features = ["deadpool", "migrations", "postgres"] }
 diesel_migrations = "2.3"
 dotenvy = "0.15"
+hex = "0.4"
 http = "1.5"
+oauth2 = "5.0"
+# Held at 0.12, the version oauth2 5.0 is built on, so the build has a single reqwest.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+thiserror = "2.0"
 time = "0.3"
 tokio = { version = "1.54", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 tower = "0.5"
 tower-http = { version = "0.7", features = ["catch-panic", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+url = "2.5"
 utoipa = "6.0"
 utoipa-axum = "0.3"
 
@@ -53,7 +60,7 @@ utoipa-axum = "0.3"
 insta = { version = "1.49", features = ["json"] }
 tokio = { version = "1.54", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
-url = "2.5"
+wiremock = "0.6"
 
 [profile.dev]
 opt-level = 1

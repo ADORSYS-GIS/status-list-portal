@@ -11,5 +11,6 @@ diesel::table! {
         name -> Nullable<Varchar>,
         email -> Varchar,
         created_at -> Timestamptz,
+        session_epoch -> Int4,
     }
 }

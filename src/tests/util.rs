@@ -1,12 +1,14 @@
 mod test_app;
 mod test_db;
 
-pub use test_app::TestApp;
+pub use test_app::{ORIGIN, TestApp};
 pub use test_db::TestDatabase;
 
 use axum::body::{Body, Bytes};
-use http::header::AsHeaderName;
+use axum_extra::extract::cookie::Cookie;
+use http::header::{AsHeaderName, COOKIE, SET_COOKIE};
 use http::{HeaderMap, Method, Request, StatusCode};
+use status_list_portal::models::User;
 use tower::ServiceExt;
 
 /// A response with its body read.
@@ -23,6 +25,16 @@ impl Response {
 
     pub fn header(&self, name: impl AsHeaderName) -> Option<&str> {
         self.headers.get(name).and_then(|value| value.to_str().ok())
+    }
+
+    /// The cookie the response sets under `name`, if any.
+    pub fn cookie(&self, name: &str) -> Option<Cookie<'static>> {
+        self.headers
+            .get_all(SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .filter_map(|value| Cookie::parse(value.to_owned()).ok())
+            .find(|cookie| cookie.name() == name)
     }
 
     #[track_caller]
@@ -66,6 +78,14 @@ pub trait RequestHelper {
             .expect("invalid request");
         self.run(request).await
     }
+
+    async fn delete(&self, path: &str) -> Response {
+        let request = self
+            .request_builder(Method::DELETE, path)
+            .body(Body::empty())
+            .expect("invalid request");
+        self.run(request).await
+    }
 }
 
 /// A user who is not signed in.
@@ -76,5 +96,32 @@ pub struct MockAnonymousUser {
 impl RequestHelper for MockAnonymousUser {
     fn app(&self) -> &TestApp {
         &self.app
+    }
+}
+
+/// A signed-in user.
+pub struct MockCookieUser {
+    app: TestApp,
+    user: User,
+    /// `Cookie` header that carries the user's session.
+    cookie: String,
+}
+
+impl MockCookieUser {
+    pub fn user(&self) -> &User {
+        &self.user
+    }
+}
+
+impl RequestHelper for MockCookieUser {
+    fn app(&self) -> &TestApp {
+        &self.app
+    }
+
+    fn request_builder(&self, method: Method, path: &str) -> http::request::Builder {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(COOKIE, &self.cookie)
     }
 }

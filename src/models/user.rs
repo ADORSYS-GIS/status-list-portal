@@ -17,6 +17,8 @@ pub struct User {
     /// Verified primary email. Signing in needs one.
     pub email: String,
     pub created_at: OffsetDateTime,
+    /// Copied into every session cookie; a cookie with another value is void.
+    pub session_epoch: i32,
 }
 
 impl User {
@@ -25,6 +27,19 @@ impl User {
             .find(id)
             .select(User::as_select())
             .first(conn)
+            .await
+    }
+
+    /// Ends every session of the account, if `epoch` is still current. A stale epoch
+    /// changes nothing, so an old cookie cannot sign anyone out.
+    pub async fn end_sessions(
+        conn: &mut AsyncPgConnection,
+        id: i64,
+        epoch: i32,
+    ) -> QueryResult<usize> {
+        diesel::update(users::table.find(id).filter(users::session_epoch.eq(epoch)))
+            .set(users::session_epoch.eq(users::session_epoch + 1))
+            .execute(conn)
             .await
     }
 }
