@@ -43,10 +43,22 @@ const MIGRATION_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 /// Key of the advisory lock held while migrations run: "portal" in ASCII. Nothing else in
 /// the database may use it.
 const MIGRATION_LOCK_KEY: i64 = 0x706f_7274_616c;
+/// Key of the advisory lock held while an issuer takes a place within the sandbox limits:
+/// "issuer" in ASCII.
+const ISSUER_LIMITS_LOCK_KEY: i64 = 0x6973_7375_6572;
 
 #[diesel::declare_sql_function]
 extern "SQL" {
     fn pg_try_advisory_lock(key: BigInt) -> Bool;
+    fn pg_try_advisory_xact_lock(key: BigInt) -> Bool;
+}
+
+/// Takes the sandbox limits lock until the transaction ends, unless another transaction
+/// holds it. Whoever holds it is the only one adding an active issuer, on every replica.
+pub async fn try_lock_issuer_limits(conn: &mut AsyncPgConnection) -> QueryResult<bool> {
+    diesel::select(pg_try_advisory_xact_lock(ISSUER_LIMITS_LOCK_KEY))
+        .get_result(conn)
+        .await
 }
 
 /// Builds the pool. Connections are opened on first use, not here.

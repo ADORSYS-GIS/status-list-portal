@@ -17,7 +17,7 @@ pub use issuer::{
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
-use derive_more::Display;
+use derive_more::{Deref, Display};
 use http::StatusCode;
 use http::header::{ETAG, IF_MATCH};
 use reqwest::{RequestBuilder, Response};
@@ -36,6 +36,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 /// The contract's `maxLength` for an issuer id. A longer one cannot exist.
 const ISSUER_ID_MAX_CHARS: usize = 255;
+/// The most issuers the admin API returns in one page.
+const MAX_PAGE_SIZE: u8 = 100;
 
 /// Client of the admin API, signed in as the portal's admin principal.
 pub struct AdminApi {
@@ -49,6 +51,21 @@ pub struct AdminApi {
 pub struct OwnedIssuers<'a> {
     api: &'a AdminApi,
     owner: &'a Owner,
+}
+
+/// One of the account's issuers, as read at one version. A change applies to that version
+/// only, and fails with [`ErrorCode::PreconditionFailed`] if the issuer changed since.
+#[derive(Debug, Clone, PartialEq, Eq, Deref)]
+pub struct OwnedIssuer {
+    #[deref]
+    issuer: Issuer,
+    etag: ETag,
+}
+
+impl OwnedIssuer {
+    pub fn into_issuer(self) -> Issuer {
+        self.issuer
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -153,6 +170,28 @@ impl AdminApi {
         json(self.send(request).await?).await
     }
 
+    /// How many issuers match `query`, whoever owns them. Stops reading pages once it has
+    /// counted `at_most`.
+    pub async fn count_issuers(
+        &self,
+        query: &IssuerQuery,
+        at_most: usize,
+    ) -> Result<usize, AdminApiError> {
+        let mut query = IssuerQuery {
+            limit: Some(MAX_PAGE_SIZE),
+            ..query.clone()
+        };
+        let mut count = 0;
+        loop {
+            let page = self.list_issuers(&query).await?;
+            count += page.issuers.len();
+            match page.next_cursor {
+                Some(cursor) if count < at_most => query.cursor = Some(cursor),
+                _ => return Ok(count),
+            }
+        }
+    }
+
     async fn create_issuer(
         &self,
         request: &CreateIssuerRequest<'_>,
@@ -249,32 +288,38 @@ impl OwnedIssuers<'_> {
             issuer,
             owner: self.owner,
         };
-        self.api.create_issuer(&request).await
+        let created = self.api.create_issuer(&request).await?;
+        if !self.owns(&created) {
+            return Err(AdminApiError::Unexpected(
+                "an issuer created for another owner".to_string(),
+            ));
+        }
+        Ok(created)
     }
 
     /// `None` when the account owns no issuer with this id.
-    pub async fn get(&self, id: &str) -> Result<Option<Issuer>, AdminApiError> {
-        let issuer = self.get_with_etag(id).await?;
-        Ok(issuer.map(|(issuer, _)| issuer))
+    pub async fn get(&self, id: &str) -> Result<Option<OwnedIssuer>, AdminApiError> {
+        let found = self.api.get_issuer(id).await?;
+        Ok(found
+            .filter(|(issuer, _)| self.owns(issuer))
+            .map(|(issuer, etag)| OwnedIssuer { issuer, etag }))
     }
 
-    /// Changes the issuer. `None` when the account owns no issuer with this id.
+    /// Applies `change` to the version of the issuer that `current` holds. `None` when the
+    /// account does not own it, or it is gone.
     pub async fn update(
         &self,
-        id: &str,
+        current: &OwnedIssuer,
         change: &IssuerChange,
     ) -> Result<Option<Issuer>, AdminApiError> {
-        let Some((_, etag)) = self.get_with_etag(id).await? else {
+        if !self.owns(current) {
             return Ok(None);
-        };
-        // The ETag pins the change to the version whose owner was just checked.
-        let issuer = self.api.update_issuer(id, &etag, change).await?;
-        Ok(issuer.map(|(issuer, _)| issuer))
-    }
-
-    async fn get_with_etag(&self, id: &str) -> Result<Option<(Issuer, ETag)>, AdminApiError> {
-        let issuer = self.api.get_issuer(id).await?;
-        Ok(issuer.filter(|(issuer, _)| self.owns(issuer)))
+        }
+        let updated = self
+            .api
+            .update_issuer(&current.id, &current.etag, change)
+            .await?;
+        Ok(updated.map(|(issuer, _)| issuer))
     }
 
     fn owns(&self, issuer: &Issuer) -> bool {

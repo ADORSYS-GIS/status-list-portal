@@ -14,3 +14,16 @@ diesel::table! {
         session_epoch -> Int4,
     }
 }
+
+diesel::table! {
+    terms_acceptances (user_id, terms_version) {
+        user_id -> Int8,
+        terms_version -> Varchar,
+        email -> Varchar,
+        accepted_at -> Timestamptz,
+    }
+}
+
+diesel::joinable!(terms_acceptances -> users (user_id));
+
+diesel::allow_tables_to_appear_in_same_query!(terms_acceptances, users);

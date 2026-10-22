@@ -70,10 +70,9 @@ impl From<AdminApiError> for BoxedAppError {
                 StatusCode::CONFLICT,
                 "This public key is already registered.",
             ),
-            Some(ErrorCode::InvalidPublicJwk | ErrorCode::UnsupportedAlgorithm) => custom(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "The Status List Server does not accept this public key.",
-            ),
+            Some(ErrorCode::InvalidPublicJwk | ErrorCode::UnsupportedAlgorithm) => {
+                unprocessable("The Status List Server does not accept this public key.")
+            }
             Some(ErrorCode::PreconditionFailed) => custom(
                 StatusCode::CONFLICT,
                 "The issuer changed while this request ran. Please try again.",
@@ -114,6 +113,11 @@ pub fn bad_gateway(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
 
 pub fn forbidden(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
     custom(StatusCode::FORBIDDEN, detail)
+}
+
+/// The request is well-formed but its content cannot be accepted.
+pub fn unprocessable(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
+    custom(StatusCode::UNPROCESSABLE_ENTITY, detail)
 }
 
 pub fn not_found() -> BoxedAppError {

@@ -6,6 +6,7 @@
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use utoipa::ToSchema;
 
 /// Where an issuer comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +26,7 @@ pub enum IssuerTier {
 }
 
 /// Only `active` issuers can write status lists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum IssuerState {
     Active,
@@ -34,7 +35,7 @@ pub enum IssuerState {
 }
 
 /// The JWS algorithms the server accepts, for issuer keys and admin keys alike.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, ToSchema)]
 pub enum SigningAlgorithm {
     #[serde(rename = "ES256")]
     #[display("ES256")]
@@ -128,7 +129,7 @@ pub struct Issuer {
     pub usage: IssuerUsage,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum KeyState {
     Active,

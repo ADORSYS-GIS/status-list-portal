@@ -169,7 +169,12 @@ async fn coming_back_from_github_signs_the_user_in() {
     let me = get_with_cookie(&anon, "/api/v1/me", &cookie).await;
     assert_eq!(
         me.json(),
-        json!({ "login": "octocat", "name": "The Octocat", "email": "octocat@example.com" })
+        json!({
+            "login": "octocat",
+            "name": "The Octocat",
+            "email": "octocat@example.com",
+            "terms_accepted": false,
+        })
     );
 }
 

@@ -31,7 +31,12 @@ async fn signed_in_users_see_their_account() {
     assert_snapshot!(response.status(), @"200 OK");
     assert_eq!(
         response.json(),
-        json!({ "login": "octocat", "name": null, "email": "octocat@example.com" })
+        json!({
+            "login": "octocat",
+            "name": null,
+            "email": "octocat@example.com",
+            "terms_accepted": false,
+        })
     );
 }
 

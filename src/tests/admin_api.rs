@@ -5,91 +5,34 @@ use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Validation, decode, decode_header};
 use serde_json::{Value, json};
 use status_list_portal::admin_api::{
-    AdminApi, AdminApiError, ErrorCode, IssuerChange, IssuerSource, IssuerState, IssuerTier,
-    KeyState, NewIssuer, Owner, RequestedState, SigningAlgorithm,
+    AdminApi, AdminApiError, ErrorCode, IssuerChange, IssuerQuery, IssuerSource, IssuerState,
+    IssuerTier, KeyState, NewIssuer, Owner, RequestedState, SigningAlgorithm,
 };
 use status_list_portal::config;
 use status_list_portal::util::errors::BoxedAppError;
 use time::OffsetDateTime;
 use tokio::net::TcpListener;
 use url::Url;
-use wiremock::matchers::{any, body_json, header, method, path};
+use wiremock::matchers::{
+    any, body_json, header, method, path, query_param, query_param_is_missing,
+};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use crate::util::admin_api::{
+    EXPIRES_AT, ISSUER_ID, admin_api_holds, issuer_json, issuer_response, public_jwk_json,
+    static_issuer_json,
+};
 use crate::util::{ADMIN_AUDIENCE, ADMIN_KEY_ID, ADMIN_PRINCIPAL, ADMIN_SIGNING_KEY_FILE, TestApp};
 
-const ISSUER_ID: &str = "6f1c2a9e-0b7d-4c1e-9a53-2f8d7e4b1c00";
 const ISSUER_PATH: &str = "/admin/v1/issuers/6f1c2a9e-0b7d-4c1e-9a53-2f8d7e4b1c00";
 const GH_ID: i64 = 5821374;
-const EXPIRES_AT: i64 = 1_792_592_000;
 
 fn octocat() -> Owner {
     Owner::github(GH_ID)
 }
 
-fn public_jwk_json() -> Value {
-    json!({
-        "kty": "EC",
-        "crv": "P-256",
-        "x": "GtkCNIXEFHQ8j_gwyoS0H9eZQGCI_Iaqm2wUymJvOfQ",
-        "y": "D9yk2oGE-yZjX50UqD1j68vpRbEhM-WyuhAWrEPAcyI",
-    })
-}
-
-/// A sandbox issuer that the GitHub account `gh_id` registered through the portal.
-fn issuer_json(gh_id: i64) -> Value {
-    json!({
-        "id": ISSUER_ID,
-        "aggregation_id": "0b8ef1c4-3c6a-4d2e-9f1a-5b7c9d2e4f60",
-        "display_name": "Acme Wallet Issuer",
-        "source": "portal",
-        "tier": "sandbox",
-        "state": "active",
-        "owner": format!("github|{gh_id}"),
-        "created_at": 1_790_000_000,
-        "expires_at": EXPIRES_AT,
-        "keys": [{
-            "kid": "QoRTRSkzlInq0eOmPqJwmZ5OS9pxkN_SIf5KgZP2F8M",
-            "alg": "ES256",
-            "state": "active",
-            "not_before": null,
-            "not_after": null,
-            "created_at": 1_790_000_000,
-            "public_key": public_jwk_json(),
-        }],
-        "usage": { "lists": 3, "lists_limit": 10, "keys": 1, "keys_limit": null },
-    })
-}
-
-/// An issuer from the server's registry file, which has no owner and never expires.
-fn static_issuer_json() -> Value {
-    json!({
-        "id": "https://issuer.example.com",
-        "aggregation_id": "a1d2c3b4-0000-4000-8000-000000000001",
-        "source": "static",
-        "tier": "standard",
-        "state": "active",
-        "owner": null,
-        "created_at": null,
-        "expires_at": null,
-        "keys": [],
-        "usage": { "lists": 0, "lists_limit": 1000, "keys": 0, "keys_limit": null },
-    })
-}
-
-fn issuer_response(status: u16, etag: &str, gh_id: i64) -> ResponseTemplate {
-    ResponseTemplate::new(status)
-        .insert_header("etag", etag)
-        .set_body_json(issuer_json(gh_id))
-}
-
-/// The admin API holds octocat's issuer at version `"7"`.
-async fn admin_api_holds_octocats_issuer(admin_api: &MockServer) {
-    Mock::given(method("GET"))
-        .and(path(ISSUER_PATH))
-        .respond_with(issuer_response(200, "\"7\"", GH_ID))
-        .mount(admin_api)
-        .await;
+fn query_pairs(url: &Url) -> BTreeMap<String, String> {
+    url.query_pairs().into_owned().collect()
 }
 
 fn new_issuer() -> NewIssuer {
@@ -128,7 +71,7 @@ fn verify_admin_token(token: &str) -> Value {
 #[tokio::test]
 async fn calls_carry_an_admin_token_the_server_accepts() {
     let (app, _) = TestApp::init().empty().await;
-    admin_api_holds_octocats_issuer(app.admin_api()).await;
+    admin_api_holds(app.admin_api(), &issuer_json(GH_ID)).await;
     let owner = octocat();
 
     app.ctx()
@@ -149,7 +92,7 @@ async fn calls_carry_an_admin_token_the_server_accepts() {
 #[tokio::test]
 async fn an_account_gets_its_own_issuer() {
     let (app, _) = TestApp::init().empty().await;
-    admin_api_holds_octocats_issuer(app.admin_api()).await;
+    admin_api_holds(app.admin_api(), &issuer_json(GH_ID)).await;
     let owner = octocat();
 
     let issuer = app.ctx().admin_api.issuers_of(&owner).get(ISSUER_ID).await;
@@ -170,7 +113,7 @@ async fn an_account_gets_its_own_issuer() {
 #[tokio::test]
 async fn another_accounts_issuer_looks_missing() {
     let (app, _) = TestApp::init().empty().await;
-    admin_api_holds_octocats_issuer(app.admin_api()).await;
+    admin_api_holds(app.admin_api(), &issuer_json(GH_ID)).await;
     let someone_else = Owner::github(GH_ID + 1);
 
     let issuer = app
@@ -187,11 +130,7 @@ async fn another_accounts_issuer_looks_missing() {
 async fn a_static_issuer_looks_missing() {
     let (app, _) = TestApp::init().empty().await;
     Mock::given(method("GET"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("etag", "\"1\"")
-                .set_body_json(static_issuer_json()),
-        )
+        .respond_with(issuer_response(200, "\"1\"", &static_issuer_json()))
         .mount(app.admin_api())
         .await;
     let owner = octocat();
@@ -227,7 +166,7 @@ async fn an_issuer_id_is_one_path_segment() {
     let (app, _) = TestApp::init().empty().await;
     Mock::given(method("GET"))
         .and(path("/admin/v1/issuers/a%2Fb%3Fc"))
-        .respond_with(issuer_response(200, "\"7\"", GH_ID))
+        .respond_with(issuer_response(200, "\"7\"", &issuer_json(GH_ID)))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -267,7 +206,7 @@ async fn creating_an_issuer_makes_the_account_its_owner() {
             "public_key": public_jwk_json(),
             "alg": "ES256",
         })))
-        .respond_with(issuer_response(201, "\"1\"", GH_ID))
+        .respond_with(issuer_response(201, "\"1\"", &issuer_json(GH_ID)))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -295,7 +234,7 @@ async fn creating_an_issuer_sends_its_expiry() {
             "alg": "ES256",
             "expires_at": EXPIRES_AT,
         })))
-        .respond_with(issuer_response(201, "\"1\"", GH_ID))
+        .respond_with(issuer_response(201, "\"1\"", &issuer_json(GH_ID)))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -313,24 +252,22 @@ async fn creating_an_issuer_sends_its_expiry() {
 #[tokio::test]
 async fn suspending_an_issuer_sends_the_version_it_read() {
     let (app, _) = TestApp::init().empty().await;
-    admin_api_holds_octocats_issuer(app.admin_api()).await;
+    admin_api_holds(app.admin_api(), &issuer_json(GH_ID)).await;
     Mock::given(method("PATCH"))
         .and(path(ISSUER_PATH))
         .and(header("if-match", "\"7\""))
         .and(body_json(json!({ "state": "suspended" })))
-        .respond_with(issuer_response(200, "\"8\"", GH_ID))
+        .respond_with(issuer_response(200, "\"8\"", &issuer_json(GH_ID)))
         .expect(1)
         .mount(app.admin_api())
         .await;
     let owner = octocat();
     let suspend = IssuerChange::State(RequestedState::Suspended);
 
-    let issuer = app
-        .ctx()
-        .admin_api
-        .issuers_of(&owner)
-        .update(ISSUER_ID, &suspend)
-        .await;
+    let issuers = app.ctx().admin_api.issuers_of(&owner);
+    let current = issuers.get(ISSUER_ID).await.unwrap().expect("no issuer");
+
+    let issuer = issuers.update(&current, &suspend).await;
 
     assert!(issuer.unwrap().is_some());
 }
@@ -338,24 +275,22 @@ async fn suspending_an_issuer_sends_the_version_it_read() {
 #[tokio::test]
 async fn renewing_an_issuer_sends_the_new_expiry() {
     let (app, _) = TestApp::init().empty().await;
-    admin_api_holds_octocats_issuer(app.admin_api()).await;
+    admin_api_holds(app.admin_api(), &issuer_json(GH_ID)).await;
     Mock::given(method("PATCH"))
         .and(path(ISSUER_PATH))
         .and(header("if-match", "\"7\""))
         .and(body_json(json!({ "expires_at": EXPIRES_AT })))
-        .respond_with(issuer_response(200, "\"8\"", GH_ID))
+        .respond_with(issuer_response(200, "\"8\"", &issuer_json(GH_ID)))
         .expect(1)
         .mount(app.admin_api())
         .await;
     let owner = octocat();
     let renew = IssuerChange::ExpiresAt(expires_at());
 
-    let issuer = app
-        .ctx()
-        .admin_api
-        .issuers_of(&owner)
-        .update(ISSUER_ID, &renew)
-        .await;
+    let issuers = app.ctx().admin_api.issuers_of(&owner);
+    let current = issuers.get(ISSUER_ID).await.unwrap().expect("no issuer");
+
+    let issuer = issuers.update(&current, &renew).await;
 
     assert!(issuer.unwrap().is_some());
 }
@@ -363,20 +298,21 @@ async fn renewing_an_issuer_sends_the_new_expiry() {
 #[tokio::test]
 async fn another_accounts_issuer_is_never_changed() {
     let (app, _) = TestApp::init().empty().await;
-    admin_api_holds_octocats_issuer(app.admin_api()).await;
+    admin_api_holds(app.admin_api(), &issuer_json(GH_ID)).await;
     Mock::given(method("PATCH"))
-        .respond_with(issuer_response(200, "\"8\"", GH_ID))
+        .respond_with(issuer_response(200, "\"8\"", &issuer_json(GH_ID)))
         .expect(0)
         .mount(app.admin_api())
         .await;
+    let owner = octocat();
     let someone_else = Owner::github(GH_ID + 1);
+    let api = &app.ctx().admin_api;
+    let read_by_owner = api.issuers_of(&owner).get(ISSUER_ID).await.unwrap();
     let suspend = IssuerChange::State(RequestedState::Suspended);
 
-    let issuer = app
-        .ctx()
-        .admin_api
+    let issuer = api
         .issuers_of(&someone_else)
-        .update(ISSUER_ID, &suspend)
+        .update(&read_by_owner.expect("no issuer"), &suspend)
         .await;
 
     assert_eq!(issuer.unwrap(), None);
@@ -385,7 +321,7 @@ async fn another_accounts_issuer_is_never_changed() {
 #[tokio::test]
 async fn an_issuer_deleted_before_the_change_looks_missing() {
     let (app, _) = TestApp::init().empty().await;
-    admin_api_holds_octocats_issuer(app.admin_api()).await;
+    admin_api_holds(app.admin_api(), &issuer_json(GH_ID)).await;
     Mock::given(method("PATCH"))
         .respond_with(
             ResponseTemplate::new(404).set_body_json(json!({ "error": "issuer_not_found" })),
@@ -394,14 +330,11 @@ async fn an_issuer_deleted_before_the_change_looks_missing() {
         .mount(app.admin_api())
         .await;
     let owner = octocat();
+    let issuers = app.ctx().admin_api.issuers_of(&owner);
+    let current = issuers.get(ISSUER_ID).await.unwrap().expect("no issuer");
     let suspend = IssuerChange::State(RequestedState::Suspended);
 
-    let issuer = app
-        .ctx()
-        .admin_api
-        .issuers_of(&owner)
-        .update(ISSUER_ID, &suspend)
-        .await;
+    let issuer = issuers.update(&current, &suspend).await;
 
     assert_eq!(issuer.unwrap(), None);
 }
@@ -409,7 +342,7 @@ async fn an_issuer_deleted_before_the_change_looks_missing() {
 #[tokio::test]
 async fn a_change_racing_another_is_refused() {
     let (app, _) = TestApp::init().empty().await;
-    admin_api_holds_octocats_issuer(app.admin_api()).await;
+    admin_api_holds(app.admin_api(), &issuer_json(GH_ID)).await;
     Mock::given(method("PATCH"))
         .respond_with(
             ResponseTemplate::new(412)
@@ -419,15 +352,11 @@ async fn a_change_racing_another_is_refused() {
         .mount(app.admin_api())
         .await;
     let owner = octocat();
+    let issuers = app.ctx().admin_api.issuers_of(&owner);
+    let current = issuers.get(ISSUER_ID).await.unwrap().expect("no issuer");
     let renew = IssuerChange::ExpiresAt(expires_at());
 
-    let error = app
-        .ctx()
-        .admin_api
-        .issuers_of(&owner)
-        .update(ISSUER_ID, &renew)
-        .await
-        .unwrap_err();
+    let error = issuers.update(&current, &renew).await.unwrap_err();
 
     assert_eq!(error.code(), Some(ErrorCode::PreconditionFailed));
 }
@@ -438,6 +367,8 @@ async fn an_account_lists_only_its_own_issuers() {
     Mock::given(method("GET"))
         .and(path("/admin/v1/issuers"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            // The admin API should not return another account's issuer; if it does, the
+            // client drops it.
             "issuers": [static_issuer_json(), issuer_json(GH_ID), issuer_json(GH_ID + 1)],
             "next_cursor": "page-3",
         })))
@@ -457,12 +388,96 @@ async fn an_account_lists_only_its_own_issuers() {
     assert_eq!(page.issuers[0].owner, Some(owner));
     assert_eq!(page.next_cursor.as_deref(), Some("page-3"));
     let requests = app.admin_api().received_requests().await.unwrap();
-    let query: BTreeMap<String, String> = requests[0].url.query_pairs().into_owned().collect();
     assert_eq!(
-        query,
+        query_pairs(&requests[0].url),
         BTreeMap::from([
             ("owner".to_string(), "github|5821374".to_string()),
             ("cursor".to_string(), "page-2".to_string()),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn an_issuer_created_for_another_owner_is_unexpected() {
+    let (app, _) = TestApp::init().empty().await;
+    Mock::given(method("POST"))
+        .respond_with(issuer_response(201, "\"1\"", &issuer_json(GH_ID + 1)))
+        .mount(app.admin_api())
+        .await;
+    let owner = octocat();
+
+    let error = app
+        .ctx()
+        .admin_api
+        .issuers_of(&owner)
+        .create(&new_issuer())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, AdminApiError::Unexpected(_)), "{error}");
+}
+
+#[tokio::test]
+async fn counting_reads_pages_until_it_has_counted_enough() {
+    let (app, _) = TestApp::init().empty().await;
+    let two_issuers = [issuer_json(GH_ID), issuer_json(GH_ID)];
+    for (cursor, next) in [(None, "page-2"), (Some("page-2"), "page-3")] {
+        let request = Mock::given(method("GET")).and(path("/admin/v1/issuers"));
+        let request = match cursor {
+            Some(cursor) => request.and(query_param("cursor", cursor)),
+            None => request.and(query_param_is_missing("cursor")),
+        };
+        request
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "issuers": two_issuers,
+                "next_cursor": next,
+            })))
+            .expect(1)
+            .mount(app.admin_api())
+            .await;
+    }
+
+    let count = app
+        .ctx()
+        .admin_api
+        .count_issuers(&IssuerQuery::default(), 3)
+        .await
+        .unwrap();
+
+    assert_eq!(count, 4);
+    let requests = app.admin_api().received_requests().await.unwrap();
+    assert!(requests[0].url.query().unwrap().contains("limit=100"));
+}
+
+#[tokio::test]
+async fn counting_sends_only_the_filters_set() {
+    let (app, _) = TestApp::init().empty().await;
+    Mock::given(method("GET"))
+        .and(path("/admin/v1/issuers"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "issuers": [static_issuer_json(), issuer_json(GH_ID)],
+            "next_cursor": null,
+        })))
+        .mount(app.admin_api())
+        .await;
+    let query = IssuerQuery {
+        source: Some(IssuerSource::Portal),
+        tier: Some(IssuerTier::Sandbox),
+        state: Some(IssuerState::Active),
+        ..IssuerQuery::default()
+    };
+
+    let count = app.ctx().admin_api.count_issuers(&query, 10).await.unwrap();
+
+    assert_eq!(count, 2);
+    let requests = app.admin_api().received_requests().await.unwrap();
+    assert_eq!(
+        query_pairs(&requests[0].url),
+        BTreeMap::from([
+            ("source".to_string(), "portal".to_string()),
+            ("tier".to_string(), "sandbox".to_string()),
+            ("state".to_string(), "active".to_string()),
+            ("limit".to_string(), "100".to_string()),
         ])
     );
 }
