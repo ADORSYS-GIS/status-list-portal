@@ -1,0 +1,50 @@
+---
+source: src/openapi.rs
+assertion_line: 29
+expression: openapi
+---
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Status List Portal API",
+    "description": "API between the portal's frontend and its backend. It is not a public contract and can change in any release.",
+    "license": {
+      "name": "MIT OR Apache-2.0",
+      "identifier": "MIT OR Apache-2.0"
+    },
+    "version": "0.0.0"
+  },
+  "paths": {
+    "/health/live": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Liveness probe: the process is up and answers requests.",
+        "operationId": "live",
+        "responses": {
+          "200": {
+            "description": "The server is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "status"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {}
+}

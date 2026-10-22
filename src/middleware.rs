@@ -1,0 +1,89 @@
+//! Middleware applied to every request.
+
+mod headers;
+
+use std::any::Any;
+use std::time::Duration;
+
+use axum::Router;
+use axum::extract::{DefaultBodyLimit, Request};
+use axum::middleware::from_fn;
+use axum::response::Response;
+use http::StatusCode;
+use tower::ServiceBuilder;
+use tower_http::catch_panic::CatchPanicLayer;
+use tower_http::timeout::TimeoutLayer;
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
+use tracing::{Level, Span, info_span};
+
+use crate::util::errors;
+
+/// Requests that take longer are answered with `408 Request Timeout`.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Largest accepted request body. Portal requests carry at most a public JWK and a few
+/// short fields.
+const MAX_BODY_SIZE: usize = 16 * 1024;
+
+pub fn apply_middleware(router: Router) -> Router {
+    // Security headers sit outside the panic and timeout layers, so the responses those
+    // layers produce carry them too.
+    let middleware = ServiceBuilder::new()
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(make_span)
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
+        .layer(from_fn(headers::add_common_headers))
+        .layer(CatchPanicLayer::custom(handle_panic))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ));
+
+    router
+        .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
+        .layer(middleware)
+}
+
+/// Records the method and path only. Query strings can carry OAuth codes, which must not
+/// reach the logs.
+fn make_span(request: &Request) -> Span {
+    info_span!("request", method = %request.method(), path = %request.uri().path())
+}
+
+fn handle_panic(_payload: Box<dyn Any + Send + 'static>) -> Response {
+    errors::internal("request handler panicked").response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::routing::get;
+    use serde_json::{Value, json};
+    use tower::ServiceExt;
+
+    async fn boom() -> &'static str {
+        panic!("secret detail")
+    }
+
+    #[tokio::test]
+    async fn panics_become_a_generic_json_500_with_security_headers() {
+        let router = Router::new().route("/boom", get(boom));
+        let request = Request::get("/boom").body(Body::empty()).unwrap();
+
+        let response = apply_middleware(router).oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body,
+            json!({ "errors": [{ "detail": "Internal Server Error" }] })
+        );
+    }
+}
