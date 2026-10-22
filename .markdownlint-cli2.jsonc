@@ -1,0 +1,7 @@
+{
+  "config": {
+    // Prose is wrapped where it reads best, not at a fixed width.
+    "MD013": false
+  },
+  "gitignore": true
+}
