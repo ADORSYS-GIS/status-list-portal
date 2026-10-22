@@ -1,0 +1,12 @@
+/target
+.env
+*.pem
+*.key
+
+# Frontend
+node_modules/
+/frontend/build/
+/frontend/.svelte-kit/
+
+# macOS
+**/.DS_Store
