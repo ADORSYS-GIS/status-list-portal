@@ -2,5 +2,7 @@
 
 mod headers;
 mod health;
+mod migrations;
 mod not_found;
+mod users;
 mod util;

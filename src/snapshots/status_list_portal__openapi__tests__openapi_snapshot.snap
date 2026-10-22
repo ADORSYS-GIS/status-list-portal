@@ -1,6 +1,5 @@
 ---
 source: src/openapi.rs
-assertion_line: 29
 expression: openapi
 ---
 {
@@ -44,7 +43,78 @@ expression: openapi
           }
         }
       }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Readiness probe: the server can reach its database.",
+        "operationId": "ready",
+        "responses": {
+          "200": {
+            "description": "The server can handle requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "status"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database cannot be reached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
-  "components": {}
+  "components": {
+    "schemas": {
+      "ApiErrorDetail": {
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "Human-readable description, safe to show to the user."
+          }
+        }
+      },
+      "ApiErrorResponse": {
+        "type": "object",
+        "description": "The body of every error response.",
+        "required": [
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiErrorDetail"
+            },
+            "description": "What prevented the request from succeeding. Always exactly one entry."
+          }
+        }
+      }
+    }
+  }
 }

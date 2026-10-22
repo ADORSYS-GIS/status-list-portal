@@ -30,12 +30,18 @@ path = "src/tests/mod.rs"
 anyhow = "1.0"
 axum = { version = "0.8", features = ["macros"] }
 config = { version = "0.15", default-features = false }
+deadpool = { version = "0.13", default-features = false, features = ["managed", "rt_tokio_1"] }
 derive_more = { version = "2.1", features = ["deref", "display"] }
+diesel = { version = "2.3", features = ["postgres_backend", "time"] }
+diesel-async = { version = "0.9", features = ["deadpool", "migrations", "postgres"] }
+diesel_migrations = "2.3"
 dotenvy = "0.15"
 http = "1.5"
+secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.54", features = ["macros", "net", "rt-multi-thread", "signal"] }
+time = "0.3"
+tokio = { version = "1.54", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 tower = "0.5"
 tower-http = { version = "0.7", features = ["catch-panic", "timeout", "trace"] }
 tracing = "0.1"
@@ -46,6 +52,7 @@ utoipa-axum = "0.3"
 [dev-dependencies]
 insta = { version = "1.49", features = ["json"] }
 tower = { version = "0.5", features = ["util"] }
+url = "2.5"
 
 [profile.dev]
 opt-level = 1

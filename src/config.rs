@@ -6,14 +6,17 @@
 //! every setting.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::num::NonZeroUsize;
 
 use ::config::{ConfigError, Environment};
+use secrecy::SecretString;
 use serde::Deserialize;
 
 use crate::Env;
 use crate::util::logging::LogFormat;
 
 const DEFAULT_BIND_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
+const DEFAULT_DATABASE_POOL_SIZE: NonZeroUsize = NonZeroUsize::new(10).unwrap();
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -25,6 +28,21 @@ pub struct Config {
     pub log_format: LogFormat,
     #[serde(default)]
     pub server: Server,
+    pub database: Database,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Database {
+    /// Connection URL (`APP_DATABASE__URL`), for example
+    /// `postgres://portal:password@localhost:5432/portal`.
+    pub url: SecretString,
+    /// Most connections the pool keeps open (`APP_DATABASE__POOL_SIZE`).
+    #[serde(default = "default_database_pool_size")]
+    pub pool_size: NonZeroUsize,
+}
+
+fn default_database_pool_size() -> NonZeroUsize {
+    DEFAULT_DATABASE_POOL_SIZE
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,8 +84,11 @@ fn environment() -> Environment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secrecy::ExposeSecret;
 
-    fn load(vars: &[(&str, &str)]) -> Result<Config, ConfigError> {
+    const DATABASE_URL: &str = "postgres://portal:s3cr3t@localhost:5432/portal";
+
+    fn load_exactly(vars: &[(&str, &str)]) -> Result<Config, ConfigError> {
         let vars = vars
             .iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
@@ -75,13 +96,20 @@ mod tests {
         Config::from_source(environment().source(Some(vars)))
     }
 
+    /// Loads these variables plus the required ones.
+    fn load(vars: &[(&str, &str)]) -> Result<Config, ConfigError> {
+        load_exactly(&[&[("APP_DATABASE__URL", DATABASE_URL)], vars].concat())
+    }
+
     #[test]
-    fn every_setting_has_a_default() {
+    fn optional_settings_have_defaults() {
         let config = load(&[]).unwrap();
 
         assert_eq!(config.env, Env::Development);
         assert_eq!(config.log_format, LogFormat::Text);
         assert_eq!(config.server.bind_address, DEFAULT_BIND_ADDRESS);
+        assert_eq!(config.database.url.expose_secret(), DATABASE_URL);
+        assert_eq!(config.database.pool_size, DEFAULT_DATABASE_POOL_SIZE);
     }
 
     #[test]
@@ -90,12 +118,35 @@ mod tests {
             ("APP_ENV", "production"),
             ("APP_LOG_FORMAT", "json"),
             ("APP_SERVER__BIND_ADDRESS", "0.0.0.0:9000"),
+            ("APP_DATABASE__POOL_SIZE", "3"),
         ])
         .unwrap();
 
         assert_eq!(config.env, Env::Production);
         assert_eq!(config.log_format, LogFormat::Json);
         assert_eq!(config.server.bind_address, "0.0.0.0:9000".parse().unwrap());
+        assert_eq!(config.database.pool_size.get(), 3);
+    }
+
+    #[test]
+    fn the_pool_needs_at_least_one_connection() {
+        let error = load(&[("APP_DATABASE__POOL_SIZE", "0")]).unwrap_err();
+
+        assert!(error.to_string().contains("database.pool_size"), "{error}");
+    }
+
+    #[test]
+    fn the_database_url_is_required() {
+        let error = load_exactly(&[]).unwrap_err();
+
+        assert!(error.to_string().contains("database"), "{error}");
+    }
+
+    #[test]
+    fn debug_output_hides_the_database_url() {
+        let config = load(&[]).unwrap();
+
+        assert!(!format!("{config:?}").contains("s3cr3t"));
     }
 
     #[test]

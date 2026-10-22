@@ -1,6 +1,8 @@
 mod test_app;
+mod test_db;
 
 pub use test_app::TestApp;
+pub use test_db::TestDatabase;
 
 use axum::body::{Body, Bytes};
 use http::header::AsHeaderName;

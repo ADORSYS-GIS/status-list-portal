@@ -6,9 +6,12 @@
 
 pub mod config;
 pub mod controllers;
+pub mod db;
 pub mod middleware;
+pub mod models;
 pub mod openapi;
 mod router;
+pub mod schema;
 pub mod server;
 pub mod util;
 

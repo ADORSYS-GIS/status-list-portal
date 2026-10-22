@@ -9,7 +9,9 @@ use crate::util::errors::{self, BoxedAppError};
 
 /// Every route the backend serves, with its `OpenAPI` description.
 pub(crate) fn openapi_router() -> OpenApiRouter<ServerContext> {
-    BaseOpenApi::router().routes(routes!(health::live))
+    BaseOpenApi::router()
+        .routes(routes!(health::live))
+        .routes(routes!(health::ready))
 }
 
 pub(crate) fn build_router(ctx: ServerContext) -> Router {
