@@ -1,0 +1,3 @@
+build/
+.svelte-kit/
+src/lib/api/schema.ts

@@ -20,6 +20,10 @@ Signing in needs a [GitHub OAuth app](https://docs.github.com/en/apps/oauth-apps
 
 `cargo run -- help` lists the operators' commands, such as approving registrations when `APP_SANDBOX__MANUAL_APPROVAL` is on.
 
+### Frontend
+
+The frontend lives in `frontend/` and needs [Bun](https://bun.com). Its commands run from the repository's root. With the backend running, `bun install && bun run dev` serves it at <http://localhost:5173>, passing API calls to the backend. Set `APP_SERVER__ORIGIN=http://localhost:5173` so that signing in returns there. For the backend to serve it instead, run `bun run build` and set `APP_SERVER__FRONTEND_DIR=frontend/build`.
+
 ## Kubernetes probes
 
 Set `APP_SERVER__BIND_ADDRESS=0.0.0.0:8080` in the container. The HTTP listener
@@ -60,7 +64,7 @@ database connection limit for one extra connection per portal replica.
 cargo test
 ```
 
-Tests use the Postgres from `docker compose`, with a fresh database per test.
+Tests use the Postgres from `docker compose`, with a fresh database per test. `bun run test` runs the frontend's tests, some of them in Chromium (`bun run playwright install chromium`). `bun test` would run Bun's own test runner instead.
 
 ## License
 

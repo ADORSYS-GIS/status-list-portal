@@ -1,0 +1,264 @@
+/* Design tokens. The accent is adorsys blue; every text color meets WCAG AA on its background. */
+:root {
+  color-scheme: light dark;
+
+  --color-accent: #2f2cf9;
+  --color-accent-hover: #2420d6;
+  --color-on-accent: #ffffff;
+  --color-link: #2f2cf9;
+  --color-bg: #ffffff;
+  --color-surface: #f8fafc;
+  --color-border: #cbd5e1;
+  --color-text: #0f172a;
+  --color-muted: #475569;
+  --color-code-bg: #f1f5f9;
+  --color-focus: #2f2cf9;
+  --color-success: #15803d;
+  --color-success-bg: #f0fdf4;
+  --color-warning: #a16207;
+  --color-warning-bg: #fefce8;
+  --color-danger: #b91c1c;
+  --color-danger-hover: #991b1b;
+  --color-danger-bg: #fef2f2;
+
+  --font-sans: 'IBM Plex Sans Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+
+  --radius: 6px;
+  --content-width: 64rem;
+  --transition: 150ms ease-out;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-accent: #4b48fa;
+    --color-accent-hover: #6461fb;
+    --color-link: #8584fb;
+    --color-bg: #0b1120;
+    --color-surface: #111827;
+    --color-border: #334155;
+    --color-text: #f1f5f9;
+    --color-muted: #a3b1c6;
+    --color-code-bg: #1e293b;
+    --color-focus: #8584fb;
+    --color-success: #4ade80;
+    --color-success-bg: #052e16;
+    --color-warning: #facc15;
+    --color-warning-bg: #2d2504;
+    --color-danger: #f87171;
+    --color-danger-hover: #fca5a5;
+    --color-danger-bg: #350a0a;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: 1.875rem;
+}
+
+h2 {
+  font-size: 1.25rem;
+}
+
+h3 {
+  font-size: 1.0625rem;
+}
+
+p {
+  margin: 0 0 var(--space-4);
+}
+
+a {
+  color: var(--color-link);
+  text-underline-offset: 0.15em;
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.page {
+  width: 100%;
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-4) var(--space-12);
+}
+
+.lead {
+  font-size: 1.125rem;
+  color: var(--color-muted);
+  max-width: 42rem;
+}
+
+.muted {
+  color: var(--color-muted);
+}
+
+/* Buttons. A link styled as a button keeps its link semantics. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    border-color var(--transition);
+}
+
+.button:hover {
+  background: var(--color-surface);
+}
+
+.button.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-on-accent);
+}
+
+.button.primary:hover {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+
+.button.danger {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-bg);
+}
+
+.button.danger:hover {
+  background: var(--color-danger-hover);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.button svg,
+.icon {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex: none;
+}
+
+/* Forms */
+.field {
+  display: grid;
+  gap: var(--space-1);
+  margin-bottom: var(--space-6);
+}
+
+label {
+  font-weight: 500;
+}
+
+.hint {
+  font-size: 0.9375rem;
+  color: var(--color-muted);
+  margin: 0;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+}
+
+textarea {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  resize: vertical;
+}
+
+[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+
+.field-error {
+  color: var(--color-danger);
+  font-size: 0.9375rem;
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "status-list-portal",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "build": "bun --bun run --cwd frontend build",
+    "check": "bun --bun run --cwd frontend check",
+    "dev": "bun --bun run --cwd frontend dev",
+    "format": "bun --bun run --cwd frontend format",
+    "lint": "bun --bun run --cwd frontend lint",
+    "playwright": "bun --bun run --cwd frontend playwright",
+    "preview": "bun --bun run --cwd frontend preview",
+    "test": "bun --bun run --cwd frontend test"
+  },
+  "packageManager": "bun@1.4.4"
+}
