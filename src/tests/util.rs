@@ -42,6 +42,11 @@ impl Response {
     }
 
     #[track_caller]
+    pub fn text(&self) -> &str {
+        std::str::from_utf8(&self.body).expect("response body is not UTF-8")
+    }
+
+    #[track_caller]
     pub fn json(&self) -> serde_json::Value {
         serde_json::from_slice(&self.body).expect("response body is not JSON")
     }

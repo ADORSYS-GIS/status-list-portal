@@ -56,6 +56,10 @@ pub struct Server {
     pub bind_address: SocketAddr,
     /// Where browsers reach the portal (`APP_SERVER__ORIGIN`).
     pub origin: PublicOrigin,
+    /// The built frontend, `frontend/build` (`APP_SERVER__FRONTEND_DIR`). Unset, the server
+    /// answers API requests only, as when the frontend's dev server runs in front of it.
+    #[serde(default)]
+    pub frontend_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -434,6 +438,7 @@ mod tests {
         assert_eq!(config.env, Env::Production);
         assert_eq!(config.log_format, LogFormat::Text);
         assert_eq!(config.server.bind_address, DEFAULT_BIND_ADDRESS);
+        assert_eq!(config.server.frontend_dir, None);
         assert_eq!(config.database.pool_size, DEFAULT_DATABASE_POOL_SIZE);
         assert_eq!(config.github.web_url.as_str(), "https://github.com/");
         assert_eq!(config.github.api_url.as_str(), "https://api.github.com/");
@@ -451,6 +456,7 @@ mod tests {
             ("APP_ENV", "development"),
             ("APP_LOG_FORMAT", "json"),
             ("APP_SERVER__BIND_ADDRESS", "0.0.0.0:9000"),
+            ("APP_SERVER__FRONTEND_DIR", "frontend/build"),
             ("APP_DATABASE__POOL_SIZE", "3"),
             ("APP_ADMIN_API__ALGORITHM", "EdDSA"),
             ("APP_SANDBOX__MAX_ISSUERS_PER_ACCOUNT", "1"),
@@ -465,6 +471,10 @@ mod tests {
         assert_eq!(config.log_format, LogFormat::Json);
         assert_eq!(config.server.bind_address, "0.0.0.0:9000".parse().unwrap());
         assert_eq!(config.server.origin.as_str(), "https://portal.example.com");
+        assert_eq!(
+            config.server.frontend_dir,
+            Some(PathBuf::from("frontend/build"))
+        );
         assert_eq!(config.database.url.expose_secret(), DATABASE_URL);
         assert_eq!(config.database.pool_size.get(), 3);
         assert_eq!(config.github.client_id, "client-id");
