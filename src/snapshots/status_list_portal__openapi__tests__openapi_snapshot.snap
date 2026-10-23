@@ -70,7 +70,7 @@ expression: openapi
           "issuers"
         ],
         "summary": "Registers a sandbox issuer for the signed-in user.",
-        "description": "It stays active for one sandbox lifetime. The account needs the current terms of use\naccepted and registrations left, and both the account and the sandbox need a free place.",
+        "description": "It stays active for one sandbox lifetime. The account needs the current terms of use\naccepted and registrations left, and both the account and the sandbox need a free place.\nWhen registrations need an operator's approval, the request waits for it instead.",
         "operationId": "create_issuer",
         "requestBody": {
           "content": {
@@ -96,6 +96,16 @@ expression: openapi
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/IssuerResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Waiting for an operator's approval.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationResponse"
                 }
               }
             }
@@ -445,6 +455,93 @@ expression: openapi
           },
           "409": {
             "description": "The terms changed since the user read them.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/registrations": {
+      "get": {
+        "tags": [
+          "issuers"
+        ],
+        "summary": "The signed-in user's registrations, newest first. Pending and rejected ones count toward\nthe issuers the account may register.",
+        "operationId": "list_registrations",
+        "responses": {
+          "200": {
+            "description": "The user's registrations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistrationListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/registrations/{id}": {
+      "delete": {
+        "tags": [
+          "issuers"
+        ],
+        "summary": "Withdraws one of the signed-in user's registrations while it waits for approval.",
+        "operationId": "withdraw_registration",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The registration's id.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Withdrawn."
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The user has no registration with this id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The registration was decided already.",
             "content": {
               "application/json": {
                 "schema": {
@@ -858,6 +955,81 @@ expression: openapi
           }
         },
         "additionalProperties": false
+      },
+      "RegistrationListResponse": {
+        "type": "object",
+        "required": [
+          "registrations"
+        ],
+        "properties": {
+          "registrations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegistrationResponse"
+            }
+          }
+        }
+      },
+      "RegistrationResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "alg",
+          "state",
+          "created_at"
+        ],
+        "properties": {
+          "alg": {
+            "type": "string",
+            "example": "ES256"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": "string",
+            "example": "Acme Wallet Issuer"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 42
+          },
+          "issuer_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The issuer the approval created."
+          },
+          "rejection_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why an operator rejected the registration."
+          },
+          "state": {
+            "$ref": "#/components/schemas/RegistrationState"
+          }
+        }
+      },
+      "RegistrationState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected"
+        ]
       },
       "SigningAlgorithm": {
         "type": "string",

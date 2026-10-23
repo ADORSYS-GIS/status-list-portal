@@ -8,32 +8,28 @@ mod public_key;
 
 use axum::Json;
 use axum::extract::{Path, Query};
-use diesel_async::{AsyncConnection, AsyncPgConnection};
+use axum::response::{IntoResponse, Response};
+use http::StatusCode;
 use http::header::LOCATION;
-use http::{HeaderName, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 use tracing::info;
 use url::Url;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::admin_api::{
-    Issuer, IssuerChange, IssuerQuery, IssuerSource, IssuerState, IssuerTier, KeyState, NewIssuer,
-    Owner, RequestedState, SigningAlgorithm,
+    Issuer, IssuerChange, IssuerState, KeyState, NewIssuer, Owner, RequestedState, SigningAlgorithm,
 };
 use crate::auth::AuthenticatedUser;
 use crate::config::{self, PublicOrigin};
-use crate::db;
-use crate::models::{TermsAcceptance, User};
+use crate::controllers::registration::RegistrationResponse;
+use crate::sandbox::{self, Pending};
 use crate::server::ServerContext;
 use crate::util::JsonBody;
 use crate::util::errors::{self, ApiErrorResponse, AppResult};
 
 const DISPLAY_NAME_MAX_CHARS: usize = 100;
-/// An issuer's lifetime ends this long before the longest the server allows, in case its
-/// clock runs behind the portal's.
-const RENEWAL_MARGIN: Duration = Duration::minutes(5);
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct IssuerResponse {
@@ -181,6 +177,7 @@ impl NewIssuerRequest {
 ///
 /// It stays active for one sandbox lifetime. The account needs the current terms of use
 /// accepted and registrations left, and both the account and the sandbox need a free place.
+/// When registrations need an operator's approval, the request waits for it instead.
 #[utoipa::path(
     post,
     path = "/api/v1/issuers",
@@ -188,6 +185,7 @@ impl NewIssuerRequest {
     request_body = NewIssuerRequest,
     responses(
         (status = 201, description = "Registered.", body = IssuerResponse, headers(("location" = String))),
+        (status = 202, description = "Waiting for an operator's approval.", body = RegistrationResponse),
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 403, description = "The current terms are not accepted, or the account registered as many issuers as it may.", body = ApiErrorResponse),
         (status = 409, description = "The account has as many active issuers as allowed, or the key is registered already.", body = ApiErrorResponse),
@@ -200,30 +198,25 @@ pub async fn create_issuer(
     ctx: ServerContext,
     AuthenticatedUser(user): AuthenticatedUser,
     JsonBody(request): JsonBody<NewIssuerRequest>,
-) -> AppResult<(StatusCode, [(HeaderName, String); 1], Json<IssuerResponse>)> {
+) -> AppResult<Response> {
     let mut conn = ctx.db.get().await?;
-    ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
-    let new_issuer = request.into_new_issuer(sandbox_expiry(&ctx.config.sandbox))?;
-    let owner = Owner::github(user.gh_id);
+    sandbox::ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
+    let new_issuer = request.into_new_issuer(sandbox::expiry(&ctx.config.sandbox))?;
 
-    let issuer = with_limits_lock(&mut conn, async {
-        // One read answers both limits on the account: when it holds fewer issuers than the
-        // account may register, it holds all of them.
-        let registered = registered_issuers(&ctx, &owner).await?;
-        ensure_registrations_left(&ctx.config.sandbox, &registered)?;
-        let active = registered
-            .iter()
-            .filter(|issuer| issuer.state == IssuerState::Active)
-            .count();
-        ensure_room(&ctx, active).await?;
-        AppResult::Ok(ctx.admin_api.issuers_of(&owner).create(&new_issuer).await?)
-    })
-    .await?;
+    if ctx.config.sandbox.manual_approval {
+        let registration = sandbox::request(&ctx, &mut conn, &user, &new_issuer).await?;
+        info!(user.id, registration.id, "asked for an issuer");
+        let body = RegistrationResponse::from(registration);
+        return Ok((StatusCode::ACCEPTED, Json(body)).into_response());
+    }
+
+    let owner = Owner::github(user.gh_id);
+    let issuer = sandbox::register(&ctx, &mut conn, &owner, &new_issuer).await?;
     info!(user.id, issuer.id = %issuer.id, "registered an issuer");
 
     let location = issuer_location(&ctx.config.server.origin, &issuer.id);
     let body = IssuerResponse::new(issuer, &ctx.config.management_api);
-    Ok((StatusCode::CREATED, [(LOCATION, location)], Json(body)))
+    Ok((StatusCode::CREATED, [(LOCATION, location)], Json(body)).into_response())
 }
 
 /// One of the signed-in user's issuers.
@@ -283,12 +276,12 @@ pub async fn renew_issuer(
     // The connection goes back to the pool before the admin API is called. Only an expired
     // issuer needs one again, for the lock.
     let mut conn = ctx.db.get().await?;
-    ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
+    sandbox::ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
     drop(conn);
     let owner = Owner::github(user.gh_id);
     let issuers = ctx.admin_api.issuers_of(&owner);
     let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
-    let renewal = IssuerChange::ExpiresAt(sandbox_expiry(&ctx.config.sandbox));
+    let renewal = IssuerChange::ExpiresAt(sandbox::expiry(&ctx.config.sandbox));
 
     let renewed = match current.state {
         // No lock: an issuer that expires before the change lands becomes active again
@@ -297,8 +290,9 @@ pub async fn renew_issuer(
         IssuerState::Active => issuers.update(&current, &renewal).await?,
         IssuerState::Expired => {
             let mut conn = ctx.db.get().await?;
-            with_limits_lock(&mut conn, async {
-                ensure_room(&ctx, count_active(&ctx, &owner).await?).await?;
+            sandbox::with_limits_lock(&mut conn, async |_| {
+                let active = sandbox::count_active(&ctx, &owner).await?;
+                sandbox::ensure_room(&ctx, active, Pending::default()).await?;
                 AppResult::Ok(issuers.update(&current, &renewal).await?)
             })
             .await?
@@ -350,105 +344,6 @@ pub async fn delete_issuer(
         .ok_or_else(errors::not_found)?;
     info!(user.id, issuer.id = %id, "deleted an issuer");
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// Registering and renewing need the current terms of use accepted.
-async fn ensure_terms_accepted(
-    conn: &mut AsyncPgConnection,
-    user: &User,
-    terms: &config::Terms,
-) -> AppResult<()> {
-    if !TermsAcceptance::exists(conn, user.id, &terms.version).await? {
-        return Err(errors::forbidden("Accept the current terms of use first."));
-    }
-    Ok(())
-}
-
-/// The account's sandbox issuers in every state: all of them, or at least as many as it
-/// may register.
-async fn registered_issuers(ctx: &ServerContext, owner: &Owner) -> AppResult<Vec<Issuer>> {
-    let query = sandbox_issuers(Some(owner), None);
-    let most = ctx.config.sandbox.max_registrations_per_account;
-    Ok(ctx.admin_api.first_issuers(&query, most).await?)
-}
-
-/// How many active issuers the account has, as far as the limit on them needs to know.
-async fn count_active(ctx: &ServerContext, owner: &Owner) -> AppResult<usize> {
-    let query = sandbox_issuers(Some(owner), Some(IssuerState::Active));
-    let per_account = ctx.config.sandbox.max_issuers_per_account;
-    Ok(ctx.admin_api.count_issuers(&query, per_account).await?)
-}
-
-fn sandbox_issuers(owner: Option<&Owner>, state: Option<IssuerState>) -> IssuerQuery {
-    IssuerQuery {
-        source: Some(IssuerSource::Portal),
-        tier: Some(IssuerTier::Sandbox),
-        owner: owner.cloned(),
-        state,
-        ..IssuerQuery::default()
-    }
-}
-
-/// Refuses another registration when the account registered as many issuers as it may.
-/// Deleted issuers count: the admin API keeps them.
-fn ensure_registrations_left(sandbox: &config::Sandbox, registered: &[Issuer]) -> AppResult<()> {
-    let most = sandbox.max_registrations_per_account;
-    if registered.len() >= most {
-        return Err(errors::forbidden(format!(
-            "This account cannot register more sandbox issuers: it has registered {most}, \
-             deleted ones included."
-        )));
-    }
-    Ok(())
-}
-
-/// Refuses another active issuer when the account, which has `active` already, or the
-/// sandbox as a whole, has as many as allowed.
-async fn ensure_room(ctx: &ServerContext, active: usize) -> AppResult<()> {
-    let limits = &ctx.config.sandbox;
-    let per_account = limits.max_issuers_per_account;
-    if active >= per_account {
-        return Err(errors::custom(
-            StatusCode::CONFLICT,
-            format!("An account can have {per_account} active sandbox issuers. Delete one first."),
-        ));
-    }
-    let in_total = limits.max_active_issuers;
-    let in_sandbox = sandbox_issuers(None, Some(IssuerState::Active));
-    if ctx.admin_api.count_issuers(&in_sandbox, in_total).await? >= in_total {
-        return Err(errors::custom(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "The sandbox has no room for another issuer right now. Please try again later.",
-        ));
-    }
-    Ok(())
-}
-
-/// Runs `work` in a transaction that holds the sandbox limits lock, so two issuers cannot
-/// both take the last free place. A request that finds the lock taken gives up at once
-/// rather than wait with a database connection.
-///
-/// The connection stays checked out while `work` calls the admin API, so the lock holds.
-async fn with_limits_lock<T: Send>(
-    conn: &mut AsyncPgConnection,
-    work: impl Future<Output = AppResult<T>> + Send,
-) -> AppResult<T> {
-    conn.transaction(async move |conn| {
-        if !db::try_lock_issuer_limits(conn).await? {
-            return Err(errors::custom(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Another issuer is being registered. Please try again in a moment.",
-            ));
-        }
-        work.await
-    })
-    .await
-}
-
-/// When an issuer registered or renewed now stops being active.
-fn sandbox_expiry(sandbox: &config::Sandbox) -> OffsetDateTime {
-    let lifetime = Duration::days(sandbox.lifetime_days.get().into());
-    OffsetDateTime::now_utc() + lifetime - RENEWAL_MARGIN
 }
 
 /// The issuer's URL on the portal, for the `Location` header.

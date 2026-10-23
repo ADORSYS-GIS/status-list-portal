@@ -26,6 +26,19 @@ impl ServerContext {
     pub fn new(inner: ServerContextInner) -> Self {
         Self(Arc::new(inner))
     }
+
+    /// Builds the shared components from the configuration. Opens no connection yet.
+    pub fn from_config(config: Config) -> anyhow::Result<Self> {
+        let db = db::pool(&config.database)?;
+        let github = GitHub::new(&config.github, &config.server.origin)?;
+        let admin_api = AdminApi::new(&config.admin_api)?;
+        Ok(Self::new(ServerContextInner {
+            config,
+            db,
+            github,
+            admin_api,
+        }))
+    }
 }
 
 /// Lets handlers read and write encrypted cookies with `PrivateCookieJar`.

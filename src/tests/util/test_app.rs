@@ -10,13 +10,12 @@ use axum_extra::extract::cookie::Cookie;
 use diesel_async::AsyncPgConnection;
 use http::header::SET_COOKIE;
 use secrecy::SecretString;
-use status_list_portal::admin_api::{AdminApi, SigningAlgorithm};
+use status_list_portal::admin_api::SigningAlgorithm;
 use status_list_portal::auth::Session;
 use status_list_portal::config::{self, Config, PublicOrigin, SessionKey};
-use status_list_portal::github::GitHub;
 use status_list_portal::models::{NewUser, TermsAcceptance, User};
 use status_list_portal::util::logging::LogFormat;
-use status_list_portal::{Env, ServerContext, ServerContextInner, build_handler, db};
+use status_list_portal::{Env, ServerContext, build_handler};
 use url::Url;
 use wiremock::MockServer;
 
@@ -112,6 +111,13 @@ impl TestApp {
         }
     }
 
+    /// Creates a user who may register issuers: they accepted the current terms of use.
+    pub async fn db_new_registrant(&self, login: &str) -> MockCookieUser {
+        let user = self.db_new_user(login).await;
+        self.accept_terms(user.user()).await;
+        user
+    }
+
     /// Records that `user` accepted the current terms of use.
     pub async fn accept_terms(&self, user: &User) {
         TermsAcceptance {
@@ -185,17 +191,7 @@ impl TestAppBuilder {
                 session_key.clone(),
             )
         };
-        let db = db::pool(&config.database).expect("failed to build the database pool");
-        let github_client = GitHub::new(&config.github, &config.server.origin)
-            .expect("failed to build the GitHub client");
-        let admin_api_client =
-            AdminApi::new(&config.admin_api).expect("failed to build the admin API client");
-        let ctx = ServerContext::new(ServerContextInner {
-            config,
-            db,
-            github: github_client,
-            admin_api: admin_api_client,
-        });
+        let ctx = ServerContext::from_config(config).expect("failed to build the server context");
         let app = TestApp(Arc::new(TestAppInner {
             router: build_handler(ctx.clone()),
             github,

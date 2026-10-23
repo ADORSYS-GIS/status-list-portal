@@ -3,6 +3,8 @@
 //! The enums are closed, like the contract's: a value added to the contract later makes the
 //! response fail to parse until the portal learns it.
 
+use std::str::FromStr;
+
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -51,6 +53,24 @@ pub enum SigningAlgorithm {
     #[display("PS256")]
     Ps256,
 }
+
+impl FromStr for SigningAlgorithm {
+    type Err = UnknownAlgorithm;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name {
+            "ES256" => Ok(Self::Es256),
+            "ES384" => Ok(Self::Es384),
+            "EdDSA" => Ok(Self::EdDsa),
+            "PS256" => Ok(Self::Ps256),
+            _ => Err(UnknownAlgorithm(name.to_owned())),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0:?} is not an algorithm the server accepts")]
+pub struct UnknownAlgorithm(String);
 
 impl From<SigningAlgorithm> for jsonwebtoken::Algorithm {
     fn from(algorithm: SigningAlgorithm) -> Self {
