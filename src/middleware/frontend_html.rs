@@ -3,6 +3,8 @@
 //! The frontend routes in the browser, so every page has the same HTML: the build's fallback
 //! page. Browser navigations outside the backend's own paths get it; every other request
 //! goes on to the router.
+//!
+//! The page and its policy are read once, at startup: a new build needs a restart.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

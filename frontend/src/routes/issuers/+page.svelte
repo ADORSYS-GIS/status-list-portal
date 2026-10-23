@@ -13,12 +13,21 @@
 
   let waiting = $derived(data.registrations.filter((registration) => !registration.issuer_id));
 
+  let withdrawing = $state(false);
+
   async function withdraw(registration: Registration) {
-    const { error } = await createApi().DELETE('/api/v1/registrations/{id}', {
-      params: { path: { id: registration.id } },
-    });
-    failure = error ? errorMessage(error) : null;
-    await invalidateAll();
+    withdrawing = true;
+    try {
+      const { error } = await createApi().DELETE('/api/v1/registrations/{id}', {
+        params: { path: { id: registration.id } },
+      });
+      failure = error ? errorMessage(error) : null;
+      await invalidateAll();
+    } catch {
+      failure = errorMessage(undefined);
+    } finally {
+      withdrawing = false;
+    }
   }
 </script>
 
@@ -54,7 +63,7 @@
       An operator reviews each registration before its issuer is created. Rejected ones count toward
       the issuers your account may register.
     </p>
-    <RegistrationList registrations={waiting} onwithdraw={withdraw} />
+    <RegistrationList registrations={waiting} busy={withdrawing} onwithdraw={withdraw} />
   </section>
 {/if}
 

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { resolve } from '$app/paths';
   import type { Registration } from '#lib/api/index.ts';
   import { formatDateTime } from '#lib/format.ts';
 
@@ -7,8 +6,13 @@
 
   let {
     registrations,
+    busy,
     onwithdraw,
-  }: { registrations: Registration[]; onwithdraw: (registration: Registration) => void } = $props();
+  }: {
+    registrations: Registration[];
+    busy: boolean;
+    onwithdraw: (registration: Registration) => void;
+  } = $props();
 </script>
 
 <ul>
@@ -22,15 +26,13 @@
       {#if registration.state === 'rejected' && registration.rejection_reason}
         <p>Reason: {registration.rejection_reason}</p>
       {/if}
-      {#if registration.state === 'approved' && registration.issuer_id}
-        <p>
-          <a href={resolve('/issuers/[id]', { id: encodeURIComponent(registration.issuer_id) })}
-            >Open the issuer</a
-          >
-        </p>
-      {/if}
       {#if registration.state === 'pending'}
-        <button type="button" class="button" onclick={() => onwithdraw(registration)}>
+        <button
+          type="button"
+          class="button"
+          disabled={busy}
+          onclick={() => onwithdraw(registration)}
+        >
           Withdraw
         </button>
       {/if}

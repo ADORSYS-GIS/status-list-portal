@@ -27,17 +27,28 @@
   });
 
   async function signOut() {
-    await createApi().DELETE('/api/v1/session');
-    await goto(resolve('/'), { invalidateAll: true });
+    try {
+      await createApi().DELETE('/api/v1/session');
+    } finally {
+      // Signed out or not, a reload shows the account as the server sees it.
+      await goto(resolve('/'), { invalidateAll: true });
+    }
   }
 </script>
 
 <a class="skip" href="#main">Skip to content</a>
 <Header user={data.user} onsignout={signOut} />
 <main id="main" class="page" tabindex="-1" bind:this={main}>
-  {#if notices.current && notices.current.path === page.url.pathname}
-    <Notice kind={notices.current.kind}><p>{notices.current.message}</p></Notice>
-  {/if}
+  <!-- A live region that stays on the page, so that screen readers announce each notice. -->
+  <div role="status">
+    {#if notices.current && notices.current.path === page.url.pathname}
+      {#key notices.current}
+        <Notice kind={notices.current.kind} announce={false}>
+          <p>{notices.current.message}</p>
+        </Notice>
+      {/key}
+    {/if}
+  </div>
   {@render children()}
 </main>
 <Footer terms={data.terms} />

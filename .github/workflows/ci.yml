@@ -140,6 +140,10 @@ jobs:
       - name: Build
         run: bun run build
 
+      # The backend reads the policy from this tag; keep it in the form the backend expects.
+      - name: Check the page's content security policy
+        run: grep -q '<meta http-equiv="content-security-policy" content="' frontend/build/200.html
+
   markdown:
     name: Markdown
     runs-on: ubuntu-latest

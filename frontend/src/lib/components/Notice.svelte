@@ -5,7 +5,11 @@
 
   type Kind = 'info' | 'success' | 'warning' | 'error';
 
-  let { kind = 'info', children }: { kind?: Kind; children: Snippet } = $props();
+  let {
+    kind = 'info',
+    announce = true,
+    children,
+  }: { kind?: Kind; announce?: boolean; children: Snippet } = $props();
 
   const ICONS: Record<Kind, IconName> = {
     info: 'information-circle',
@@ -15,7 +19,7 @@
   };
 </script>
 
-<div class="notice {kind}" role={kind === 'error' ? 'alert' : 'status'}>
+<div class="notice {kind}" role={announce ? (kind === 'error' ? 'alert' : 'status') : undefined}>
   <Icon name={ICONS[kind]} />
   <div>{@render children()}</div>
 </div>
