@@ -1,9 +1,14 @@
 //! Middleware applied to every request.
 
 mod cross_origin;
+mod frontend_html;
 mod headers;
+mod static_or_continue;
+
+pub use frontend_html::Frontend;
 
 use std::any::Any;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
@@ -25,8 +30,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// short fields.
 const MAX_BODY_SIZE: usize = 16 * 1024;
 
-/// Wraps `router` in every middleware. `origin` is where browsers reach the portal.
-pub fn apply_middleware(router: Router, origin: &PublicOrigin) -> Router {
+/// Wraps `router` in every middleware. `origin` is where browsers reach the portal; the
+/// `frontend`, if built, is served in front of the router.
+pub fn apply_middleware(
+    router: Router,
+    origin: &PublicOrigin,
+    frontend: Option<Arc<Frontend>>,
+) -> Router {
     // Security headers sit outside the other layers, so the responses those layers produce
     // carry them too.
     let middleware = ServiceBuilder::new()
@@ -43,9 +53,15 @@ pub fn apply_middleware(router: Router, origin: &PublicOrigin) -> Router {
         .layer(CatchPanicLayer::custom(handle_panic))
         .layer(from_fn(time_out));
 
-    router
-        .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
-        .layer(middleware)
+    let router = router.layer(DefaultBodyLimit::max(MAX_BODY_SIZE));
+    let router = match frontend {
+        // The outer layer serves built files; the inner one, the page for the rest.
+        Some(frontend) => router
+            .layer(from_fn_with_state(frontend.clone(), frontend_html::serve))
+            .layer(from_fn_with_state(frontend, static_or_continue::serve)),
+        None => router,
+    };
+    router.layer(middleware)
 }
 
 /// Records the method and path only. Query strings can carry OAuth codes, which must not
@@ -94,7 +110,7 @@ mod tests {
 
         let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
 
-        let response = apply_middleware(router, &origin)
+        let response = apply_middleware(router, &origin, None)
             .oneshot(request)
             .await
             .unwrap();
@@ -119,7 +135,7 @@ mod tests {
 
         let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
 
-        let response = apply_middleware(router, &origin)
+        let response = apply_middleware(router, &origin, None)
             .oneshot(request)
             .await
             .unwrap();
