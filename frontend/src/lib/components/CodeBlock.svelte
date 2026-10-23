@@ -11,7 +11,7 @@
   </figcaption>
   <!-- Long lines scroll, so keyboard users need to focus the block to scroll it. -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <pre tabindex="0" aria-label={title}><code>{code}</code></pre>
+  <pre tabindex="0" role="region" aria-label={title}><code>{code}</code></pre>
 </figure>
 
 <style>

@@ -23,26 +23,40 @@
   let path = $derived({ params: { path: { id: issuer.id } } });
 
   async function renew() {
-    busy = true;
-    const { error } = await createApi().POST('/api/v1/issuers/{id}/renew', path);
-    busy = false;
-    failure = error ? errorMessage(error) : null;
-    if (!error) {
-      flash(page.url.pathname, 'success', 'Renewed for 30 more days.');
+    await act(async () => {
+      const { error } = await createApi().POST('/api/v1/issuers/{id}/renew', path);
+      if (error) {
+        failure = errorMessage(error);
+        return;
+      }
+      flash(page.url.pathname, 'success', 'Renewed. The new expiry date is below.');
       await invalidateAll();
-    }
+    });
   }
 
   async function remove() {
+    await act(async () => {
+      const { error } = await createApi().DELETE('/api/v1/issuers/{id}', path);
+      if (error) {
+        failure = errorMessage(error);
+        return;
+      }
+      flash('/issuers', 'success', `${name} is deleted. Its tokens are no longer accepted.`);
+      await goto(resolve('/issuers'), { invalidateAll: true });
+    });
+  }
+
+  /** Runs `action` with the buttons disabled. A failed request is reported, never lost. */
+  async function act(action: () => Promise<void>) {
     busy = true;
-    const { error } = await createApi().DELETE('/api/v1/issuers/{id}', path);
-    busy = false;
-    if (error) {
-      failure = errorMessage(error);
-      return;
+    failure = null;
+    try {
+      await action();
+    } catch {
+      failure = errorMessage(undefined);
+    } finally {
+      busy = false;
     }
-    flash('/issuers', 'success', `${name} is deleted. Its tokens are no longer accepted.`);
-    await goto(resolve('/issuers'), { invalidateAll: true });
   }
 </script>
 

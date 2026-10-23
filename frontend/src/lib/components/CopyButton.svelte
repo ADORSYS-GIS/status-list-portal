@@ -8,13 +8,17 @@
 
   let copied = $state(false);
   let failed = $state(false);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  $effect(() => () => clearTimeout(timer));
 
   async function copy() {
     try {
       await navigator.clipboard.writeText(text);
       copied = true;
       failed = false;
-      setTimeout(() => (copied = false), CONFIRMATION_MS);
+      clearTimeout(timer);
+      timer = setTimeout(() => (copied = false), CONFIRMATION_MS);
     } catch {
       failed = true;
     }

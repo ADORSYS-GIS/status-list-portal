@@ -1,7 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import { goto } from '$app/navigation';
-  import { createApi, errorMessage, type Issuer } from '#lib/api/index.ts';
+  import { createApi, errorMessage } from '#lib/api/index.ts';
   import IssuerForm, { type IssuerFormValues } from '#lib/components/IssuerForm.svelte';
   import Notice from '#lib/components/Notice.svelte';
   import { flash } from '#lib/notices.svelte.ts';
@@ -49,9 +49,16 @@
         await goto(resolve('/issuers'), { invalidateAll: true });
         return;
       }
-      const path = resolve('/issuers/[id]', { id: encodeURIComponent((created as Issuer).id) });
+      if (!created || !('keys' in created)) {
+        failure = errorMessage(undefined);
+        return;
+      }
+      // `resolve` fills in the id as it is, so it is encoded here.
+      const path = resolve('/issuers/[id]', { id: encodeURIComponent(created.id) });
       flash(path, 'success', 'Your issuer is ready. Sign a token below to publish a status list.');
       await goto(path, { invalidateAll: true });
+    } catch {
+      failure = errorMessage(undefined);
     } finally {
       submitting = false;
     }

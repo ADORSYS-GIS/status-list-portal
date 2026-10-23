@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 
 import { createApi, errorMessage } from '#lib/api/index.ts';
-import { requireUser } from '#lib/session.ts';
+import { requireUser, SESSION_ENDED } from '#lib/session.ts';
 
 import type { PageLoad } from './$types';
 
@@ -13,6 +13,9 @@ export const load: PageLoad = async ({ fetch, parent }) => {
     api.GET('/api/v1/issuers'),
     api.GET('/api/v1/registrations'),
   ]);
+  if (issuers.response.status === 401) {
+    error(401, SESSION_ENDED);
+  }
   if (issuers.error) {
     error(issuers.response.status, errorMessage(issuers.error));
   }

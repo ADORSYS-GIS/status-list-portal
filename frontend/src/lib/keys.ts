@@ -46,7 +46,7 @@ export function publicKeyProblem(text: string): string | null {
   if (typeof key !== 'object' || key === null || Array.isArray(key)) {
     return 'Paste the public key as a JSON Web Key: a JSON object.';
   }
-  if (PRIVATE_MEMBERS.some((member) => member in key)) {
+  if (PRIVATE_MEMBERS.some((member) => Object.hasOwn(key, member))) {
     return 'This is a private key. Do not send it anywhere: make a new key pair and paste only its public key.';
   }
   return null;
@@ -62,9 +62,11 @@ const { privateKey, publicKey } = await crypto.subtle.generateKey(
   true,
   ['sign', 'verify'],
 );
-// Keep private-key.json to yourself. It signs your issuer's tokens.
+// Keep private-key.json to yourself: it signs your issuer's tokens. The script refuses to
+// overwrite one you already have.
 await writeFile('private-key.json', JSON.stringify(await crypto.subtle.exportKey('jwk', privateKey)), {
   mode: 0o600,
+  flag: 'wx',
 });
 console.log(JSON.stringify(await crypto.subtle.exportKey('jwk', publicKey)));
 `;
