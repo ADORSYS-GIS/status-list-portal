@@ -1,4 +1,5 @@
 pub mod admin_api;
+pub mod telemetry;
 mod test_app;
 mod test_db;
 

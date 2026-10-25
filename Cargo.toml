@@ -40,9 +40,36 @@ diesel_migrations = "2.3"
 dotenvy = "0.15"
 hex = "0.4"
 http = "1.5"
+json-subscriber = { version = "0.3.1", features = ["tracing-opentelemetry-0-34"] }
 jsonwebtoken = { version = "11.1", features = ["aws_lc_rs"] }
 oauth2 = "5.0"
-# Held at 0.12, the version oauth2 5.0 is built on, so the build has a single reqwest.
+opentelemetry = {
+  version = "0.33",
+  default-features = false,
+  features = ["logs", "metrics", "trace"]
+}
+opentelemetry-appender-tracing = "0.33"
+opentelemetry-http = { version = "0.33", default-features = false }
+opentelemetry-otlp = {
+  version = "0.33",
+  default-features = false,
+  features = [
+    "gzip-http",
+    "http-proto",
+    "internal-logs",
+    "logs",
+    "metrics",
+    "reqwest-blocking-client",
+    "reqwest-rustls",
+    "trace"
+  ]
+}
+opentelemetry_sdk = {
+  version = "0.33",
+  default-features = false,
+  features = ["internal-logs", "logs", "metrics", "trace"]
+}
+# Held at 0.12, the version oauth2 5.0 is built on. The OTLP exporters bring their own 0.13.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -53,13 +80,16 @@ tokio = { version = "1.54", features = ["macros", "net", "rt-multi-thread", "sig
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.7", features = ["catch-panic", "fs", "trace"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-opentelemetry = { version = "0.34", default-features = false }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2.5"
 utoipa = { version = "6.0", features = ["time"] }
 utoipa-axum = "0.3"
+uuid = { version = "1.29", features = ["v4"] }
 
 [dev-dependencies]
 insta = { version = "1.49", features = ["json"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["testing"] }
 tokio = { version = "1.54", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 wiremock = "0.6"

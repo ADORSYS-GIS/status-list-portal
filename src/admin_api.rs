@@ -14,17 +14,26 @@ pub use issuer::{
     SigningAlgorithm, UnknownAlgorithm,
 };
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use derive_more::{Deref, Display};
 use http::{HeaderName, StatusCode};
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::{Histogram, Meter};
+use opentelemetry::propagation::TextMapPropagator;
+use opentelemetry_http::HeaderInjector;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use reqwest::{RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use tracing::field::Empty;
+use tracing::{Instrument, Span, info_span};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use url::Url;
 
 use crate::config;
+use crate::metrics::{DURATION_BUCKETS, method_name};
 use crate::util::errors;
 use token::TokenSigner;
 
@@ -41,12 +50,18 @@ const MAX_PAGE_SIZE: u8 = 100;
 const ISSUER_VERSION: HeaderName = HeaderName::from_static("issuer-version");
 /// A change applies only while the issuer is at the version this names.
 const IF_ISSUER_VERSION: HeaderName = HeaderName::from_static("if-issuer-version");
+/// The admin API's routes, as telemetry names its calls.
+const ISSUERS_ROUTE: &str = "/admin/v1/issuers";
+const ISSUER_ROUTE: &str = "/admin/v1/issuers/{id}";
 
 /// Client of the admin API, signed in as the portal's admin principal.
 pub struct AdminApi {
     http: reqwest::Client,
     issuers_url: Url,
     tokens: TokenSigner,
+    /// The admin API's host, as telemetry names the server.
+    host: String,
+    request_duration: Histogram<f64>,
 }
 
 /// The issuers of one portal account. Another account's issuer looks as if it did not
@@ -92,9 +107,17 @@ pub enum AdminApiError {
     #[error("the admin API is throttling the portal")]
     Throttled,
     #[error("admin API request failed")]
-    Request(#[from] reqwest::Error),
+    Request(#[source] reqwest::Error),
     #[error("failed to sign an admin token")]
     Token(#[from] jsonwebtoken::errors::Error),
+}
+
+/// Leaves out the request's URL, whose query can name an issuer's owner: an error is logged,
+/// and logs can be exported.
+impl From<reqwest::Error> for AdminApiError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error.without_url())
+    }
 }
 
 /// Why the admin API refused a call. Branch on it, never on the description.
@@ -147,9 +170,9 @@ struct CreateIssuerRequest<'a> {
 }
 
 impl AdminApi {
-    /// Builds the client. Fails when the signing key cannot be read or does not fit the
-    /// configured algorithm.
-    pub fn new(config: &config::AdminApi) -> anyhow::Result<Self> {
+    /// Builds the client, which records how long its calls take with `meter`. Fails when
+    /// the signing key cannot be read or does not fit the configured algorithm.
+    pub fn new(config: &config::AdminApi, meter: &Meter) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
             .user_agent(env!("CARGO_PKG_NAME"))
             .timeout(REQUEST_TIMEOUT)
@@ -160,10 +183,18 @@ impl AdminApi {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .context("failed to build the admin API client")?;
+        let request_duration = meter
+            .f64_histogram("http.client.request.duration")
+            .with_description("How long calls to the admin API took.")
+            .with_unit("s")
+            .with_boundaries(DURATION_BUCKETS.to_vec())
+            .build();
         Ok(Self {
             http,
             issuers_url: issuers_url(&config.url)?,
             tokens: TokenSigner::new(config)?,
+            host: config.url.host_str().unwrap_or_default().to_owned(),
+            request_duration,
         })
     }
 
@@ -175,7 +206,7 @@ impl AdminApi {
     /// One page of the issuers that match `query`, whoever owns them.
     async fn list_issuers(&self, query: &IssuerQuery) -> Result<IssuerPage, AdminApiError> {
         let request = self.http.get(self.issuers_url.clone()).query(query);
-        json(self.send(request).await?).await
+        json(self.send(ISSUERS_ROUTE, request).await?).await
     }
 
     /// How many issuers match `query`, whoever owns them. Counts no further than it must to
@@ -226,7 +257,7 @@ impl AdminApi {
         request: &CreateIssuerRequest<'_>,
     ) -> Result<Issuer, AdminApiError> {
         let request = self.http.post(self.issuers_url.clone()).json(request);
-        json(self.send(request).await?).await
+        json(self.send(ISSUERS_ROUTE, request).await?).await
     }
 
     /// `None` when the admin API knows no issuer with this id.
@@ -274,21 +305,82 @@ impl AdminApi {
         &self,
         request: RequestBuilder,
     ) -> Result<Option<(Issuer, IssuerVersion)>, AdminApiError> {
-        match self.send(request).await {
+        match self.send(ISSUER_ROUTE, request).await {
             Ok(response) => Ok(Some(with_version(response).await?)),
             Err(error) if error.code() == Some(ErrorCode::IssuerNotFound) => Ok(None),
             Err(error) => Err(error),
         }
     }
 
-    /// Sends the request with a fresh admin token. Error responses become errors.
-    async fn send(&self, request: RequestBuilder) -> Result<Response, AdminApiError> {
-        let response = request.bearer_auth(self.tokens.sign()?).send().await?;
+    /// Sends the request with a fresh admin token, in a span that the admin API continues.
+    /// Error responses become errors. `route` names the call in telemetry.
+    async fn send(
+        &self,
+        route: &'static str,
+        request: RequestBuilder,
+    ) -> Result<Response, AdminApiError> {
+        let mut request = request.bearer_auth(self.tokens.sign()?).build()?;
+        let method = method_name(request.method());
+        let span = info_span!(
+            "admin_api",
+            otel.name = format!("{method} {route}"),
+            otel.kind = "client",
+            otel.status_code = Empty,
+            http.request.method = method,
+            http.response.status_code = Empty,
+            error.type = Empty,
+            server.address = self.host.as_str(),
+            url.template = route,
+        );
+        TraceContextPropagator::new()
+            .inject_context(&span.context(), &mut HeaderInjector(request.headers_mut()));
+
+        let started = Instant::now();
+        let result = self.http.execute(request).instrument(span.clone()).await;
+        self.record(&span, method, route, &result, started.elapsed());
+
+        let response = result?;
         if response.status().is_success() {
             Ok(response)
         } else {
             Err(AdminApiError::from_response(response).await)
         }
+    }
+
+    /// Records how a call went, in its span and in the call durations.
+    fn record(
+        &self,
+        span: &Span,
+        method: &'static str,
+        route: &'static str,
+        result: &Result<Response, reqwest::Error>,
+        duration: Duration,
+    ) {
+        let outcome = match result {
+            Ok(response) => {
+                let status = response.status();
+                span.record("http.response.status_code", i64::from(status.as_u16()));
+                if status.is_server_error() {
+                    span.record("otel.status_code", "ERROR");
+                    span.record("error.type", status.as_str());
+                }
+                KeyValue::new("http.response.status_code", i64::from(status.as_u16()))
+            }
+            Err(error) => {
+                let error_type = error_type(error);
+                span.record("otel.status_code", "ERROR");
+                span.record("error.type", error_type);
+                KeyValue::new("error.type", error_type)
+            }
+        };
+        let attributes = [
+            KeyValue::new("http.request.method", method),
+            KeyValue::new("url.template", route),
+            KeyValue::new("server.address", self.host.clone()),
+            outcome,
+        ];
+        self.request_duration
+            .record(duration.as_secs_f64(), &attributes);
     }
 }
 
@@ -386,6 +478,17 @@ impl AdminApiError {
     }
 }
 
+/// Why a call got no response, as telemetry's `error.type` names it.
+fn error_type(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else {
+        "_OTHER"
+    }
+}
+
 /// The admin API's issuers collection under `base`, which may have a path of its own.
 fn issuers_url(base: &Url) -> anyhow::Result<Url> {
     let mut url = base.clone();
@@ -417,10 +520,10 @@ async fn json<T: DeserializeOwned>(response: Response) -> Result<T, AdminApiErro
         if error.is_decode() {
             AdminApiError::Unexpected(format!(
                 "a body that does not match the contract: {}",
-                errors::describe(&error)
+                errors::describe(&error.without_url())
             ))
         } else {
-            AdminApiError::Request(error)
+            error.into()
         }
     })
 }
@@ -428,6 +531,22 @@ async fn json<T: DeserializeOwned>(response: Response) -> Result<T, AdminApiErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::errors;
+
+    #[tokio::test]
+    async fn refused_connections_leave_out_the_url() {
+        // Nothing listens on port 1.
+        let error = reqwest::Client::new()
+            .get("http://127.0.0.1:1/admin/v1/issuers?owner=github%7C42")
+            .send()
+            .await
+            .unwrap_err();
+        assert_eq!(error_type(&error), "connect");
+
+        let error = AdminApiError::from(error);
+
+        assert!(!errors::describe(&error).contains("owner"));
+    }
 
     #[test]
     fn the_issuers_live_under_the_admin_api_url() {

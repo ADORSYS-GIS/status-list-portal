@@ -14,6 +14,7 @@ mod not_found;
 mod pool;
 mod registrations;
 mod session;
+mod telemetry;
 mod terms;
 mod users;
 mod util;

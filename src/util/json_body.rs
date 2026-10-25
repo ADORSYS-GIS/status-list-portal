@@ -29,7 +29,11 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
+    use opentelemetry::metrics::MeterProvider;
+    use opentelemetry::metrics::noop::NoopMeterProvider;
+
     use crate::config::PublicOrigin;
+    use crate::metrics::Metrics;
     use crate::middleware::apply_middleware;
 
     #[derive(Deserialize)]
@@ -43,7 +47,13 @@ mod tests {
 
     async fn send(content_type: &str, body: impl Into<Body>) -> Response {
         let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
-        let router = apply_middleware(Router::new().route("/greet", post(greet)), &origin, None);
+        let metrics = Metrics::new(&NoopMeterProvider::new().meter("test"));
+        let router = apply_middleware(
+            Router::new().route("/greet", post(greet)),
+            &origin,
+            metrics,
+            None,
+        );
         let request = Request::post("/greet")
             .header(CONTENT_TYPE, content_type)
             .body(body.into())

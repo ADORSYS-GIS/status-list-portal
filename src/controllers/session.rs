@@ -10,6 +10,7 @@ use utoipa::IntoParams;
 
 use crate::auth::{self, SESSION_COOKIE, SIGN_IN_COOKIE, Session};
 use crate::github::{Account, PendingSignIn, SignInError};
+use crate::metrics::SignInOutcome;
 use crate::models::{NewUser, User};
 use crate::server::ServerContext;
 use crate::util::errors::{self, AppResult};
@@ -67,6 +68,13 @@ impl Failure {
         };
         Redirect::to(&format!("/?sign_in_error={reason}"))
     }
+
+    fn outcome(self) -> SignInOutcome {
+        match self {
+            Self::Denied | Self::Expired | Self::NoVerifiedEmail => SignInOutcome::Refused,
+            Self::Unavailable => SignInOutcome::Failed,
+        }
+    }
 }
 
 /// Finishes signing in when GitHub sends the browser back, then goes to the home page.
@@ -91,13 +99,21 @@ pub async fn callback(
 ) -> (PrivateCookieJar, Redirect) {
     let pending = auth::pending_sign_in(&jar)
         .filter(|pending| query.state.as_deref() == Some(pending.state.as_str()));
-    let Some(pending) = pending else {
-        // The cookie stays: a link that is not this sign-in's must not cancel it.
-        return (jar, Failure::Expired.redirect());
+    let result = match &pending {
+        Some(pending) => sign_in(&ctx, pending, query).await,
+        None => Err(Failure::Expired),
     };
+    ctx.metrics.sign_in(match result {
+        Ok(_) => SignInOutcome::Succeeded,
+        Err(failure) => failure.outcome(),
+    });
 
-    let jar = jar.remove(auth::removal(SIGN_IN_COOKIE));
-    match sign_in(&ctx, &pending, query).await {
+    // A link that is not this sign-in's must not cancel it.
+    let jar = match pending {
+        Some(_) => jar.remove(auth::removal(SIGN_IN_COOKIE)),
+        None => jar,
+    };
+    match result {
         Ok(user) => (
             jar.add(Session::new(&user).into_cookie()),
             Redirect::to("/"),
