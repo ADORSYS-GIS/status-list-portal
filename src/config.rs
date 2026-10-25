@@ -3,8 +3,11 @@
 //! Every setting comes from an environment variable named `APP_` followed by the setting's
 //! path in upper case, with `__` between nested keys: `server.bind_address` is read from
 //! `APP_SERVER__BIND_ADDRESS`. An empty variable counts as unset. `.env.template` documents
-//! every setting.
+//! every setting. Secrets can also come from files: see [`secret_files`].
 
+mod secret_files;
+
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::{NonZeroU16, NonZeroUsize};
 use std::path::PathBuf;
@@ -88,8 +91,9 @@ pub struct MigrationConfig {
 }
 
 impl MigrationConfig {
+    /// Reads the database settings as [`Config::from_environment`] does, secret files included.
     pub fn from_environment() -> Result<Self, ConfigError> {
-        load(environment())
+        load(process_vars())
     }
 }
 
@@ -305,15 +309,35 @@ impl<'de> Deserialize<'de> for SessionKey {
 }
 
 impl Config {
-    /// Reads the configuration from the process environment.
+    /// Reads the configuration from the process environment, and the secret files it names.
+    /// Variables whose names or values are not Unicode are left out.
     pub fn from_environment() -> Result<Self, ConfigError> {
-        load(environment())
+        load(process_vars())
     }
 }
 
-fn load<T: DeserializeOwned>(environment: Environment) -> Result<T, ConfigError> {
-    ::config::Config::builder()
-        .add_source(environment)
+/// The process environment. Variables whose names or values are not Unicode are left out.
+fn process_vars() -> HashMap<String, String> {
+    std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .collect()
+}
+
+/// Reads settings from `vars`, as if they were the process environment, and from the secret
+/// files they name.
+fn load<T: DeserializeOwned>(vars: HashMap<String, String>) -> Result<T, ConfigError> {
+    let builder = secret_files::read(&vars)?
+        .into_iter()
+        .try_fold(::config::Config::builder(), |builder, (setting, value)| {
+            builder.set_override(setting, value)
+        })?;
+    // The `_FILE` variables are read above; as settings, they would be unknown.
+    let vars = vars
+        .into_iter()
+        .filter(|(name, _)| !secret_files::is_file_variable(name))
+        .collect();
+    builder
+        .add_source(environment().source(Some(vars)))
         .build()?
         .try_deserialize()
         .map_err(without_value)
@@ -448,7 +472,7 @@ mod tests {
             .into_iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect();
-        super::load(environment().source(Some(vars)))
+        super::load(vars)
     }
 
     /// Loads the required settings, then these variables, which can override them.
@@ -489,8 +513,7 @@ mod tests {
             ),
             ("APP_LOG_FORMAT".to_owned(), "json".to_owned()),
         ];
-        let config: MigrationConfig =
-            super::load(environment().source(Some(vars.into_iter().collect()))).unwrap();
+        let config: MigrationConfig = super::load(vars.into_iter().collect()).unwrap();
         assert_eq!(config.env, Env::Production);
         assert_eq!(config.log_format, LogFormat::Json);
         assert_eq!(config.database.url.expose_secret(), DATABASE_URL);
@@ -599,6 +622,58 @@ mod tests {
         let debug = format!("{config:?}");
 
         assert!(!debug.contains("s3cr3t"), "{debug}");
+    }
+
+    #[test]
+    fn secrets_can_come_from_files() {
+        let dir = std::env::temp_dir().join(format!("portal-secrets-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let key_file = dir.join("session-key");
+        let secret_file = dir.join("client-secret");
+        std::fs::write(&key_file, format!("{SESSION_KEY}\n")).unwrap();
+        std::fs::write(&secret_file, "s3cr3t-from-file\n").unwrap();
+        let from_files = [
+            ("APP_SESSION__KEY_FILE", key_file.to_str().unwrap()),
+            (
+                "APP_GITHUB__CLIENT_SECRET_FILE",
+                secret_file.to_str().unwrap(),
+            ),
+        ];
+        let from_variables = ["APP_SESSION__KEY", "APP_GITHUB__CLIENT_SECRET"];
+
+        let config = load_exactly(
+            REQUIRED
+                .iter()
+                .filter(|(name, _)| !from_variables.contains(name))
+                .chain(&from_files),
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let config = config.unwrap();
+        assert_eq!(
+            config.github.client_secret.expose_secret(),
+            "s3cr3t-from-file"
+        );
+        let from_variable = load(&[]).unwrap();
+        assert_eq!(
+            config.session.key.key().master(),
+            from_variable.session.key.key().master()
+        );
+    }
+
+    #[test]
+    fn the_migration_job_reads_the_database_url_from_a_file() {
+        let file = std::env::temp_dir().join(format!("portal-db-url-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&file, format!("{DATABASE_URL}\n")).unwrap();
+        let vars = [(
+            "APP_DATABASE__URL_FILE".to_owned(),
+            file.to_str().unwrap().to_owned(),
+        )];
+
+        let config: Result<MigrationConfig, _> = super::load(vars.into_iter().collect());
+        std::fs::remove_file(&file).unwrap();
+
+        assert_eq!(config.unwrap().database.url.expose_secret(), DATABASE_URL);
     }
 
     #[test]
