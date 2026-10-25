@@ -5,10 +5,12 @@ use crate::config::Config;
 use crate::controllers::health::DatabaseReadiness;
 use crate::db;
 use crate::github::GitHub;
+use crate::metrics::Metrics;
 use crate::middleware::Frontend;
 use axum::extract::{FromRef, FromRequestParts, State};
 use axum_extra::extract::cookie::Key;
 use derive_more::Deref;
+use opentelemetry::metrics::Meter;
 use std::sync::Arc;
 
 /// Components shared across requests.
@@ -18,6 +20,7 @@ pub struct ServerContextInner {
     pub readiness: Option<DatabaseReadiness>,
     pub github: GitHub,
     pub admin_api: AdminApi,
+    pub metrics: Metrics,
     /// The built frontend, when the server serves it.
     pub frontend: Option<Arc<Frontend>>,
 }
@@ -32,11 +35,14 @@ impl ServerContext {
         Self(Arc::new(inner))
     }
 
-    /// Builds the shared components from the configuration. Opens no connection yet.
-    pub fn from_config(config: Config) -> anyhow::Result<Self> {
+    /// Builds the shared components from the configuration, recording metrics with `meter`.
+    /// Opens no connection yet.
+    pub fn from_config(config: Config, meter: &Meter) -> anyhow::Result<Self> {
         let db = db::pool(&config.database)?;
+        let metrics = Metrics::new(meter);
+        metrics.track_db_pool(&db);
         let github = GitHub::new(&config.github, &config.server.origin)?;
-        let admin_api = AdminApi::new(&config.admin_api)?;
+        let admin_api = AdminApi::new(&config.admin_api, meter)?;
         let frontend = match &config.server.frontend_dir {
             Some(dir) => Some(Arc::new(Frontend::load(dir)?)),
             None => None,
@@ -47,6 +53,7 @@ impl ServerContext {
             readiness: None,
             github,
             admin_api,
+            metrics,
             frontend,
         }))
     }

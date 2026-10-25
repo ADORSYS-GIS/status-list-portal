@@ -22,6 +22,7 @@ use crate::util::admin_api::{
     EXPIRES_AT, ISSUER_ID, admin_api_holds, issuer_json, issuer_response, public_jwk_json,
     static_issuer_json,
 };
+use crate::util::telemetry::MetricsRecorder;
 use crate::util::{ADMIN_AUDIENCE, ADMIN_KEY_ID, ADMIN_PRINCIPAL, ADMIN_SIGNING_KEY_FILE, TestApp};
 
 const ISSUER_PATH: &str = "/admin/v1/issuers/6f1c2a9e-0b7d-4c1e-9a53-2f8d7e4b1c00";
@@ -642,14 +643,17 @@ async fn an_admin_api_that_is_down_is_a_bad_gateway() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     drop(listener);
-    let admin_api = AdminApi::new(&config::AdminApi {
-        url: Url::parse(&format!("http://{address}")).unwrap(),
-        principal: ADMIN_PRINCIPAL.to_string(),
-        audience: ADMIN_AUDIENCE.to_string(),
-        signing_key_file: ADMIN_SIGNING_KEY_FILE.into(),
-        key_id: ADMIN_KEY_ID.to_string(),
-        algorithm: SigningAlgorithm::Es256,
-    })
+    let admin_api = AdminApi::new(
+        &config::AdminApi {
+            url: Url::parse(&format!("http://{address}")).unwrap(),
+            principal: ADMIN_PRINCIPAL.to_string(),
+            audience: ADMIN_AUDIENCE.to_string(),
+            signing_key_file: ADMIN_SIGNING_KEY_FILE.into(),
+            key_id: ADMIN_KEY_ID.to_string(),
+            algorithm: SigningAlgorithm::Es256,
+        },
+        &MetricsRecorder::new().meter(),
+    )
     .unwrap();
     let owner = octocat();
 
