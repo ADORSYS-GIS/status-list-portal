@@ -1,8 +1,8 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import type { User } from '#lib/api/index.ts';
-  import logo from '#lib/assets/adorsys-logo.png';
 
+  import AdorsysLogo from './AdorsysLogo.svelte';
   import GitHubMark from './GitHubMark.svelte';
   import Icon from './Icon.svelte';
 
@@ -12,8 +12,8 @@
 <header>
   <div class="bar">
     <a class="brand" href={resolve('/')}>
-      <img src={logo} alt="adorsys" width="32" height="32" />
-      <span>Status List Portal</span>
+      <AdorsysLogo />
+      <span class="product">Status List Portal</span>
     </a>
     <nav aria-label="Account">
       {#if user}
@@ -62,8 +62,9 @@
     text-decoration: none;
   }
 
-  .brand img {
-    border-radius: 4px;
+  .product {
+    padding-left: var(--space-3);
+    border-left: 1px solid var(--color-border);
   }
 
   nav {
