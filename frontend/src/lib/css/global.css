@@ -1,18 +1,20 @@
-/* Design tokens. The accent is adorsys blue; every text color meets WCAG AA on its background. */
+/* Design tokens. The brand colors are those of adorsys.com: ink #101828, accent blue #144587,
+   and the lighter blues #25a8db and #7ccbe9 in dark mode. Every text color meets WCAG AA on
+   its background. */
 :root {
   color-scheme: light dark;
 
-  --color-accent: #2f2cf9;
-  --color-accent-hover: #2420d6;
+  --color-accent: #144587;
+  --color-accent-hover: #101828;
   --color-on-accent: #ffffff;
-  --color-link: #2f2cf9;
+  --color-link: #144587;
   --color-bg: #ffffff;
   --color-surface: #f8fafc;
   --color-border: #cbd5e1;
-  --color-text: #0f172a;
+  --color-text: #101828;
   --color-muted: #475569;
   --color-code-bg: #f1f5f9;
-  --color-focus: #2f2cf9;
+  --color-focus: #144587;
   --color-success: #15803d;
   --color-success-bg: #f0fdf4;
   --color-warning: #a16207;
@@ -39,16 +41,17 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-accent: #4b48fa;
-    --color-accent-hover: #6461fb;
-    --color-link: #8584fb;
+    --color-accent: #25a8db;
+    --color-accent-hover: #7ccbe9;
+    --color-on-accent: #101828;
+    --color-link: #7ccbe9;
     --color-bg: #0b1120;
     --color-surface: #111827;
     --color-border: #334155;
     --color-text: #f1f5f9;
     --color-muted: #a3b1c6;
     --color-code-bg: #1e293b;
-    --color-focus: #8584fb;
+    --color-focus: #7ccbe9;
     --color-success: #4ade80;
     --color-success-bg: #052e16;
     --color-warning: #facc15;
