@@ -119,11 +119,13 @@ pub struct GitHub {
     pub client_id: String,
     /// The OAuth app's client secret (`APP_GITHUB__CLIENT_SECRET`).
     pub client_secret: SecretString,
-    /// Where GitHub serves its sign-in pages. Only tests change it.
-    #[serde(skip, default = "default_github_web_url")]
+    /// Where GitHub serves its sign-in pages (`APP_GITHUB__WEB_URL`), ending with `/`. Only
+    /// tests point it elsewhere, at a stand-in for GitHub; production refuses that.
+    #[serde(default = "default_github_web_url", deserialize_with = "http_url")]
     pub web_url: Url,
-    /// Where GitHub serves its REST API. Only tests change it.
-    #[serde(skip, default = "default_github_api_url")]
+    /// Where GitHub serves its REST API (`APP_GITHUB__API_URL`), ending with `/`. Only tests
+    /// point it elsewhere.
+    #[serde(default = "default_github_api_url", deserialize_with = "http_url")]
     pub api_url: Url,
 }
 
@@ -375,7 +377,27 @@ impl Config {
     /// Reads the configuration from the process environment, and the secret files it names.
     /// Variables whose names or values are not Unicode are left out.
     pub fn from_environment() -> Result<Self, ConfigError> {
-        load(process_vars())
+        Self::from_vars(process_vars())
+    }
+
+    /// Reads the configuration from `vars`, as if they were the process environment.
+    fn from_vars(vars: HashMap<String, String>) -> Result<Self, ConfigError> {
+        load::<Self>(vars)?.refuse_stand_ins()
+    }
+
+    /// Refuses, in production, a stand-in for GitHub: end-to-end tests sign in through one.
+    fn refuse_stand_ins(self) -> Result<Self, ConfigError> {
+        let github = &self.github;
+        let stand_in = github.web_url != default_github_web_url()
+            || github.api_url != default_github_api_url();
+        if self.env == Env::Production && stand_in {
+            return Err(ConfigError::Message(
+                "APP_GITHUB__WEB_URL and APP_GITHUB__API_URL are for tests: in production, the \
+                 portal signs developers in with GitHub itself"
+                    .to_string(),
+            ));
+        }
+        Ok(self)
     }
 }
 
@@ -539,7 +561,7 @@ mod tests {
             .into_iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect();
-        super::load(vars)
+        Config::from_vars(vars)
     }
 
     /// Loads the required settings, then these variables, which can override them.
@@ -870,6 +892,26 @@ mod tests {
                 .contains("rate_limits.sign_in.refill_seconds"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn github_can_be_stood_in_for_outside_production() {
+        let stand_in = [
+            ("APP_GITHUB__WEB_URL", "http://127.0.0.1:18090/"),
+            ("APP_GITHUB__API_URL", "http://127.0.0.1:18090/api/"),
+        ];
+
+        let config = load(&[("APP_ENV", "development"), stand_in[0], stand_in[1]]).unwrap();
+
+        assert_eq!(config.github.web_url.as_str(), "http://127.0.0.1:18090/");
+        assert_eq!(
+            config.github.api_url.as_str(),
+            "http://127.0.0.1:18090/api/"
+        );
+        let in_production = [("APP_ENV", "production"), stand_in[1]];
+        let error = load(&in_production).unwrap_err();
+        assert!(error.to_string().contains("APP_GITHUB__WEB_URL"), "{error}");
+        assert!(load(&[("APP_ENV", "production")]).is_ok());
     }
 
     #[test]

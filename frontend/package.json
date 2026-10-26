@@ -15,7 +15,8 @@
     "lint": "prettier --check . && eslint .",
     "prepare": "svelte-kit sync || echo ''",
     "preview": "vite preview",
-    "test": "vitest --run"
+    "test": "vitest --run",
+    "test:e2e": "vite build && playwright test"
   },
   "dependencies": {
     "@fontsource-variable/ibm-plex-sans": "^5.3",
@@ -24,16 +25,19 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0",
+    "@playwright/test": "^1.64",
     "@sveltejs/adapter-static": "^4.0",
     "@sveltejs/kit": "^3.1",
     "@sveltejs/vite-plugin-svelte": "^7.3",
     "@types/node": "^26.6",
+    "@types/pg": "^8.23",
     "@vitest/browser-playwright": "^5.0",
     "eslint": "^10.13",
     "eslint-plugin-svelte": "^3.23",
     "globals": "^17.13",
     "heroicons": "^2.2",
     "openapi-typescript": "^7.13",
+    "pg": "^8.23",
     "playwright": "^1.64",
     "prettier": "^3.9",
     "prettier-plugin-svelte": "^4.1",

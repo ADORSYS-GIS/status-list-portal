@@ -1,3 +1,5 @@
 build/
 .svelte-kit/
+test-results/
+playwright-report/
 src/lib/api/schema.ts

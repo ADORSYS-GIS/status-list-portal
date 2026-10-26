@@ -50,6 +50,18 @@ cargo test production_verifies_tls_ca_and_hostname
 docker rm -f "$TEST_TLS_CONTAINER"
 ```
 
+### End-to-end tests
+
+`bun run test:e2e` builds the frontend and the server, and drives them in Chromium: signing in, then registering, renewing and deleting an issuer. Stand-ins take the place of GitHub and the admin API, and the server runs on a database of its own, `portal_e2e`, emptied first.
+
+To sign in through GitHub itself, create a GitHub OAuth app for development, with the callback URL `http://localhost:18100/api/v1/session/github/callback`, and keep its client secret in a file. Then, with the file's path absolute or relative to the repository's root:
+
+```sh
+E2E_REAL_GITHUB=1 E2E_GITHUB_CLIENT_ID=<client id> E2E_GITHUB_CLIENT_SECRET_FILE=<path> bun run test:e2e
+```
+
+A browser opens: sign in on github.com and approve the app. The GitHub session is kept in `frontend/e2e/.auth/`, which git ignores, so later runs go straight through.
+
 ## Contributing
 
 The [contributor guide](CONTRIBUTING.md) covers snapshot updates and database migrations.
