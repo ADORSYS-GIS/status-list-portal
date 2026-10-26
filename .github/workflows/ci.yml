@@ -189,6 +189,25 @@ jobs:
       - name: Check the page's content security policy
         run: grep -q '<meta http-equiv="content-security-policy" content="' frontend/build/200.html
 
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Fetch Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the image
+        run: docker build --tag status-list-portal .
+
+      - name: Check that the binary starts in it
+        run: docker run --rm status-list-portal --help
+
+      - name: Check that it runs without privileges
+        run: test "$(docker image inspect --format '{{.Config.User}}' status-list-portal)" = 65532
+
   markdown:
     name: Markdown
     runs-on: ubuntu-latest

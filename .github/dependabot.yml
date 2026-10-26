@@ -1,0 +1,12 @@
+# Proposes newer versions of what is pinned by digest or commit, so the pins do not go stale:
+# the Dockerfile's base images and the workflows' actions.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

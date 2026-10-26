@@ -27,8 +27,7 @@ The frontend lives in `frontend/` and needs [Bun](https://bun.com). Its commands
 
 ## Deploy
 
-The [deployment guide](docs/deployment.md) covers database roles, migrations,
-TLS, backtraces, Kubernetes probes, network access and reverse proxy timeouts.
+`docker build --tag status-list-portal .` builds the image, with the frontend. The [deployment guide](docs/deployment.md) covers the GitHub OAuth app, the admin API key, secrets, database roles, migrations and TLS, proxies, health checks and backtraces.
 
 ## Telemetry
 
