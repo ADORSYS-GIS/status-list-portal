@@ -9,18 +9,19 @@ mod secret_files;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::num::{NonZeroU16, NonZeroUsize};
+use std::num::{NonZeroU16, NonZeroU32, NonZeroUsize};
 use std::path::PathBuf;
 
 use ::config::{ConfigError, Environment};
 use axum_extra::extract::cookie::Key;
 use secrecy::{ExposeSecret, SecretString};
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, de};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use url::{Host, Url};
 
 use crate::Env;
 use crate::admin_api::SigningAlgorithm;
+use crate::client_address::TrustedProxies;
 use crate::util::logging::LogFormat;
 
 const DEFAULT_BIND_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
@@ -50,6 +51,8 @@ pub struct Config {
     #[serde(default)]
     pub sandbox: Sandbox,
     pub terms: Terms,
+    /// How often developers may sign in and change their issuers (`APP_RATE_LIMITS__*`).
+    pub rate_limits: RateLimits,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +67,11 @@ pub struct Server {
     /// answers API requests only, as when the frontend's dev server runs in front of it.
     #[serde(default)]
     pub frontend_dir: Option<PathBuf>,
+    /// The proxies in front of the server, whose `X-Forwarded-For` names the client
+    /// (`APP_SERVER__TRUSTED_PROXIES`): addresses or CIDR blocks, separated by commas. Behind
+    /// a proxy that is not listed, every client shares the proxy's sign-in limit.
+    #[serde(default)]
+    pub trusted_proxies: TrustedProxies,
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,6 +215,61 @@ pub struct Terms {
     pub url: Url,
 }
 
+/// How often a client may do something: `burst` times in a row, then once every
+/// `refill_seconds` (`APP_RATE_LIMITS__<ACTION>__BURST` and `__REFILL_SECONDS`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimit {
+    pub burst: NonZeroU32,
+    pub refill_seconds: NonZeroU32,
+}
+
+impl RateLimit {
+    /// Panics if either number is 0.
+    pub const fn new(burst: u32, refill_seconds: u32) -> Self {
+        Self {
+            burst: NonZeroU32::new(burst).expect("the burst is not 0"),
+            refill_seconds: NonZeroU32::new(refill_seconds).expect("the interval is not 0"),
+        }
+    }
+
+    pub fn refill_interval(self) -> time::Duration {
+        time::Duration::seconds(self.refill_seconds.get().into())
+    }
+}
+
+/// Rate limits: per developer for changes to their issuers, and per client network for
+/// sign-ins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimits {
+    /// Registering an issuer, at once or for approval.
+    pub register: RateLimit,
+    pub renew: RateLimit,
+    /// Deleting an issuer.
+    pub delete: RateLimit,
+    /// Finishing a sign-in with GitHub.
+    pub sign_in: RateLimit,
+}
+
+impl Default for RateLimits {
+    fn default() -> Self {
+        Self {
+            register: RateLimit::new(5, 600),
+            renew: RateLimit::new(10, 60),
+            delete: RateLimit::new(20, 30),
+            sign_in: RateLimit::new(20, 6),
+        }
+    }
+}
+
+/// The settings that have defaults one variable can override without the others, such as
+/// `APP_RATE_LIMITS__REGISTER__BURST` alone.
+#[derive(Serialize)]
+struct Defaults {
+    rate_limits: RateLimits,
+}
+
 /// The scheme, host and port browsers use to reach the portal, such as
 /// `https://portal.example.com`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,6 +389,9 @@ fn process_vars() -> HashMap<String, String> {
 /// Reads settings from `vars`, as if they were the process environment, and from the secret
 /// files they name.
 fn load<T: DeserializeOwned>(vars: HashMap<String, String>) -> Result<T, ConfigError> {
+    let defaults = ::config::Config::try_from(&Defaults {
+        rate_limits: RateLimits::default(),
+    })?;
     let builder = secret_files::read(&vars)?
         .into_iter()
         .try_fold(::config::Config::builder(), |builder, (setting, value)| {
@@ -337,6 +403,7 @@ fn load<T: DeserializeOwned>(vars: HashMap<String, String>) -> Result<T, ConfigE
         .filter(|(name, _)| !secret_files::is_file_variable(name))
         .collect();
     builder
+        .add_source(defaults)
         .add_source(environment().source(Some(vars)))
         .build()?
         .try_deserialize()
@@ -784,6 +851,43 @@ mod tests {
         let error = load(&[("APP_SERVER__BIND_ADDRESS", "nowhere")]).unwrap_err();
 
         assert!(error.to_string().contains("server.bind_address"), "{error}");
+    }
+
+    #[test]
+    fn rate_limits_can_be_changed_one_number_at_a_time() {
+        let config = load(&[("APP_RATE_LIMITS__REGISTER__BURST", "2")]).unwrap();
+
+        assert_eq!(config.rate_limits.register, RateLimit::new(2, 600));
+        let defaults = RateLimits::default();
+        assert_eq!(config.rate_limits.renew, defaults.renew);
+        assert_eq!(config.rate_limits.delete, defaults.delete);
+        assert_eq!(config.rate_limits.sign_in, defaults.sign_in);
+
+        let error = load(&[("APP_RATE_LIMITS__SIGN_IN__REFILL_SECONDS", "0")]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("rate_limits.sign_in.refill_seconds"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn trusted_proxies_are_none_unless_listed() {
+        assert_eq!(
+            load(&[]).unwrap().server.trusted_proxies,
+            TrustedProxies::default()
+        );
+
+        let config = load(&[("APP_SERVER__TRUSTED_PROXIES", "10.0.0.0/8, 192.168.1.10")]).unwrap();
+        let expected = TrustedProxies::parse("10.0.0.0/8,192.168.1.10").unwrap();
+        assert_eq!(config.server.trusted_proxies, expected);
+
+        let error = load(&[("APP_SERVER__TRUSTED_PROXIES", "the ingress")]).unwrap_err();
+        assert!(
+            error.to_string().contains("server.trusted_proxies"),
+            "{error}"
+        );
     }
 
     #[test]

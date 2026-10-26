@@ -1,5 +1,7 @@
 //! Signing in with GitHub, and signing out.
 
+use std::net::IpAddr;
+
 use axum::extract::Query;
 use axum::response::Redirect;
 use axum_extra::extract::PrivateCookieJar;
@@ -9,6 +11,7 @@ use tracing::{error, info, warn};
 use utoipa::IntoParams;
 
 use crate::auth::{self, SESSION_COOKIE, SIGN_IN_COOKIE, Session};
+use crate::client_address::ClientAddress;
 use crate::github::{Account, PendingSignIn, SignInError};
 use crate::metrics::SignInOutcome;
 use crate::models::{NewUser, User};
@@ -54,6 +57,8 @@ enum Failure {
     /// The sign-in expired, was already used, or did not start in this browser.
     Expired,
     NoVerifiedEmail,
+    /// Too many sign-ins came from the client's network in a short time.
+    TooMany,
     /// GitHub or the portal failed; signing in again later may work.
     Unavailable,
 }
@@ -64,6 +69,7 @@ impl Failure {
             Self::Denied => "denied",
             Self::Expired => "expired",
             Self::NoVerifiedEmail => "no_verified_email",
+            Self::TooMany => "too_many",
             Self::Unavailable => "unavailable",
         };
         Redirect::to(&format!("/?sign_in_error={reason}"))
@@ -74,6 +80,7 @@ impl Failure {
             Self::Denied => SignInOutcome::Denied,
             Self::Expired => SignInOutcome::Expired,
             Self::NoVerifiedEmail => SignInOutcome::NoVerifiedEmail,
+            Self::TooMany => SignInOutcome::RateLimited,
             Self::Unavailable => SignInOutcome::Failed,
         }
     }
@@ -90,19 +97,20 @@ impl Failure {
     params(CallbackQuery),
     responses(
         (status = 303, description = "Redirects to the home page. After a failure, its \
-            `sign_in_error` parameter says why: `denied`, `expired`, `no_verified_email` or \
-            `unavailable`.", headers(("location" = String))),
+            `sign_in_error` parameter says why: `denied`, `expired`, `no_verified_email`, \
+            `too_many` or `unavailable`.", headers(("location" = String))),
     ),
 )]
 pub async fn callback(
     ctx: ServerContext,
+    ClientAddress(client): ClientAddress,
     jar: PrivateCookieJar,
     Query(query): Query<CallbackQuery>,
 ) -> (PrivateCookieJar, Redirect) {
     let pending = auth::pending_sign_in(&jar)
         .filter(|pending| query.state.as_deref() == Some(pending.state.as_str()));
     let result = match &pending {
-        Some(pending) => sign_in(&ctx, pending, query).await,
+        Some(pending) => sign_in(&ctx, client, pending, query).await,
         None => Err(Failure::Expired),
     };
     ctx.metrics.sign_in(match result {
@@ -126,6 +134,7 @@ pub async fn callback(
 
 async fn sign_in(
     ctx: &ServerContext,
+    client: IpAddr,
     pending: &PendingSignIn,
     query: CallbackQuery,
 ) -> Result<User, Failure> {
@@ -145,6 +154,12 @@ async fn sign_in(
         None => {}
     }
     let code = query.code.ok_or(Failure::Expired)?;
+    // Each sign-in calls GitHub, so a client that sent many could get the portal's OAuth app
+    // throttled for everyone. Only a sign-in that started here counts: one made up does not
+    // reach GitHub, and must not use up the tokens of a network that others share.
+    if ctx.rate_limiter.check_sign_in(client).is_err() {
+        return Err(Failure::TooMany);
+    }
 
     let account = ctx
         .github
