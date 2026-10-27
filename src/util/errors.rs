@@ -57,6 +57,10 @@ pub fn not_found() -> BoxedAppError {
     custom(StatusCode::NOT_FOUND, "Not Found")
 }
 
+pub fn request_timeout() -> BoxedAppError {
+    custom(StatusCode::REQUEST_TIMEOUT, "Request Timeout")
+}
+
 pub fn service_unavailable() -> BoxedAppError {
     custom(StatusCode::SERVICE_UNAVAILABLE, "Service Unavailable")
 }
@@ -108,6 +112,10 @@ mod tests {
     fn shorthands_use_their_status() {
         assert_eq!(forbidden("").response().status(), StatusCode::FORBIDDEN);
         assert_eq!(not_found().response().status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            request_timeout().response().status(),
+            StatusCode::REQUEST_TIMEOUT
+        );
         assert_eq!(
             service_unavailable().response().status(),
             StatusCode::SERVICE_UNAVAILABLE

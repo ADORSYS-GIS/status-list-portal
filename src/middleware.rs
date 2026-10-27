@@ -7,12 +7,10 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Request};
-use axum::middleware::from_fn;
+use axum::middleware::{Next, from_fn};
 use axum::response::Response;
-use http::StatusCode;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
-use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, Span, info_span};
 
@@ -36,10 +34,7 @@ pub fn apply_middleware(router: Router) -> Router {
         )
         .layer(from_fn(headers::add_common_headers))
         .layer(CatchPanicLayer::custom(handle_panic))
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            REQUEST_TIMEOUT,
-        ));
+        .layer(from_fn(time_out));
 
     router
         .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
@@ -56,16 +51,45 @@ fn handle_panic(_payload: Box<dyn Any + Send + 'static>) -> Response {
     errors::internal("request handler panicked").response()
 }
 
+async fn time_out(request: Request, next: Next) -> Response {
+    tokio::time::timeout(REQUEST_TIMEOUT, next.run(request))
+        .await
+        .unwrap_or_else(|_elapsed| errors::request_timeout().response())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
     use axum::routing::get;
+    use http::StatusCode;
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
     async fn boom() -> &'static str {
         panic!("secret detail")
+    }
+
+    async fn slow() -> &'static str {
+        tokio::time::sleep(REQUEST_TIMEOUT * 2).await;
+        "done"
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_requests_get_a_json_408_with_security_headers() {
+        let router = Router::new().route("/slow", get(slow));
+        let request = Request::get("/slow").body(Body::empty()).unwrap();
+
+        let response = apply_middleware(router).oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+        assert_eq!(response.headers()["content-type"], "application/json");
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body, json!({ "errors": [{ "detail": "Request Timeout" }] }));
     }
 
     #[tokio::test]
