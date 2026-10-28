@@ -6,7 +6,6 @@ use status_list_portal::config::Config;
 use status_list_portal::{ServerContext, ServerContextInner, build_handler, db, util};
 use tokio::net::TcpListener;
 use tokio::signal;
-use tokio::signal::unix::{Signal, SignalKind};
 use tracing::{info, warn};
 
 #[tokio::main]
@@ -22,8 +21,7 @@ async fn main() -> anyhow::Result<()> {
     let bind_address = config.server.bind_address;
     let ctx = ServerContext::new(ServerContextInner { config, db });
 
-    let terminate =
-        signal::unix::signal(SignalKind::terminate()).context("failed to listen for SIGTERM")?;
+    let terminate = terminate_signal()?;
     let listener = TcpListener::bind(bind_address)
         .await
         .with_context(|| format!("failed to bind {bind_address}"))?;
@@ -44,7 +42,24 @@ fn load_dotenv() -> anyhow::Result<()> {
     }
 }
 
-async fn shutdown_signal(mut terminate: Signal) {
+/// Resolves on SIGTERM, which orchestrators send to stop the server.
+#[cfg(unix)]
+fn terminate_signal() -> anyhow::Result<impl Future<Output = ()>> {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut terminate = signal(SignalKind::terminate()).context("failed to listen for SIGTERM")?;
+    Ok(async move {
+        terminate.recv().await;
+    })
+}
+
+/// SIGTERM exists only on Unix. Elsewhere, Ctrl+C stops the server.
+#[cfg(not(unix))]
+fn terminate_signal() -> anyhow::Result<impl Future<Output = ()>> {
+    Ok(std::future::pending())
+}
+
+async fn shutdown_signal(terminate: impl Future<Output = ()>) {
     let ctrl_c = async {
         if let Err(error) = signal::ctrl_c().await {
             warn!(%error, "failed to listen for Ctrl+C; only SIGTERM stops the server");
@@ -54,7 +69,7 @@ async fn shutdown_signal(mut terminate: Signal) {
 
     tokio::select! {
         () = ctrl_c => {}
-        _ = terminate.recv() => {}
+        () = terminate => {}
     }
     info!("shutting down");
 }

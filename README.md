@@ -8,7 +8,7 @@ Developer portal for the [Status List Server](https://github.com/adorsys/status-
 
 ## Run locally
 
-Requires [Rust](https://rustup.rs) and [Docker](https://docs.docker.com/get-started/get-docker/).
+Requires [Rust](https://rustup.rs) 1.99 or later (`rustup update`) and [Docker](https://docs.docker.com/get-started/get-docker/). Runs on Linux, macOS and Windows.
 
 ```sh
 cp .env.template .env   # every setting, documented
