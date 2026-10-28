@@ -2,8 +2,9 @@
 //!
 //! Handlers return [`AppResult`]. An error built with [`custom`] or one of its shorthands
 //! ([`bad_request`], [`forbidden`], [`not_found`], ...) reaches the user with its status and
-//! message. Every other error becomes a `500 Internal Server Error`: its details are logged
-//! and never sent to the client.
+//! message. `?` converts the database's errors with the `From` impls below. Every other
+//! error becomes a `500 Internal Server Error`: its details are logged and never sent to
+//! the client.
 
 mod json;
 
@@ -14,6 +15,7 @@ use std::fmt;
 
 use axum::response::{IntoResponse, Response};
 use derive_more::Display;
+use diesel_async::pooled_connection::deadpool::PoolError;
 use http::StatusCode;
 use tracing::error;
 
@@ -36,13 +38,34 @@ impl IntoResponse for BoxedAppError {
 /// Any standard error is an internal error.
 impl<E: Error + Send + 'static> AppError for E {
     fn response(&self) -> Response {
-        let chain = std::iter::successors(Some(self as &dyn Error), |error| (*error).source())
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(": ");
-        error!(error.kind = type_name::<E>(), error.message = %chain, "request failed");
+        error!(error.kind = type_name::<E>(), error.message = %describe(self), "request failed");
         json::internal_server_error()
     }
+}
+
+impl From<diesel::result::Error> for BoxedAppError {
+    fn from(error: diesel::result::Error) -> Self {
+        match error {
+            diesel::result::Error::NotFound => not_found(),
+            error => Box::new(error),
+        }
+    }
+}
+
+/// No database connection is available: the database is down or every connection is busy.
+impl From<PoolError> for BoxedAppError {
+    fn from(error: PoolError) -> Self {
+        error!(error.message = %describe(&error), "no database connection");
+        service_unavailable()
+    }
+}
+
+/// The error and each of its causes, joined with `: `, for the logs.
+pub fn describe(error: &(dyn Error + 'static)) -> String {
+    std::iter::successors(Some(error), |error| (*error).source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
 }
 
 pub fn bad_request(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
@@ -122,6 +145,33 @@ mod tests {
         assert_eq!(
             body_json(response).await,
             json!({ "errors": [{ "detail": "Internal Server Error" }] })
+        );
+    }
+
+    #[test]
+    fn missing_rows_are_not_found() {
+        let error = BoxedAppError::from(diesel::result::Error::NotFound);
+
+        assert_eq!(error.response().status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn other_database_errors_are_internal_errors() {
+        let error = BoxedAppError::from(diesel::result::Error::RollbackTransaction);
+
+        assert_eq!(error.response().status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn missing_connections_are_service_unavailable() {
+        let error = PoolError::Timeout(deadpool::managed::TimeoutType::Wait);
+
+        let response = BoxedAppError::from(error).response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            body_json(response).await,
+            json!({ "errors": [{ "detail": "Service Unavailable" }] })
         );
     }
 
