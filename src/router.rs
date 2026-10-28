@@ -16,9 +16,17 @@ pub(crate) fn openapi_router() -> OpenApiRouter<ServerContext> {
 
 pub(crate) fn build_router(ctx: ServerContext) -> Router {
     let (router, _) = openapi_router().split_for_parts();
-    router.fallback(fallback).with_state(ctx)
+    router
+        .fallback(fallback)
+        .method_not_allowed_fallback(method_not_allowed_fallback)
+        .with_state(ctx)
 }
 
 async fn fallback() -> BoxedAppError {
     errors::not_found()
+}
+
+/// axum still sets `Allow` on the response.
+async fn method_not_allowed_fallback() -> BoxedAppError {
+    errors::method_not_allowed()
 }

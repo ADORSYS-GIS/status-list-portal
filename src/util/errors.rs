@@ -80,6 +80,10 @@ pub fn not_found() -> BoxedAppError {
     custom(StatusCode::NOT_FOUND, "Not Found")
 }
 
+pub fn method_not_allowed() -> BoxedAppError {
+    custom(StatusCode::METHOD_NOT_ALLOWED, "Method Not Allowed")
+}
+
 pub fn service_unavailable() -> BoxedAppError {
     custom(StatusCode::SERVICE_UNAVAILABLE, "Service Unavailable")
 }
@@ -131,6 +135,10 @@ mod tests {
     fn shorthands_use_their_status() {
         assert_eq!(forbidden("").response().status(), StatusCode::FORBIDDEN);
         assert_eq!(not_found().response().status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            method_not_allowed().response().status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
         assert_eq!(
             service_unavailable().response().status(),
             StatusCode::SERVICE_UNAVAILABLE
