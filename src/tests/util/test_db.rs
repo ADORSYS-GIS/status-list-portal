@@ -29,6 +29,15 @@ pub struct TestDatabase {
 
 impl TestDatabase {
     pub async fn new() -> Self {
+        let test_db = Self::unmigrated().await;
+        db::run_migrations(test_db.url())
+            .await
+            .expect("failed to migrate the test database");
+        test_db
+    }
+
+    /// An empty database, without the migrations.
+    pub async fn unmigrated() -> Self {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let name = format!("{}_{}_{id}", name_prefix(), std::process::id());
         run_on_server(&[
@@ -39,9 +48,6 @@ impl TestDatabase {
         .await;
 
         let url = url_for(&name);
-        db::run_migrations(url.as_str())
-            .await
-            .expect("failed to migrate the test database");
         Self { name, url }
     }
 

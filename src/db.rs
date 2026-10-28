@@ -88,11 +88,11 @@ async fn set_timeout(
         .map(drop)
 }
 
-/// Applies the migrations the database has not seen yet.
+/// Applies the migrations the database has not seen yet, and returns their versions.
 ///
 /// An advisory lock is held while they run, so replicas that start together apply each
 /// migration once.
-pub async fn run_migrations(database_url: &str) -> anyhow::Result<()> {
+pub async fn run_migrations(database_url: &str) -> anyhow::Result<Vec<String>> {
     let mut conn = tokio::time::timeout(
         CONNECTION_TIMEOUT,
         AsyncPgConnection::establish(database_url),
@@ -132,8 +132,8 @@ pub async fn run_migrations(database_url: &str) -> anyhow::Result<()> {
     .map_err(anyhow::Error::from_boxed)
     .context("failed to run migrations")?;
 
-    for version in applied {
+    for version in &applied {
         info!(%version, "applied migration");
     }
-    Ok(())
+    Ok(applied)
 }
