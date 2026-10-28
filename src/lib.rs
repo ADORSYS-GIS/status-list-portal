@@ -20,14 +20,17 @@ pub use crate::server::{ServerContext, ServerContextInner};
 use serde::Deserialize;
 
 /// Where the server runs. Some settings have safe defaults only outside production.
+///
+/// Production is the default, so a deployment that forgets `APP_ENV` keeps production's
+/// checks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Env {
-    #[default]
     Development,
     /// Set by the test harness; never read from the environment.
     #[serde(skip)]
     Test,
+    #[default]
     Production,
 }
 

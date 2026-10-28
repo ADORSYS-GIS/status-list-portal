@@ -32,6 +32,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Database {
     /// Connection URL (`APP_DATABASE__URL`), for example
     /// `postgres://portal:password@localhost:5432/portal`.
@@ -46,7 +47,7 @@ fn default_database_pool_size() -> NonZeroUsize {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Server {
     /// Address the HTTP listener binds to (`APP_SERVER__BIND_ADDRESS`).
     pub bind_address: SocketAddr,
@@ -71,7 +72,42 @@ impl Config {
             .add_source(environment)
             .build()?
             .try_deserialize()
+            .map_err(without_value)
     }
+}
+
+/// Drops the value from type and value errors: a variable set at the wrong level, such as
+/// `APP_DATABASE` instead of `APP_DATABASE__URL`, can hold a secret.
+fn without_value(error: ConfigError) -> ConfigError {
+    match error {
+        ConfigError::Type { key, expected, .. } => {
+            let key = key
+                .map(|key| format!(" for key `{key}`"))
+                .unwrap_or_default();
+            ConfigError::Message(format!("invalid type: expected {expected}{key}"))
+        }
+        ConfigError::Message(message) => ConfigError::Message(message_without_value(message)),
+        ConfigError::At { error, origin, key } => ConfigError::At {
+            error: Box::new(without_value(*error)),
+            origin,
+            key,
+        },
+        error => error,
+    }
+}
+
+/// Rewrites serde's `invalid type: <value>, expected <what>` (and `invalid value: ...`)
+/// without the value.
+fn message_without_value(message: String) -> String {
+    for prefix in ["invalid type: ", "invalid value: "] {
+        let expected = message
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.rsplit_once(", expected "));
+        if let Some((_, expected)) = expected {
+            return format!("{prefix}expected {expected}");
+        }
+    }
+    message
 }
 
 fn environment() -> Environment {
@@ -105,7 +141,7 @@ mod tests {
     fn optional_settings_have_defaults() {
         let config = load(&[]).unwrap();
 
-        assert_eq!(config.env, Env::Development);
+        assert_eq!(config.env, Env::Production);
         assert_eq!(config.log_format, LogFormat::Text);
         assert_eq!(config.server.bind_address, DEFAULT_BIND_ADDRESS);
         assert_eq!(config.database.url.expose_secret(), DATABASE_URL);
@@ -115,14 +151,14 @@ mod tests {
     #[test]
     fn reads_prefixed_and_nested_variables() {
         let config = load(&[
-            ("APP_ENV", "production"),
+            ("APP_ENV", "development"),
             ("APP_LOG_FORMAT", "json"),
             ("APP_SERVER__BIND_ADDRESS", "0.0.0.0:9000"),
             ("APP_DATABASE__POOL_SIZE", "3"),
         ])
         .unwrap();
 
-        assert_eq!(config.env, Env::Production);
+        assert_eq!(config.env, Env::Development);
         assert_eq!(config.log_format, LogFormat::Json);
         assert_eq!(config.server.bind_address, "0.0.0.0:9000".parse().unwrap());
         assert_eq!(config.database.pool_size.get(), 3);
@@ -153,7 +189,7 @@ mod tests {
     fn empty_variables_count_as_unset() {
         let config = load(&[("APP_ENV", ""), ("APP_SERVER__BIND_ADDRESS", "")]).unwrap();
 
-        assert_eq!(config.env, Env::Development);
+        assert_eq!(config.env, Env::Production);
         assert_eq!(config.server.bind_address, DEFAULT_BIND_ADDRESS);
     }
 
@@ -162,6 +198,24 @@ mod tests {
         let error = load(&[("APP_ENV", "test")]).unwrap_err();
 
         assert!(error.to_string().contains("for key `env`"), "{error}");
+    }
+
+    #[test]
+    fn errors_do_not_repeat_the_value() {
+        let error = load_exactly(&[("APP_DATABASE", DATABASE_URL)]).unwrap_err();
+
+        assert!(!error.to_string().contains("s3cr3t"), "{error}");
+        assert!(error.to_string().contains("database"), "{error}");
+    }
+
+    #[test]
+    fn misspelled_settings_are_rejected() {
+        let error = load(&[("APP_SERVER__BIND_ADDR", "0.0.0.0:8080")]).unwrap_err();
+
+        assert!(
+            error.to_string().contains("unknown field `bind_addr`"),
+            "{error}"
+        );
     }
 
     #[test]
