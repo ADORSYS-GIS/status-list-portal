@@ -9,7 +9,7 @@ diesel::table! {
         gh_id -> Int8,
         gh_login -> Varchar,
         name -> Nullable<Varchar>,
-        email -> Nullable<Varchar>,
+        email -> Varchar,
         created_at -> Timestamptz,
     }
 }

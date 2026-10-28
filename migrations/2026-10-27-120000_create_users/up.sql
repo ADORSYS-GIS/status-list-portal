@@ -7,8 +7,8 @@ CREATE TABLE users (
     gh_login VARCHAR NOT NULL,
     -- Display name from the GitHub profile, if set.
     name VARCHAR,
-    -- Verified primary email, if the account has one. Used for terms acceptance and
+    -- Verified primary email; signing in needs one. Used for terms acceptance and
     -- expiry reminders.
-    email VARCHAR,
+    email VARCHAR NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

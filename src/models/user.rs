@@ -14,8 +14,8 @@ pub struct User {
     pub gh_id: i64,
     pub gh_login: String,
     pub name: Option<String>,
-    /// Verified primary email, if the account has one.
-    pub email: Option<String>,
+    /// Verified primary email. Signing in needs one.
+    pub email: String,
     pub created_at: OffsetDateTime,
 }
 
@@ -36,13 +36,13 @@ pub struct NewUser<'a> {
     pub gh_id: i64,
     pub gh_login: &'a str,
     pub name: Option<&'a str>,
-    pub email: Option<&'a str>,
+    pub email: &'a str,
 }
 
 impl NewUser<'_> {
     /// Creates the account, or refreshes the details of an account that signed in before.
     ///
-    /// Details GitHub no longer reports, such as a removed email, are cleared.
+    /// Details GitHub no longer reports, such as a removed display name, are cleared.
     pub async fn insert_or_update(&self, conn: &mut AsyncPgConnection) -> QueryResult<User> {
         diesel::insert_into(users::table)
             .values(self)
