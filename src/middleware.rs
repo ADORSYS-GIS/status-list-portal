@@ -12,11 +12,11 @@ use axum::response::Response;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
-use tracing::{Level, Span, info_span};
+use tracing::{Level, Span, info_span, warn};
 
 use crate::util::errors;
 
-/// Requests that take longer are answered with `408 Request Timeout`.
+/// Requests that take longer are answered with `503 Service Unavailable`.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Largest accepted request body. Portal requests carry at most a public JWK and a few
@@ -51,10 +51,15 @@ fn handle_panic(_payload: Box<dyn Any + Send + 'static>) -> Response {
     errors::internal("request handler panicked").response()
 }
 
+/// Answers `503`, not `408`: a 408 tells clients they were too slow to send the request,
+/// and lets them send it again, so a slow request could run twice.
 async fn time_out(request: Request, next: Next) -> Response {
     tokio::time::timeout(REQUEST_TIMEOUT, next.run(request))
         .await
-        .unwrap_or_else(|_elapsed| errors::request_timeout().response())
+        .unwrap_or_else(|_elapsed| {
+            warn!("request timed out");
+            errors::service_unavailable().response()
+        })
 }
 
 #[cfg(test)]
@@ -76,20 +81,23 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn slow_requests_get_a_json_408_with_security_headers() {
+    async fn slow_requests_get_a_json_503_with_security_headers() {
         let router = Router::new().route("/slow", get(slow));
         let request = Request::get("/slow").body(Body::empty()).unwrap();
 
         let response = apply_middleware(router).oneshot(request).await.unwrap();
 
-        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(response.headers()["content-type"], "application/json");
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(body, json!({ "errors": [{ "detail": "Request Timeout" }] }));
+        assert_eq!(
+            body,
+            json!({ "errors": [{ "detail": "Service Unavailable" }] })
+        );
     }
 
     #[tokio::test]
