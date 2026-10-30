@@ -26,7 +26,7 @@ pub const CALLBACK_PATH: &str = "/api/v1/session/github/callback";
 /// Read access to the account's email addresses. The profile is public.
 const SCOPE: &str = "user:email";
 const API_VERSION: &str = "2022-11-28";
-/// A sign-in makes three calls in a row, which must fit in the server's request timeout.
+/// A sign-in makes two rounds of calls, which must fit in the server's request timeout.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Client of GitHub's authorization and token endpoints.
@@ -143,8 +143,10 @@ impl GitHub {
         pending: &PendingSignIn,
     ) -> Result<Account, SignInError> {
         let token = self.exchange_code(code, pending).await?;
-        let user: UserResponse = self.get(&self.user_url, &token).await?;
-        let emails: Vec<EmailResponse> = self.get(&self.emails_url, &token).await?;
+        let (user, emails) = tokio::try_join!(
+            self.get::<UserResponse>(&self.user_url, &token),
+            self.get::<Vec<EmailResponse>>(&self.emails_url, &token),
+        )?;
         let email = emails
             .into_iter()
             .find(|email| email.primary && email.verified)
