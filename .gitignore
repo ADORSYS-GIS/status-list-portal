@@ -1,6 +1,7 @@
 /target
 .env
 *.pem
+!/test_data/**/*.pem
 *.key
 
 # Frontend

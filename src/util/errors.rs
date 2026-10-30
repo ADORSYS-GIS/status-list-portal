@@ -2,9 +2,9 @@
 //!
 //! Handlers return [`AppResult`]. An error built with [`custom`] or one of its shorthands
 //! ([`bad_request`], [`forbidden`], [`not_found`], ...) reaches the user with its status and
-//! message. `?` converts the database's errors with the `From` impls below. Every other
-//! error becomes a `500 Internal Server Error`: its details are logged and never sent to
-//! the client.
+//! message. `?` converts the errors of the database and of the admin API with the `From`
+//! impls below. Every other error becomes a `500 Internal Server Error`: its details are
+//! logged and never sent to the client.
 
 mod json;
 
@@ -17,7 +17,9 @@ use axum::response::{IntoResponse, Response};
 use derive_more::Display;
 use diesel_async::pooled_connection::deadpool::PoolError;
 use http::StatusCode;
-use tracing::error;
+use tracing::{error, warn};
+
+use crate::admin_api::{AdminApiError, ErrorCode};
 
 pub use json::{ApiErrorResponse, custom};
 
@@ -60,6 +62,34 @@ impl From<PoolError> for BoxedAppError {
     }
 }
 
+impl From<AdminApiError> for BoxedAppError {
+    fn from(error: AdminApiError) -> Self {
+        match error.code() {
+            Some(ErrorCode::IssuerNotFound) => not_found(),
+            Some(ErrorCode::KeyMaterialInUse) => custom(
+                StatusCode::CONFLICT,
+                "This public key is already registered.",
+            ),
+            Some(ErrorCode::InvalidPublicJwk | ErrorCode::UnsupportedAlgorithm) => custom(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "The Status List Server does not accept this public key.",
+            ),
+            Some(ErrorCode::PreconditionFailed) => custom(
+                StatusCode::CONFLICT,
+                "The issuer changed while this request ran. Please try again.",
+            ),
+            Some(ErrorCode::ServiceUnavailable) => {
+                warn!(error.message = %describe(&error), "the admin API is unavailable");
+                service_unavailable()
+            }
+            _ => {
+                error!(error.message = %describe(&error), "admin API call failed");
+                bad_gateway("The Status List Server could not be reached. Please try again later.")
+            }
+        }
+    }
+}
+
 /// The error and each of its causes, joined with `: `, for the logs.
 pub fn describe(error: &(dyn Error + 'static)) -> String {
     std::iter::successors(Some(error), |error| (*error).source())
@@ -74,6 +104,10 @@ pub fn bad_request(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
 
 pub fn unauthorized() -> BoxedAppError {
     custom(StatusCode::UNAUTHORIZED, "This action requires signing in")
+}
+
+pub fn bad_gateway(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
+    custom(StatusCode::BAD_GATEWAY, detail)
 }
 
 pub fn forbidden(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
@@ -185,6 +219,51 @@ mod tests {
             body_json(response).await,
             json!({ "errors": [{ "detail": "Service Unavailable" }] })
         );
+    }
+
+    fn refused(code: ErrorCode) -> AdminApiError {
+        AdminApiError::Refused {
+            status: StatusCode::CONFLICT,
+            code,
+            description: Some("the server's own wording".to_string()),
+        }
+    }
+
+    #[test]
+    fn admin_api_codes_map_to_statuses() {
+        for (code, status) in [
+            (ErrorCode::IssuerNotFound, StatusCode::NOT_FOUND),
+            (ErrorCode::KeyMaterialInUse, StatusCode::CONFLICT),
+            (
+                ErrorCode::InvalidPublicJwk,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                ErrorCode::UnsupportedAlgorithm,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (ErrorCode::PreconditionFailed, StatusCode::CONFLICT),
+            (
+                ErrorCode::ServiceUnavailable,
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (ErrorCode::InvalidToken, StatusCode::BAD_GATEWAY),
+            (ErrorCode::Unknown, StatusCode::BAD_GATEWAY),
+        ] {
+            let response = BoxedAppError::from(refused(code)).response();
+
+            assert_eq!(response.status(), status, "{code}");
+        }
+    }
+
+    #[tokio::test]
+    async fn admin_api_failures_keep_their_details_out_of_responses() {
+        for code in [ErrorCode::KeyMaterialInUse, ErrorCode::InvalidToken] {
+            let response = BoxedAppError::from(refused(code)).response();
+
+            let body = body_json(response).await.to_string();
+            assert!(!body.contains("the server's own wording"), "{code}: {body}");
+        }
     }
 
     #[tokio::test]

@@ -1,5 +1,6 @@
 //! Integration tests. Requests run through the full router, middleware included.
 
+mod admin_api;
 mod cross_origin;
 mod headers;
 mod health;

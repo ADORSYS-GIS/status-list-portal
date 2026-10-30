@@ -39,6 +39,7 @@ diesel_migrations = "2.3"
 dotenvy = "0.15"
 hex = "0.4"
 http = "1.5"
+jsonwebtoken = { version = "11.1", features = ["aws_lc_rs"] }
 oauth2 = "5.0"
 # Held at 0.12, the version oauth2 5.0 is built on, so the build has a single reqwest.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -46,7 +47,7 @@ secrecy = { version = "0.10", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
-time = "0.3"
+time = { version = "0.3", features = ["serde"] }
 tokio = { version = "1.54", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 tower = "0.5"
 tower-http = { version = "0.7", features = ["catch-panic", "trace"] }

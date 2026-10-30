@@ -7,6 +7,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 
 use ::config::{ConfigError, Environment};
 use axum_extra::extract::cookie::Key;
@@ -15,6 +16,7 @@ use serde::{Deserialize, Deserializer, de};
 use url::{Host, Url};
 
 use crate::Env;
+use crate::admin_api::SigningAlgorithm;
 use crate::util::logging::LogFormat;
 
 const DEFAULT_BIND_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
@@ -34,6 +36,7 @@ pub struct Config {
     pub database: Database,
     pub session: Session,
     pub github: GitHub,
+    pub admin_api: AdminApi,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,6 +80,30 @@ pub struct GitHub {
     /// Where GitHub serves its REST API. Only tests change it.
     #[serde(skip, default = "default_github_api_url")]
     pub api_url: Url,
+}
+
+/// The Status List Server's admin API. The server's registry file must list the portal as an
+/// admin principal with the `issuers:read` and `issuers:write` scopes and the public half of
+/// the signing key.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdminApi {
+    /// Where the server's admin listener is reached (`APP_ADMIN_API__URL`), such as
+    /// `http://status-list-server:8002`.
+    #[serde(deserialize_with = "http_url")]
+    pub url: Url,
+    /// The portal's admin principal `id` in the registry file (`APP_ADMIN_API__PRINCIPAL`).
+    pub principal: String,
+    /// One of the server's `admin_auth.audiences` (`APP_ADMIN_API__AUDIENCE`).
+    pub audience: String,
+    /// PEM file with the private key that signs admin tokens
+    /// (`APP_ADMIN_API__SIGNING_KEY_FILE`).
+    pub signing_key_file: PathBuf,
+    /// The key's `kid` in the registry file (`APP_ADMIN_API__KEY_ID`).
+    pub key_id: String,
+    /// The key's `alg` in the registry file (`APP_ADMIN_API__ALGORITHM`).
+    #[serde(default = "default_admin_api_algorithm")]
+    pub algorithm: SigningAlgorithm,
 }
 
 /// The scheme, host and port browsers use to reach the portal, such as
@@ -243,6 +270,27 @@ fn default_github_api_url() -> Url {
     Url::parse("https://api.github.com/").expect("the URL is valid")
 }
 
+fn default_admin_api_algorithm() -> SigningAlgorithm {
+    SigningAlgorithm::Es256
+}
+
+fn http_url<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Url, D::Error> {
+    let input = String::deserialize(deserializer)?;
+    Url::parse(&input)
+        .ok()
+        .filter(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.has_host()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+        })
+        .ok_or_else(|| {
+            de::Error::custom("must be an http:// or https:// URL without credentials or query")
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +305,14 @@ mod tests {
         ("APP_SESSION__KEY", SESSION_KEY),
         ("APP_GITHUB__CLIENT_ID", "client-id"),
         ("APP_GITHUB__CLIENT_SECRET", "s3cr3t-client"),
+        ("APP_ADMIN_API__URL", "http://status-list-server:8002"),
+        ("APP_ADMIN_API__PRINCIPAL", "portal"),
+        ("APP_ADMIN_API__AUDIENCE", "status-list-admin"),
+        (
+            "APP_ADMIN_API__SIGNING_KEY_FILE",
+            "/run/secrets/admin-key.pem",
+        ),
+        ("APP_ADMIN_API__KEY_ID", "portal-1"),
     ];
 
     fn load_exactly<'a>(
@@ -288,6 +344,7 @@ mod tests {
         assert_eq!(config.database.pool_size, DEFAULT_DATABASE_POOL_SIZE);
         assert_eq!(config.github.web_url.as_str(), "https://github.com/");
         assert_eq!(config.github.api_url.as_str(), "https://api.github.com/");
+        assert_eq!(config.admin_api.algorithm, SigningAlgorithm::Es256);
     }
 
     #[test]
@@ -297,6 +354,7 @@ mod tests {
             ("APP_LOG_FORMAT", "json"),
             ("APP_SERVER__BIND_ADDRESS", "0.0.0.0:9000"),
             ("APP_DATABASE__POOL_SIZE", "3"),
+            ("APP_ADMIN_API__ALGORITHM", "EdDSA"),
         ])
         .unwrap();
 
@@ -307,6 +365,18 @@ mod tests {
         assert_eq!(config.database.url.expose_secret(), DATABASE_URL);
         assert_eq!(config.database.pool_size.get(), 3);
         assert_eq!(config.github.client_id, "client-id");
+        assert_eq!(
+            config.admin_api.url.as_str(),
+            "http://status-list-server:8002/"
+        );
+        assert_eq!(config.admin_api.principal, "portal");
+        assert_eq!(config.admin_api.audience, "status-list-admin");
+        assert_eq!(
+            config.admin_api.signing_key_file,
+            PathBuf::from("/run/secrets/admin-key.pem")
+        );
+        assert_eq!(config.admin_api.key_id, "portal-1");
+        assert_eq!(config.admin_api.algorithm, SigningAlgorithm::EdDsa);
     }
 
     #[test]
@@ -316,6 +386,7 @@ mod tests {
             ("APP_DATABASE__URL", "database"),
             ("APP_SESSION__KEY", "session"),
             ("APP_GITHUB__CLIENT_SECRET", "client_secret"),
+            ("APP_ADMIN_API__SIGNING_KEY_FILE", "signing_key_file"),
         ] {
             let error = load_without(variable).unwrap_err();
 
@@ -440,5 +511,31 @@ mod tests {
         let error = load(&[("APP_SERVER__BIND_ADDRESS", "nowhere")]).unwrap_err();
 
         assert!(error.to_string().contains("server.bind_address"), "{error}");
+    }
+
+    #[test]
+    fn the_admin_api_is_reached_over_http() {
+        for url in [
+            "status-list-server:8002",
+            "ftp://status-list-server",
+            "nowhere",
+            "http://portal:s3cr3t@status-list-server:8002",
+            "http://status-list-server:8002/?debug=1",
+            "http://status-list-server:8002/#admin",
+        ] {
+            let error = load(&[("APP_ADMIN_API__URL", url)]).unwrap_err();
+
+            assert!(
+                error.to_string().contains("admin_api.url"),
+                "{url}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn admin_keys_use_an_algorithm_the_server_accepts() {
+        let error = load(&[("APP_ADMIN_API__ALGORITHM", "HS256")]).unwrap_err();
+
+        assert!(error.to_string().contains("admin_api.algorithm"), "{error}");
     }
 }
