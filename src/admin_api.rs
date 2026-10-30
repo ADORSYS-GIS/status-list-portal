@@ -3,8 +3,7 @@
 //!
 //! The admin API is served on a private network only. Every call carries a fresh admin token
 //! signed with the portal's key. Developers reach their issuers through [`OwnedIssuers`],
-//! which never shows or changes another account's issuers. The contract is
-//! `docs/openapi-admin.yaml` in the server's repository.
+//! which never shows or changes another account's issuers.
 
 mod issuer;
 mod token;
