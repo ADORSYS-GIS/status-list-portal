@@ -86,6 +86,7 @@ expression: openapi
           "session"
         ],
         "summary": "Finishes signing in when GitHub sends the browser back, then goes to the home page.",
+        "description": "The browser is navigating, not fetching, so failures also go to the home page, which\nexplains them.",
         "operationId": "callback",
         "parameters": [
           {
@@ -118,41 +119,11 @@ expression: openapi
         ],
         "responses": {
           "303": {
-            "description": "Signed in; redirects to the home page.",
+            "description": "Redirects to the home page. After a failure, its `sign_in_error` parameter says why: `denied`, `expired`, `no_verified_email` or `unavailable`.",
             "headers": {
               "location": {
                 "schema": {
                   "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The sign-in was refused, expired or did not start here.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The GitHub account has no verified primary email.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
-          },
-          "502": {
-            "description": "GitHub could not be reached.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
                 }
               }
             }

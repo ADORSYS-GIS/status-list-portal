@@ -4,8 +4,8 @@ use axum::body::Body;
 use axum_extra::extract::cookie::SameSite;
 use diesel::QueryDsl;
 use diesel_async::RunQueryDsl;
-use http::Method;
 use http::header::COOKIE;
+use http::{Method, StatusCode};
 use insta::assert_snapshot;
 use oauth2::{PkceCodeChallenge, PkceCodeVerifier};
 use serde_json::{Value, json};
@@ -106,6 +106,23 @@ async fn github_approves(github: &MockServer, emails: Value) {
         .await;
 }
 
+/// GitHub answers the code with an OAuth error, with `200 OK` as it does.
+async fn github_answers_the_code_with(github: &MockServer, error: &str) {
+    Mock::given(method("POST"))
+        .and(path("/login/oauth/access_token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "error": error })))
+        .mount(github)
+        .await;
+}
+
+/// The browser went to the home page, which explains why signing in failed.
+fn assert_failed(response: &Response, reason: &str) {
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = format!("/?sign_in_error={reason}");
+    assert_eq!(response.header("location"), Some(location.as_str()));
+    assert!(response.cookie(SESSION_COOKIE).is_none());
+}
+
 fn verified_primary_email() -> Value {
     json!([
         { "email": "octo@example.org", "primary": false, "verified": true },
@@ -192,13 +209,8 @@ async fn signing_in_needs_a_verified_primary_email() {
 
     let response = sign_in(&anon).await;
 
-    assert_snapshot!(response.status(), @"403 Forbidden");
-    let detail = response.json()["errors"][0]["detail"].to_string();
-    assert!(
-        detail.contains("https://github.com/settings/emails"),
-        "{detail}"
-    );
-    assert!(response.cookie(SESSION_COOKIE).is_none());
+    assert_failed(&response, "no_verified_email");
+    assert_eq!(response.cookie(SIGN_IN_COOKIE).unwrap().value(), "");
     let mut conn = app.db_conn().await;
     let accounts: i64 = users::table.count().get_result(&mut conn).await.unwrap();
     assert_eq!(accounts, 0);
@@ -213,8 +225,9 @@ async fn coming_back_with_another_state_is_refused() {
     let query = format!("code={CODE}&state=forged");
     let response = come_back(&anon, &sign_in.cookie, &query).await;
 
-    assert_snapshot!(response.status(), @"400 Bad Request");
-    assert!(response.cookie(SESSION_COOKIE).is_none());
+    assert_failed(&response, "expired");
+    // The sign-in in progress can still finish.
+    assert!(response.cookie(SIGN_IN_COOKIE).is_none());
 }
 
 #[tokio::test]
@@ -229,8 +242,7 @@ async fn coming_back_without_the_sign_in_cookie_is_refused() {
     );
     let response = anon.get(&path).await;
 
-    assert_snapshot!(response.status(), @"400 Bad Request");
-    assert!(response.cookie(SESSION_COOKIE).is_none());
+    assert_failed(&response, "expired");
 }
 
 #[tokio::test]
@@ -241,33 +253,44 @@ async fn declining_on_github_signs_nobody_in() {
     let query = format!("error=access_denied&state={}", sign_in.state);
     let response = come_back(&anon, &sign_in.cookie, &query).await;
 
-    assert_snapshot!(response.status(), @"400 Bad Request");
-    assert_eq!(
-        response.json(),
-        json!({ "errors": [{ "detail": "This sign-in cannot be completed. Please sign in again." }] })
-    );
+    assert_failed(&response, "denied");
+    assert_eq!(response.cookie(SIGN_IN_COOKIE).unwrap().value(), "");
+}
+
+#[tokio::test]
+async fn github_refusing_to_start_is_unavailable() {
+    let (_app, anon) = TestApp::init().empty().await;
+    let sign_in = start_sign_in(&anon).await;
+
+    let query = format!("error=redirect_uri_mismatch&state={}", sign_in.state);
+    let response = come_back(&anon, &sign_in.cookie, &query).await;
+
+    assert_failed(&response, "unavailable");
 }
 
 #[tokio::test]
 async fn a_code_github_rejects_signs_nobody_in() {
     let (app, anon) = TestApp::init().empty().await;
-    Mock::given(method("POST"))
-        .and(path("/login/oauth/access_token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "error": "bad_verification_code",
-            "error_description": "The code passed is incorrect or expired.",
-        })))
-        .mount(app.github())
-        .await;
+    github_answers_the_code_with(app.github(), "bad_verification_code").await;
 
     let response = sign_in(&anon).await;
 
-    assert_snapshot!(response.status(), @"400 Bad Request");
-    assert!(response.cookie(SESSION_COOKIE).is_none());
+    assert_failed(&response, "expired");
+    assert_eq!(response.cookie(SIGN_IN_COOKIE).unwrap().value(), "");
 }
 
 #[tokio::test]
-async fn github_failing_is_a_bad_gateway() {
+async fn github_refusing_the_oauth_app_is_unavailable() {
+    let (app, anon) = TestApp::init().empty().await;
+    github_answers_the_code_with(app.github(), "incorrect_client_credentials").await;
+
+    let response = sign_in(&anon).await;
+
+    assert_failed(&response, "unavailable");
+}
+
+#[tokio::test]
+async fn github_failing_is_unavailable() {
     let (app, anon) = TestApp::init().empty().await;
     Mock::given(method("POST"))
         .and(path("/login/oauth/access_token"))
@@ -277,11 +300,7 @@ async fn github_failing_is_a_bad_gateway() {
 
     let response = sign_in(&anon).await;
 
-    assert_snapshot!(response.status(), @"502 Bad Gateway");
-    assert_eq!(
-        response.json(),
-        json!({ "errors": [{ "detail": "GitHub could not be reached. Please try again later." }] })
-    );
+    assert_failed(&response, "unavailable");
 }
 
 #[tokio::test]

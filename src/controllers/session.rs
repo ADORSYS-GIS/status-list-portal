@@ -5,18 +5,17 @@ use axum::response::Redirect;
 use axum_extra::extract::PrivateCookieJar;
 use http::StatusCode;
 use serde::Deserialize;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use utoipa::IntoParams;
 
 use crate::auth::{self, SESSION_COOKIE, SIGN_IN_COOKIE, Session};
-use crate::github::SignInError;
+use crate::github::{Account, PendingSignIn, SignInError};
 use crate::models::{NewUser, User};
 use crate::server::ServerContext;
-use crate::util::errors::{self, ApiErrorResponse, AppResult};
+use crate::util::errors::{self, AppResult};
 
-const START_AGAIN: &str = "This sign-in cannot be completed. Please sign in again.";
-const NEEDS_EMAIL: &str = "Signing in needs a verified primary email on your GitHub account. \
-                           Add one at https://github.com/settings/emails, then sign in again.";
+/// What GitHub sends back when the user did not approve the portal.
+const ACCESS_DENIED: &str = "access_denied";
 
 /// Starts signing in: sends the browser to GitHub to approve the portal.
 #[utoipa::path(
@@ -46,54 +45,121 @@ pub struct CallbackQuery {
     error: Option<String>,
 }
 
+/// Why a sign-in failed, as the home page reads it from its `sign_in_error` parameter.
+#[derive(Debug, Clone, Copy)]
+enum Failure {
+    /// The user did not approve the portal on GitHub.
+    Denied,
+    /// The sign-in expired, was already used, or did not start in this browser.
+    Expired,
+    NoVerifiedEmail,
+    /// GitHub or the portal failed; signing in again later may work.
+    Unavailable,
+}
+
+impl Failure {
+    fn redirect(self) -> Redirect {
+        let reason = match self {
+            Self::Denied => "denied",
+            Self::Expired => "expired",
+            Self::NoVerifiedEmail => "no_verified_email",
+            Self::Unavailable => "unavailable",
+        };
+        Redirect::to(&format!("/?sign_in_error={reason}"))
+    }
+}
+
 /// Finishes signing in when GitHub sends the browser back, then goes to the home page.
+///
+/// The browser is navigating, not fetching, so failures also go to the home page, which
+/// explains them.
 #[utoipa::path(
     get,
     path = "/api/v1/session/github/callback",
     tag = "session",
     params(CallbackQuery),
     responses(
-        (status = 303, description = "Signed in; redirects to the home page.", headers(("location" = String))),
-        (status = 400, description = "The sign-in was refused, expired or did not start here.", body = ApiErrorResponse),
-        (status = 403, description = "The GitHub account has no verified primary email.", body = ApiErrorResponse),
-        (status = 502, description = "GitHub could not be reached.", body = ApiErrorResponse),
+        (status = 303, description = "Redirects to the home page. After a failure, its \
+            `sign_in_error` parameter says why: `denied`, `expired`, `no_verified_email` or \
+            `unavailable`.", headers(("location" = String))),
     ),
 )]
 pub async fn callback(
     ctx: ServerContext,
     jar: PrivateCookieJar,
     Query(query): Query<CallbackQuery>,
-) -> AppResult<(PrivateCookieJar, Redirect)> {
-    let pending = auth::pending_sign_in(&jar).ok_or_else(|| errors::bad_request(START_AGAIN))?;
-    if query.state.as_deref() != Some(pending.state.as_str()) {
-        return Err(errors::bad_request(START_AGAIN));
-    }
-    if let Some(error) = query.error {
-        // Debug-formatted: the value comes from the query string, so it is escaped.
-        info!(?error, "GitHub did not approve a sign-in");
-        return Err(errors::bad_request(START_AGAIN));
-    }
-    let code = query.code.ok_or_else(|| errors::bad_request(START_AGAIN))?;
+) -> (PrivateCookieJar, Redirect) {
+    let pending = auth::pending_sign_in(&jar)
+        .filter(|pending| query.state.as_deref() == Some(pending.state.as_str()));
+    let Some(pending) = pending else {
+        // The cookie stays: a link that is not this sign-in's must not cancel it.
+        return (jar, Failure::Expired.redirect());
+    };
 
-    let account =
-        ctx.github
-            .finish_sign_in(&code, &pending)
-            .await
-            .map_err(|error| match error {
-                SignInError::Rejected(reason) => {
-                    info!(%reason, "GitHub rejected a sign-in");
-                    errors::bad_request(START_AGAIN)
-                }
-                SignInError::NoVerifiedEmail => {
-                    info!("a sign-in had no verified primary email");
-                    errors::forbidden(NEEDS_EMAIL)
-                }
-                error => {
-                    warn!(error = %errors::describe(&error), "sign-in failed");
-                    errors::bad_gateway("GitHub could not be reached. Please try again later.")
-                }
-            })?;
+    let jar = jar.remove(auth::removal(SIGN_IN_COOKIE));
+    match sign_in(&ctx, &pending, query).await {
+        Ok(user) => (
+            jar.add(Session::new(&user).into_cookie()),
+            Redirect::to("/"),
+        ),
+        Err(failure) => (jar, failure.redirect()),
+    }
+}
 
+async fn sign_in(
+    ctx: &ServerContext,
+    pending: &PendingSignIn,
+    query: CallbackQuery,
+) -> Result<User, Failure> {
+    match query.error {
+        Some(error) if error == ACCESS_DENIED => {
+            info!("a sign-in was not approved on GitHub");
+            return Err(Failure::Denied);
+        }
+        Some(error) => {
+            // Debug-formatted: the value comes from the query string, so it is escaped.
+            error!(
+                ?error,
+                "GitHub refused to start a sign-in; check the OAuth app"
+            );
+            return Err(Failure::Unavailable);
+        }
+        None => {}
+    }
+    let code = query.code.ok_or(Failure::Expired)?;
+
+    let account = ctx
+        .github
+        .finish_sign_in(&code, pending)
+        .await
+        .map_err(|error| match error {
+            SignInError::Rejected => {
+                info!("GitHub rejected a sign-in's code");
+                Failure::Expired
+            }
+            SignInError::NoVerifiedEmail => {
+                info!("a sign-in had no verified primary email");
+                Failure::NoVerifiedEmail
+            }
+            SignInError::Refused(error) => {
+                error!(%error, "GitHub refused to finish a sign-in; check the OAuth app");
+                Failure::Unavailable
+            }
+            error => {
+                warn!(error.message = %errors::describe(&error), "sign-in failed");
+                Failure::Unavailable
+            }
+        })?;
+
+    let user = save(ctx, &account).await.map_err(|error| {
+        error!(error.message = %format!("{error:#}"), "failed to save a signed-in account");
+        Failure::Unavailable
+    })?;
+    info!(user.id, "signed in");
+    Ok(user)
+}
+
+async fn save(ctx: &ServerContext, account: &Account) -> anyhow::Result<User> {
     let mut conn = ctx.db.get().await?;
     let user = NewUser {
         gh_id: account.id,
@@ -103,12 +169,7 @@ pub async fn callback(
     }
     .insert_or_update(&mut conn)
     .await?;
-    info!(user.id, "signed in");
-
-    let jar = jar
-        .remove(auth::removal(SIGN_IN_COOKIE))
-        .add(Session::new(&user).into_cookie());
-    Ok((jar, Redirect::to("/")))
+    Ok(user)
 }
 
 /// Signs out of every browser at once.

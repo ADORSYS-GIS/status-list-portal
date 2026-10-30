@@ -28,6 +28,9 @@ const SCOPE: &str = "user:email";
 const API_VERSION: &str = "2022-11-28";
 /// A sign-in makes two rounds of calls, which must fit in the server's request timeout.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// What GitHub answers a code with when it is wrong, expired or already used. Any other
+/// OAuth error points at the OAuth app's settings.
+const BAD_CODE: &str = "bad_verification_code";
 
 /// Client of GitHub's authorization and token endpoints.
 type OAuthClient =
@@ -65,8 +68,11 @@ pub struct Account {
 #[derive(Debug, thiserror::Error)]
 pub enum SignInError {
     /// GitHub refused the code, for example because it expired or was already used.
-    #[error("GitHub rejected the authorization code: {0}")]
-    Rejected(String),
+    #[error("GitHub rejected the authorization code")]
+    Rejected,
+    /// GitHub refused the OAuth app itself, such as its client secret or callback URL.
+    #[error("GitHub refused the OAuth app: {0}")]
+    Refused(String),
     #[error("GitHub did not issue a token")]
     Token(#[source] TokenError),
     #[error("GitHub request failed")]
@@ -173,13 +179,11 @@ impl GitHub {
             .await;
         match result {
             Ok(response) => Ok(response.access_token().clone()),
-            Err(RequestTokenError::ServerResponse(response)) => {
-                Err(SignInError::Rejected(response.error().to_string()))
-            }
+            Err(RequestTokenError::ServerResponse(response)) => Err(refusal(&response)),
             // GitHub refuses a code with `200 OK` and an OAuth error, which is no token.
             Err(RequestTokenError::Parse(error, body)) => {
                 match serde_json::from_slice::<BasicErrorResponse>(&body) {
-                    Ok(response) => Err(SignInError::Rejected(response.error().to_string())),
+                    Ok(response) => Err(refusal(&response)),
                     Err(_) => Err(SignInError::Token(RequestTokenError::Parse(error, body))),
                 }
             }
@@ -202,5 +206,14 @@ impl GitHub {
             .error_for_status()?
             .json()
             .await
+    }
+}
+
+fn refusal(response: &BasicErrorResponse) -> SignInError {
+    let error = response.error().to_string();
+    if error == BAD_CODE {
+        SignInError::Rejected
+    } else {
+        SignInError::Refused(error)
     }
 }
