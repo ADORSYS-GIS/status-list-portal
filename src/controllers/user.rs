@@ -13,7 +13,7 @@ pub struct MeResponse {
     #[schema(example = "octocat")]
     login: String,
     /// Display name from the GitHub profile.
-    #[schema(example = "The Octocat")]
+    #[schema(example = "The Octocat", required = true)]
     name: Option<String>,
     /// Verified primary email on GitHub.
     #[schema(example = "octocat@example.com")]

@@ -265,6 +265,7 @@ expression: openapi
         "type": "object",
         "required": [
           "login",
+          "name",
           "email"
         ],
         "properties": {
