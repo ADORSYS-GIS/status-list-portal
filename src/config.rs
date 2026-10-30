@@ -12,7 +12,7 @@ use ::config::{ConfigError, Environment};
 use axum_extra::extract::cookie::Key;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Deserializer, de};
-use url::Url;
+use url::{Host, Url};
 
 use crate::Env;
 use crate::util::logging::LogFormat;
@@ -100,6 +100,12 @@ impl PublicOrigin {
                     .to_string(),
             );
         }
+        // The cookies are `Secure`, which browsers only accept over https or on loopback.
+        if url.scheme() == "http" && !is_loopback(&url) {
+            return Err(
+                "must use https, unless the host is localhost or a loopback address".to_string(),
+            );
+        }
         Ok(Self(url.origin().ascii_serialization()))
     }
 
@@ -111,6 +117,15 @@ impl PublicOrigin {
     /// The absolute URL of `path`, which starts with `/`, on the portal.
     pub fn url_for(&self, path: &str) -> String {
         format!("{}{path}", self.0)
+    }
+}
+
+fn is_loopback(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(domain)) => domain == "localhost",
+        Some(Host::Ipv4(address)) => address.is_loopback(),
+        Some(Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
     }
 }
 
@@ -339,6 +354,19 @@ mod tests {
         ] {
             assert!(PublicOrigin::parse(input).is_err(), "{input}");
         }
+    }
+
+    #[test]
+    fn http_origins_are_only_for_loopback() {
+        for input in [
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://[::1]:8080",
+        ] {
+            assert!(PublicOrigin::parse(input).is_ok(), "{input}");
+        }
+        let error = PublicOrigin::parse("http://portal.internal:8080").unwrap_err();
+        assert!(error.contains("https"), "{error}");
     }
 
     #[test]
