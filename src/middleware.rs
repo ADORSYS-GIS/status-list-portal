@@ -1,5 +1,6 @@
 //! Middleware applied to every request.
 
+mod cross_origin;
 mod headers;
 
 use std::any::Any;
@@ -7,13 +8,14 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Request};
-use axum::middleware::{Next, from_fn};
+use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::Response;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, Span, info_span, warn};
 
+use crate::config::PublicOrigin;
 use crate::util::errors;
 
 /// Requests that take longer are answered with `503 Service Unavailable`.
@@ -23,9 +25,10 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// short fields.
 const MAX_BODY_SIZE: usize = 16 * 1024;
 
-pub fn apply_middleware(router: Router) -> Router {
-    // Security headers sit outside the panic and timeout layers, so the responses those
-    // layers produce carry them too.
+/// Wraps `router` in every middleware. `origin` is where browsers reach the portal.
+pub fn apply_middleware(router: Router, origin: &PublicOrigin) -> Router {
+    // Security headers sit outside the other layers, so the responses those layers produce
+    // carry them too.
     let middleware = ServiceBuilder::new()
         .layer(
             TraceLayer::new_for_http()
@@ -33,6 +36,10 @@ pub fn apply_middleware(router: Router) -> Router {
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
         .layer(from_fn(headers::add_common_headers))
+        .layer(from_fn_with_state(
+            origin.clone(),
+            cross_origin::reject_cross_origin,
+        ))
         .layer(CatchPanicLayer::custom(handle_panic))
         .layer(from_fn(time_out));
 
@@ -85,7 +92,12 @@ mod tests {
         let router = Router::new().route("/slow", get(slow));
         let request = Request::get("/slow").body(Body::empty()).unwrap();
 
-        let response = apply_middleware(router).oneshot(request).await.unwrap();
+        let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
+
+        let response = apply_middleware(router, &origin)
+            .oneshot(request)
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(response.headers()["content-type"], "application/json");
@@ -105,7 +117,12 @@ mod tests {
         let router = Router::new().route("/boom", get(boom));
         let request = Request::get("/boom").body(Body::empty()).unwrap();
 
-        let response = apply_middleware(router).oneshot(request).await.unwrap();
+        let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
+
+        let response = apply_middleware(router, &origin)
+            .oneshot(request)
+            .await
+            .unwrap();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");

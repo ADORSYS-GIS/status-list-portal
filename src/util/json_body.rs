@@ -29,6 +29,7 @@ mod tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
+    use crate::config::PublicOrigin;
     use crate::middleware::apply_middleware;
 
     #[derive(Deserialize)]
@@ -41,7 +42,8 @@ mod tests {
     }
 
     async fn send(content_type: &str, body: impl Into<Body>) -> Response {
-        let router = apply_middleware(Router::new().route("/greet", post(greet)));
+        let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
+        let router = apply_middleware(Router::new().route("/greet", post(greet)), &origin);
         let request = Request::post("/greet")
             .header(CONTENT_TYPE, content_type)
             .body(body.into())

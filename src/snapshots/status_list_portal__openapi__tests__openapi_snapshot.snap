@@ -14,6 +14,123 @@ expression: openapi
     "version": "0.0.0"
   },
   "paths": {
+    "/api/v1/me": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "The signed-in user.",
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "description": "The signed-in user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/session": {
+      "delete": {
+        "tags": [
+          "session"
+        ],
+        "summary": "Signs out of every browser at once.",
+        "operationId": "sign_out",
+        "responses": {
+          "204": {
+            "description": "Signed out, or was not signed in."
+          }
+        }
+      }
+    },
+    "/api/v1/session/github": {
+      "get": {
+        "tags": [
+          "session"
+        ],
+        "summary": "Starts signing in: sends the browser to GitHub to approve the portal.",
+        "operationId": "begin",
+        "responses": {
+          "303": {
+            "description": "Redirects to GitHub.",
+            "headers": {
+              "location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/session/github/callback": {
+      "get": {
+        "tags": [
+          "session"
+        ],
+        "summary": "Finishes signing in when GitHub sends the browser back, then goes to the home page.",
+        "description": "The browser is navigating, not fetching, so failures also go to the home page, which\nexplains them.",
+        "operationId": "callback",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "description": "Code to trade for a token, when the user approved the portal.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "The `state` the sign-in started with.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "description": "Why GitHub did not approve, for example `access_denied`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirects to the home page. After a failure, its `sign_in_error` parameter says why: `denied`, `expired`, `no_verified_email` or `unavailable`.",
+            "headers": {
+              "location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "tags": [
@@ -112,6 +229,34 @@ expression: openapi
               "$ref": "#/components/schemas/ApiErrorDetail"
             },
             "description": "What prevented the request from succeeding. Always exactly one entry."
+          }
+        }
+      },
+      "MeResponse": {
+        "type": "object",
+        "required": [
+          "login",
+          "name",
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Verified primary email on GitHub.",
+            "example": "octocat@example.com"
+          },
+          "login": {
+            "type": "string",
+            "description": "GitHub login.",
+            "example": "octocat"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display name from the GitHub profile.",
+            "example": "The Octocat"
           }
         }
       }

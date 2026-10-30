@@ -3,6 +3,7 @@
 use anyhow::Context;
 use secrecy::ExposeSecret;
 use status_list_portal::config::Config;
+use status_list_portal::github::GitHub;
 use status_list_portal::{ServerContext, ServerContextInner, build_handler, db, util};
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -17,9 +18,10 @@ async fn main() -> anyhow::Result<()> {
 
     db::run_migrations(config.database.url.expose_secret()).await?;
     let db = db::pool(&config.database)?;
+    let github = GitHub::new(&config.github, &config.server.origin)?;
 
     let bind_address = config.server.bind_address;
-    let ctx = ServerContext::new(ServerContextInner { config, db });
+    let ctx = ServerContext::new(ServerContextInner { config, db, github });
 
     let terminate = terminate_signal()?;
     let listener = TcpListener::bind(bind_address)

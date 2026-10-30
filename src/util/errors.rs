@@ -72,6 +72,10 @@ pub fn bad_request(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
     custom(StatusCode::BAD_REQUEST, detail)
 }
 
+pub fn unauthorized() -> BoxedAppError {
+    custom(StatusCode::UNAUTHORIZED, "This action requires signing in")
+}
+
 pub fn forbidden(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
     custom(StatusCode::FORBIDDEN, detail)
 }

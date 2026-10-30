@@ -4,9 +4,11 @@
 //! Status List Server's admin API on their behalf. Routes are declared in the `router`
 //! module and implemented in [`controllers`].
 
+pub mod auth;
 pub mod config;
 pub mod controllers;
 pub mod db;
+pub mod github;
 pub mod middleware;
 pub mod models;
 pub mod openapi;
@@ -36,5 +38,6 @@ pub enum Env {
 
 /// Builds the router with every route and middleware.
 pub fn build_handler(ctx: ServerContext) -> axum::Router {
-    middleware::apply_middleware(router::build_router(ctx))
+    let origin = ctx.config.server.origin.clone();
+    middleware::apply_middleware(router::build_router(ctx), &origin)
 }
