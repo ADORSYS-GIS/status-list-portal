@@ -3,7 +3,8 @@ use http::Method;
 use http::header::COOKIE;
 use insta::assert_snapshot;
 use serde_json::json;
-use status_list_portal::auth::SESSION_COOKIE;
+use status_list_portal::auth::{SESSION_COOKIE, Session};
+use time::OffsetDateTime;
 
 use crate::util::{RequestHelper, TestApp};
 
@@ -40,6 +41,25 @@ async fn forged_session_cookies_are_ignored() {
     let request = anon
         .request_builder(Method::GET, "/api/v1/me")
         .header(COOKIE, format!("{SESSION_COOKIE}={{\"user_id\":1}}"))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = anon.run(request).await;
+
+    assert_snapshot!(response.status(), @"401 Unauthorized");
+}
+
+#[tokio::test]
+async fn expired_sessions_are_ignored() {
+    let (app, anon) = TestApp::init().empty().await;
+    let user = app.db_new_user("octocat").await;
+    let expired = Session {
+        expires_at: OffsetDateTime::now_utc().unix_timestamp() - 1,
+        ..Session::new(user.user())
+    };
+    let request = anon
+        .request_builder(Method::GET, "/api/v1/me")
+        .header(COOKIE, app.cookie_for(expired))
         .body(Body::empty())
         .unwrap();
 

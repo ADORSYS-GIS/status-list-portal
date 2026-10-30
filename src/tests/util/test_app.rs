@@ -89,8 +89,13 @@ impl TestApp {
 
     /// A `Cookie` header with a new session for `user`, encrypted the way the app does it.
     pub fn session_cookie(&self, user: &User) -> String {
-        let jar = PrivateCookieJar::new(self.0.session_key.key().clone())
-            .add(Session::new(user).into_cookie());
+        self.cookie_for(Session::new(user))
+    }
+
+    /// A `Cookie` header that carries `session`, encrypted the way the app does it.
+    pub fn cookie_for(&self, session: Session) -> String {
+        let jar =
+            PrivateCookieJar::new(self.0.session_key.key().clone()).add(session.into_cookie());
         let response = jar.into_response();
         let set_cookie = response.headers()[SET_COOKIE]
             .to_str()

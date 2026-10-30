@@ -10,6 +10,7 @@ use insta::assert_snapshot;
 use oauth2::{PkceCodeChallenge, PkceCodeVerifier};
 use serde_json::{Value, json};
 use status_list_portal::auth::{SESSION_COOKIE, SIGN_IN_COOKIE};
+use status_list_portal::models::User;
 use status_list_portal::schema::users;
 use url::Url;
 use wiremock::matchers::{body_string_contains, header, method, path};
@@ -296,6 +297,22 @@ async fn signing_out_ends_every_session() {
     assert_snapshot!(user.get("/api/v1/me").await.status(), @"401 Unauthorized");
     let elsewhere = get_with_cookie(&anon, "/api/v1/me", &other_browser).await;
     assert_snapshot!(elsewhere.status(), @"401 Unauthorized");
+}
+
+#[tokio::test]
+async fn signing_out_with_an_old_session_keeps_the_newer_ones() {
+    let (app, anon) = TestApp::init().empty().await;
+    let user = app.db_new_user("octocat").await;
+    user.delete("/api/v1/session").await;
+    let mut conn = app.db_conn().await;
+    let signed_in_again = User::find(&mut conn, user.user().id).await.unwrap();
+    let new_session = app.session_cookie(&signed_in_again);
+
+    let response = user.delete("/api/v1/session").await;
+
+    assert_snapshot!(response.status(), @"204 No Content");
+    let me = get_with_cookie(&anon, "/api/v1/me", &new_session).await;
+    assert_snapshot!(me.status(), @"200 OK");
 }
 
 #[tokio::test]
