@@ -386,11 +386,29 @@ mod tests {
             ("APP_DATABASE__URL", "database"),
             ("APP_SESSION__KEY", "session"),
             ("APP_GITHUB__CLIENT_SECRET", "client_secret"),
+            ("APP_ADMIN_API__PRINCIPAL", "principal"),
+            ("APP_ADMIN_API__AUDIENCE", "audience"),
             ("APP_ADMIN_API__SIGNING_KEY_FILE", "signing_key_file"),
+            ("APP_ADMIN_API__KEY_ID", "key_id"),
         ] {
             let error = load_without(variable).unwrap_err();
 
             assert!(error.to_string().contains(setting), "{variable}: {error}");
+        }
+    }
+
+    #[test]
+    fn empty_required_settings_are_missing() {
+        for (variable, setting) in [
+            ("APP_GITHUB__CLIENT_ID", "github.client_id"),
+            ("APP_ADMIN_API__PRINCIPAL", "admin_api.principal"),
+            ("APP_ADMIN_API__AUDIENCE", "admin_api.audience"),
+            ("APP_ADMIN_API__KEY_ID", "admin_api.key_id"),
+        ] {
+            let error = load(&[(variable, "")]).unwrap_err();
+
+            let missing = format!("missing configuration field \"{setting}\"");
+            assert!(error.to_string().contains(&missing), "{variable}: {error}");
         }
     }
 

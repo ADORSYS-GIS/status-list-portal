@@ -84,7 +84,9 @@ impl From<AdminApiError> for BoxedAppError {
             }
             _ => {
                 error!(error.message = %describe(&error), "admin API call failed");
-                bad_gateway("The Status List Server could not be reached. Please try again later.")
+                bad_gateway(
+                    "The Status List Server did not complete the request. Please try again later.",
+                )
             }
         }
     }
@@ -221,6 +223,7 @@ mod tests {
         );
     }
 
+    /// The mapping reads only the code, so every refusal here shares one status.
     fn refused(code: ErrorCode) -> AdminApiError {
         AdminApiError::Refused {
             status: StatusCode::CONFLICT,

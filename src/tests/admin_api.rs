@@ -1,11 +1,18 @@
+use std::collections::BTreeMap;
+
+use http::StatusCode;
 use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Validation, decode, decode_header};
 use serde_json::{Value, json};
 use status_list_portal::admin_api::{
-    AdminApiError, ErrorCode, IssuerChange, IssuerQuery, IssuerSource, IssuerState, IssuerTier,
+    AdminApi, AdminApiError, ErrorCode, IssuerChange, IssuerSource, IssuerState, IssuerTier,
     KeyState, NewIssuer, Owner, RequestedState, SigningAlgorithm,
 };
+use status_list_portal::config;
+use status_list_portal::util::errors::BoxedAppError;
 use time::OffsetDateTime;
+use tokio::net::TcpListener;
+use url::Url;
 use wiremock::matchers::{any, body_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -50,7 +57,7 @@ fn issuer_json(gh_id: i64) -> Value {
             "created_at": 1_790_000_000,
             "public_key": public_jwk_json(),
         }],
-        "usage": { "lists": 3, "lists_limit": 10, "keys": 1, "keys_limit": 2 },
+        "usage": { "lists": 3, "lists_limit": 10, "keys": 1, "keys_limit": null },
     })
 }
 
@@ -66,7 +73,7 @@ fn static_issuer_json() -> Value {
         "created_at": null,
         "expires_at": null,
         "keys": [],
-        "usage": { "lists": 0, "lists_limit": 1000, "keys": 0, "keys_limit": 5 },
+        "usage": { "lists": 0, "lists_limit": 1000, "keys": 0, "keys_limit": null },
     })
 }
 
@@ -157,7 +164,7 @@ async fn an_account_gets_its_own_issuer() {
     assert_eq!(issuer.keys[0].alg, SigningAlgorithm::Es256);
     assert_eq!(issuer.keys[0].state, KeyState::Active);
     assert_eq!(issuer.keys[0].public_key, new_issuer().public_key);
-    assert_eq!(issuer.usage.keys_limit, 2);
+    assert_eq!(issuer.usage.keys_limit, None);
 }
 
 #[tokio::test]
@@ -171,6 +178,29 @@ async fn another_accounts_issuer_looks_missing() {
         .admin_api
         .issuers_of(&someone_else)
         .get(ISSUER_ID)
+        .await;
+
+    assert_eq!(issuer.unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_static_issuer_looks_missing() {
+    let (app, _) = TestApp::init().empty().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("etag", "\"1\"")
+                .set_body_json(static_issuer_json()),
+        )
+        .mount(app.admin_api())
+        .await;
+    let owner = octocat();
+
+    let issuer = app
+        .ctx()
+        .admin_api
+        .issuers_of(&owner)
+        .get("https://issuer.example.com")
         .await;
 
     assert_eq!(issuer.unwrap(), None);
@@ -214,7 +244,7 @@ async fn ids_one_path_segment_cannot_hold_look_missing() {
     let owner = octocat();
     let issuers = app.ctx().admin_api.issuers_of(&owner);
 
-    for id in ["", ".", ".."] {
+    for id in ["", ".", "..", &"a".repeat(256)] {
         assert_eq!(issuers.get(id).await.unwrap(), None, "{id:?}");
     }
     assert!(
@@ -249,6 +279,33 @@ async fn creating_an_issuer_makes_the_account_its_owner() {
         .issuers_of(&owner)
         .create(&new_issuer())
         .await;
+
+    assert_eq!(issuer.unwrap().id, ISSUER_ID);
+}
+
+#[tokio::test]
+async fn creating_an_issuer_sends_its_expiry() {
+    let (app, _) = TestApp::init().empty().await;
+    Mock::given(method("POST"))
+        .and(path("/admin/v1/issuers"))
+        .and(body_json(json!({
+            "display_name": "Acme Wallet Issuer",
+            "owner": "github|5821374",
+            "public_key": public_jwk_json(),
+            "alg": "ES256",
+            "expires_at": EXPIRES_AT,
+        })))
+        .respond_with(issuer_response(201, "\"1\"", GH_ID))
+        .expect(1)
+        .mount(app.admin_api())
+        .await;
+    let owner = octocat();
+    let issuer = NewIssuer {
+        expires_at: Some(expires_at()),
+        ..new_issuer()
+    };
+
+    let issuer = app.ctx().admin_api.issuers_of(&owner).create(&issuer).await;
 
     assert_eq!(issuer.unwrap().id, ISSUER_ID);
 }
@@ -326,6 +383,30 @@ async fn another_accounts_issuer_is_never_changed() {
 }
 
 #[tokio::test]
+async fn an_issuer_deleted_before_the_change_looks_missing() {
+    let (app, _) = TestApp::init().empty().await;
+    admin_api_holds_octocats_issuer(app.admin_api()).await;
+    Mock::given(method("PATCH"))
+        .respond_with(
+            ResponseTemplate::new(404).set_body_json(json!({ "error": "issuer_not_found" })),
+        )
+        .expect(1)
+        .mount(app.admin_api())
+        .await;
+    let owner = octocat();
+    let suspend = IssuerChange::State(RequestedState::Suspended);
+
+    let issuer = app
+        .ctx()
+        .admin_api
+        .issuers_of(&owner)
+        .update(ISSUER_ID, &suspend)
+        .await;
+
+    assert_eq!(issuer.unwrap(), None);
+}
+
+#[tokio::test]
 async fn a_change_racing_another_is_refused() {
     let (app, _) = TestApp::init().empty().await;
     admin_api_holds_octocats_issuer(app.admin_api()).await;
@@ -357,8 +438,8 @@ async fn an_account_lists_only_its_own_issuers() {
     Mock::given(method("GET"))
         .and(path("/admin/v1/issuers"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "issuers": [issuer_json(GH_ID)],
-            "next_cursor": null,
+            "issuers": [static_issuer_json(), issuer_json(GH_ID), issuer_json(GH_ID + 1)],
+            "next_cursor": "page-3",
         })))
         .mount(app.admin_api())
         .await;
@@ -373,44 +454,16 @@ async fn an_account_lists_only_its_own_issuers() {
         .unwrap();
 
     assert_eq!(page.issuers.len(), 1);
-    assert_eq!(page.next_cursor, None);
+    assert_eq!(page.issuers[0].owner, Some(owner));
+    assert_eq!(page.next_cursor.as_deref(), Some("page-3"));
     let requests = app.admin_api().received_requests().await.unwrap();
+    let query: BTreeMap<String, String> = requests[0].url.query_pairs().into_owned().collect();
     assert_eq!(
-        requests[0].url.query(),
-        Some("owner=github%7C5821374&cursor=page-2")
-    );
-}
-
-#[tokio::test]
-async fn listing_every_issuer_sends_only_the_filters_set() {
-    let (app, _) = TestApp::init().empty().await;
-    Mock::given(method("GET"))
-        .and(path("/admin/v1/issuers"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "issuers": [static_issuer_json(), issuer_json(GH_ID)],
-            "next_cursor": "page-2",
-        })))
-        .mount(app.admin_api())
-        .await;
-    let query = IssuerQuery {
-        tier: Some(IssuerTier::Sandbox),
-        state: Some(IssuerState::Active),
-        limit: Some(100),
-        ..IssuerQuery::default()
-    };
-
-    let page = app.ctx().admin_api.list_issuers(&query).await.unwrap();
-
-    let static_issuer = &page.issuers[0];
-    assert_eq!(static_issuer.source, IssuerSource::Static);
-    assert_eq!(static_issuer.owner, None);
-    assert_eq!(static_issuer.expires_at, None);
-    assert_eq!(static_issuer.display_name, None);
-    assert_eq!(page.next_cursor.as_deref(), Some("page-2"));
-    let requests = app.admin_api().received_requests().await.unwrap();
-    assert_eq!(
-        requests[0].url.query(),
-        Some("tier=sandbox&state=active&limit=100")
+        query,
+        BTreeMap::from([
+            ("owner".to_string(), "github|5821374".to_string()),
+            ("cursor".to_string(), "page-2".to_string()),
+        ])
     );
 }
 
@@ -499,6 +552,57 @@ async fn an_issuer_without_an_etag_is_unexpected() {
         .unwrap_err();
 
     assert!(matches!(error, AdminApiError::Unexpected(_)), "{error}");
+}
+
+#[tokio::test]
+async fn a_body_that_does_not_match_the_contract_is_unexpected() {
+    let (app, _) = TestApp::init().empty().await;
+    Mock::given(any())
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("etag", "\"7\"")
+                .set_body_json(json!({ "id": ISSUER_ID, "state": "archived" })),
+        )
+        .mount(app.admin_api())
+        .await;
+    let owner = octocat();
+
+    let error = app
+        .ctx()
+        .admin_api
+        .issuers_of(&owner)
+        .get(ISSUER_ID)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, AdminApiError::Unexpected(_)), "{error}");
+}
+
+#[tokio::test]
+async fn an_admin_api_that_is_down_is_a_bad_gateway() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let admin_api = AdminApi::new(&config::AdminApi {
+        url: Url::parse(&format!("http://{address}")).unwrap(),
+        principal: ADMIN_PRINCIPAL.to_string(),
+        audience: ADMIN_AUDIENCE.to_string(),
+        signing_key_file: ADMIN_SIGNING_KEY_FILE.into(),
+        key_id: ADMIN_KEY_ID.to_string(),
+        algorithm: SigningAlgorithm::Es256,
+    })
+    .unwrap();
+    let owner = octocat();
+
+    let error = admin_api
+        .issuers_of(&owner)
+        .get(ISSUER_ID)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, AdminApiError::Request(_)), "{error}");
+    let response = BoxedAppError::from(error).response();
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
 }
 
 #[tokio::test]

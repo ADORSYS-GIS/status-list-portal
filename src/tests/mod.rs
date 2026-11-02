@@ -1,4 +1,5 @@
-//! Integration tests. Requests run through the full router, middleware included.
+//! Integration tests. Requests run through the full router, middleware included; the admin
+//! API client is called directly.
 
 mod admin_api;
 mod cross_origin;

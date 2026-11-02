@@ -158,7 +158,8 @@ pub struct IssuerUsage {
     pub lists_limit: u32,
     /// Keys that are not revoked.
     pub keys: u32,
-    pub keys_limit: u32,
+    /// `None` when the server enforces no limit on keys.
+    pub keys_limit: Option<u32>,
 }
 
 /// One page of issuers, ordered by `id`.

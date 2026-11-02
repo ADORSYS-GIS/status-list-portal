@@ -26,11 +26,16 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::config;
+use crate::util::errors;
 use token::TokenSigner;
 
-/// A request handler may make a few calls in a row, which must fit in the server's request
-/// timeout.
+/// A request handler may make a few calls in a row, which must fit in the portal's own
+/// request timeout of 30 seconds.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// The admin API is on the same private network: a listener that is down fails fast.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+/// The contract's `maxLength` for an issuer id. A longer one cannot exist.
+const ISSUER_ID_MAX_CHARS: usize = 255;
 
 /// Client of the admin API, signed in as the portal's admin principal.
 pub struct AdminApi {
@@ -123,6 +128,7 @@ impl AdminApi {
         let http = reqwest::Client::builder()
             .user_agent(env!("CARGO_PKG_NAME"))
             .timeout(REQUEST_TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
             // Admin tokens go to the admin API only: through no proxy, and not on to where
             // a redirect points.
             .no_proxy()
@@ -142,9 +148,9 @@ impl AdminApi {
     }
 
     /// One page of the issuers that match `query`, whoever owns them.
-    pub async fn list_issuers(&self, query: &IssuerQuery) -> Result<IssuerPage, AdminApiError> {
+    async fn list_issuers(&self, query: &IssuerQuery) -> Result<IssuerPage, AdminApiError> {
         let request = self.http.get(self.issuers_url.clone()).query(query);
-        Ok(self.send(request).await?.json().await?)
+        json(self.send(request).await?).await
     }
 
     async fn create_issuer(
@@ -152,7 +158,7 @@ impl AdminApi {
         request: &CreateIssuerRequest<'_>,
     ) -> Result<Issuer, AdminApiError> {
         let request = self.http.post(self.issuers_url.clone()).json(request);
-        Ok(self.send(request).await?.json().await?)
+        json(self.send(request).await?).await
     }
 
     /// `None` when the admin API knows no issuer with this id.
@@ -180,7 +186,7 @@ impl AdminApi {
     /// `None` for an id that one URL path segment cannot hold.
     fn issuer_url(&self, id: &str) -> Option<Url> {
         // A path segment drops `.` and `..`, which would leave the issuer's URL.
-        if matches!(id, "" | "." | "..") {
+        if matches!(id, "" | "." | "..") || id.chars().count() > ISSUER_ID_MAX_CHARS {
             return None;
         }
         let mut url = self.issuers_url.clone();
@@ -222,7 +228,19 @@ impl OwnedIssuers<'_> {
             cursor: cursor.map(str::to_owned),
             ..IssuerQuery::default()
         };
-        self.api.list_issuers(&query).await
+        let IssuerPage {
+            issuers,
+            next_cursor,
+        } = self.api.list_issuers(&query).await?;
+        // The admin API filters by owner already; this keeps a mistake there from showing
+        // other accounts' issuers.
+        Ok(IssuerPage {
+            issuers: issuers
+                .into_iter()
+                .filter(|issuer| self.owns(issuer))
+                .collect(),
+            next_cursor,
+        })
     }
 
     /// Creates a sandbox issuer that the account owns.
@@ -256,7 +274,11 @@ impl OwnedIssuers<'_> {
 
     async fn get_with_etag(&self, id: &str) -> Result<Option<(Issuer, ETag)>, AdminApiError> {
         let issuer = self.api.get_issuer(id).await?;
-        Ok(issuer.filter(|(issuer, _)| issuer.owner.as_ref() == Some(self.owner)))
+        Ok(issuer.filter(|(issuer, _)| self.owns(issuer)))
+    }
+
+    fn owns(&self, issuer: &Issuer) -> bool {
+        issuer.owner.as_ref() == Some(self.owner)
     }
 }
 
@@ -300,7 +322,21 @@ async fn with_etag<T: DeserializeOwned>(response: Response) -> Result<(T, ETag),
         .and_then(|value| value.to_str().ok())
         .map(|value| ETag(value.to_owned()))
         .ok_or_else(|| AdminApiError::Unexpected("a response without an ETag".to_string()))?;
-    Ok((response.json().await?, etag))
+    Ok((json(response).await?, etag))
+}
+
+/// The response's body. One that does not parse is contract drift, not a failed request.
+async fn json<T: DeserializeOwned>(response: Response) -> Result<T, AdminApiError> {
+    response.json().await.map_err(|error| {
+        if error.is_decode() {
+            AdminApiError::Unexpected(format!(
+                "a body that does not match the contract: {}",
+                errors::describe(&error)
+            ))
+        } else {
+            AdminApiError::Request(error)
+        }
+    })
 }
 
 #[cfg(test)]
