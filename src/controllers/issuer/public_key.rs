@@ -60,12 +60,12 @@ fn shape(alg: SigningAlgorithm) -> KeyShape {
 
 /// Reads the public JSON Web Key of an `alg` key pair.
 pub(super) fn parse(value: &Value, alg: SigningAlgorithm) -> Result<PublicJwk, BoxedAppError> {
+    if holds_private_key(value) {
+        return Err(errors::unprocessable(PRIVATE_KEY));
+    }
     let jwk = value.as_object().ok_or_else(|| {
         errors::unprocessable("The public key must be a JSON Web Key: a JSON object.")
     })?;
-    if PRIVATE_MEMBERS.iter().any(|name| jwk.contains_key(*name)) {
-        return Err(errors::unprocessable(PRIVATE_KEY));
-    }
     if jwk.get("use").is_some_and(|key_use| key_use != "sig") {
         return Err(errors::unprocessable("The key's \"use\" must be \"sig\"."));
     }
@@ -107,6 +107,23 @@ pub(super) fn parse(value: &Value, alg: SigningAlgorithm) -> Result<PublicJwk, B
         n: kept("n"),
         e: kept("e"),
     })
+}
+
+/// Whether `value` holds a private key: as a JSON Web Key, in a JWK Set, or in PEM.
+fn holds_private_key(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.contains("PRIVATE KEY"),
+        Value::Object(object) => {
+            PRIVATE_MEMBERS
+                .iter()
+                .any(|name| object.contains_key(*name))
+                || object
+                    .get("keys")
+                    .and_then(Value::as_array)
+                    .is_some_and(|keys| keys.iter().any(holds_private_key))
+        }
+        _ => false,
+    }
 }
 
 fn member<'a>(jwk: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
@@ -186,6 +203,22 @@ mod tests {
 
             refuse(&key, SigningAlgorithm::Es256);
         }
+    }
+
+    #[test]
+    fn private_keys_in_other_forms_are_recognized() {
+        let mut private_jwk = es256_key();
+        private_jwk["d"] = json!("c2VjcmV0");
+        for value in [
+            json!("-----BEGIN PRIVATE KEY-----\nMIGHAgEA\n-----END PRIVATE KEY-----"),
+            json!("-----BEGIN EC PRIVATE KEY-----\nMHcCAQEE\n-----END EC PRIVATE KEY-----"),
+            json!({ "keys": [es256_key(), private_jwk] }),
+        ] {
+            assert!(holds_private_key(&value), "{value}");
+            refuse(&value, SigningAlgorithm::Es256);
+        }
+        assert!(!holds_private_key(&es256_key()));
+        assert!(!holds_private_key(&json!({ "keys": [es256_key()] })));
     }
 
     #[test]
