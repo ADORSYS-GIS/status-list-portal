@@ -280,6 +280,9 @@ pub async fn renew_issuer(
     let renewal = IssuerChange::ExpiresAt(sandbox_expiry(&ctx.config.sandbox));
 
     let renewed = match current.state {
+        // No lock: an issuer that expires before the change lands becomes active again
+        // without a free place. That takes the sandbox one issuer over at most, which is
+        // accepted.
         IssuerState::Active => issuers.update(&current, &renewal).await?,
         IssuerState::Expired => {
             with_limits_lock(&mut conn, async {
@@ -403,6 +406,9 @@ async fn ensure_room(ctx: &ServerContext, owner: &Owner) -> AppResult<()> {
 /// Runs `work` in a transaction that holds the sandbox limits lock, so two issuers cannot
 /// both take the last free place. A request that finds the lock taken gives up at once
 /// rather than wait with a database connection.
+///
+/// The handlers hold their connection across every admin API call, not only while locked,
+/// so the pool size also bounds how many registrations and renewals run at once.
 async fn with_limits_lock<T: Send>(
     conn: &mut AsyncPgConnection,
     work: impl Future<Output = AppResult<T>> + Send,
