@@ -72,6 +72,8 @@ async fn sandbox_counts(admin_api: &MockServer, user: &MockCookieUser, counts: C
         .and(path("/admin/v1/issuers"))
         .and(query_param("owner", owner(user)))
         .and(query_param("state", "active"))
+        .and(query_param("tier", "sandbox"))
+        .and(query_param("source", "portal"))
         .respond_with(own(counts.active))
         .mount(admin_api)
         .await;

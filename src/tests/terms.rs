@@ -1,6 +1,9 @@
+use diesel::prelude::*;
+use diesel_async::RunQueryDsl;
 use insta::assert_snapshot;
 use serde_json::json;
 use status_list_portal::models::TermsAcceptance;
+use status_list_portal::schema::terms_acceptances;
 
 use crate::util::{ORIGIN, RequestHelper, TERMS_VERSION, TestApp};
 
@@ -29,6 +32,13 @@ async fn accepting_the_current_terms_is_recorded() {
 
     assert_snapshot!(response.status(), @"204 No Content");
     assert_eq!(user.get("/api/v1/me").await.json()["terms_accepted"], true);
+    let emails: Vec<String> = terms_acceptances::table
+        .filter(terms_acceptances::user_id.eq(user.user().id))
+        .select(terms_acceptances::email)
+        .load(&mut app.db_conn().await)
+        .await
+        .unwrap();
+    assert_eq!(emails, ["octocat@example.com"]);
 }
 
 #[tokio::test]
