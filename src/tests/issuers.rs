@@ -1,6 +1,6 @@
 use diesel::QueryResult;
 use diesel_async::AsyncConnection;
-use http::Method;
+use http::{Method, StatusCode};
 use insta::assert_snapshot;
 use serde_json::{Value, json};
 use status_list_portal::{config, db};
@@ -609,6 +609,50 @@ async fn deleting_suspends_the_issuer() {
     let response = user.delete(ISSUER_URL).await;
 
     assert_snapshot!(response.status(), @"204 No Content");
+}
+
+#[tokio::test]
+async fn deleting_a_deleted_issuer_changes_nothing() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_user("octocat").await;
+    let mut deleted = own_issuer_json(&user);
+    deleted["state"] = json!("suspended");
+    admin_api_holds(app.admin_api(), &deleted).await;
+
+    let response = user.delete(ISSUER_URL).await;
+
+    assert_snapshot!(response.status(), @"204 No Content");
+    assert!(
+        requests_with_method(app.admin_api(), "PATCH")
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_change_made_in_between_is_a_conflict() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = registrant(&app).await;
+    admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
+    Mock::given(method("PATCH"))
+        .respond_with(
+            ResponseTemplate::new(412).set_body_json(json!({ "error": "precondition_failed" })),
+        )
+        .mount(app.admin_api())
+        .await;
+
+    let renewed = user.post(&format!("{ISSUER_URL}/renew"), &json!({})).await;
+    let deleted = user.delete(ISSUER_URL).await;
+
+    for response in [renewed, deleted] {
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            response.json(),
+            json!({ "errors": [{
+                "detail": "The issuer changed while this request ran. Please try again."
+            }] })
+        );
+    }
 }
 
 #[tokio::test]

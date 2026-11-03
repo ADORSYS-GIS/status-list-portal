@@ -265,6 +265,16 @@ expression: openapi
               }
             }
           },
+          "409": {
+            "description": "The issuer changed while this request ran.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "502": {
             "description": "The Status List Server did not complete the request.",
             "content": {

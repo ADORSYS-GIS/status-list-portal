@@ -313,6 +313,7 @@ pub async fn renew_issuer(
         (status = 204, description = "Deleted, now or before."),
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
+        (status = 409, description = "The issuer changed while this request ran.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
     ),
 )]
@@ -324,6 +325,9 @@ pub async fn delete_issuer(
     let owner = Owner::github(user.gh_id);
     let issuers = ctx.admin_api.issuers_of(&owner);
     let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
+    if current.state == IssuerState::Suspended {
+        return Ok(StatusCode::NO_CONTENT);
+    }
     let suspend = IssuerChange::State(RequestedState::Suspended);
     issuers
         .update(&current, &suspend)
