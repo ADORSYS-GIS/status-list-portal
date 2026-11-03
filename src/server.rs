@@ -1,5 +1,6 @@
 //! State shared by every request handler.
 
+use crate::admin_api::AdminApi;
 use crate::config::Config;
 use crate::db;
 use crate::github::GitHub;
@@ -13,6 +14,7 @@ pub struct ServerContextInner {
     pub config: Config,
     pub db: db::Pool,
     pub github: GitHub,
+    pub admin_api: AdminApi,
 }
 
 /// Cheap-to-clone handle to [`ServerContextInner`]. Handlers take it as an extractor.
