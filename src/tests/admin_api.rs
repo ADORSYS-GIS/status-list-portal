@@ -446,7 +446,28 @@ async fn counting_reads_pages_until_it_has_counted_enough() {
 
     assert_eq!(count, 4);
     let requests = app.admin_api().received_requests().await.unwrap();
-    assert!(requests[0].url.query().unwrap().contains("limit=100"));
+    assert!(requests[0].url.query().unwrap().contains("limit=3"));
+}
+
+#[tokio::test]
+async fn counting_to_zero_asks_nothing() {
+    let (app, _) = TestApp::init().empty().await;
+
+    let count = app
+        .ctx()
+        .admin_api
+        .count_issuers(&IssuerQuery::default(), 0)
+        .await
+        .unwrap();
+
+    assert_eq!(count, 0);
+    assert!(
+        app.admin_api()
+            .received_requests()
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -477,7 +498,7 @@ async fn counting_sends_only_the_filters_set() {
             ("source".to_string(), "portal".to_string()),
             ("tier".to_string(), "sandbox".to_string()),
             ("state".to_string(), "active".to_string()),
-            ("limit".to_string(), "100".to_string()),
+            ("limit".to_string(), "10".to_string()),
         ])
     );
 }

@@ -379,6 +379,47 @@ async fn an_account_at_its_limit_registers_no_more() {
 }
 
 #[tokio::test]
+async fn no_registrations_allowed_stops_registering() {
+    let sandbox = config::Sandbox {
+        max_registrations_per_account: 0,
+        ..config::Sandbox::default()
+    };
+    let (app, _anon) = TestApp::init().with_sandbox(sandbox).empty().await;
+    let user = registrant(&app).await;
+
+    let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
+
+    assert_snapshot!(response.status(), @"403 Forbidden");
+    assert!(
+        app.admin_api()
+            .received_requests()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn no_active_issuers_allowed_stops_registering() {
+    let sandbox = config::Sandbox {
+        max_issuers_per_account: 0,
+        ..config::Sandbox::default()
+    };
+    let (app, _anon) = TestApp::init().with_sandbox(sandbox).empty().await;
+    let user = registrant(&app).await;
+    sandbox_counts(app.admin_api(), &user, Counts::default()).await;
+
+    let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
+
+    assert_snapshot!(response.status(), @"409 Conflict");
+    assert!(
+        requests_with_method(app.admin_api(), "POST")
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn an_account_that_used_its_registrations_registers_no_more() {
     let (app, _anon) = TestApp::init().empty().await;
     let user = registrant(&app).await;

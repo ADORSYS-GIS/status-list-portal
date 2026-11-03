@@ -174,15 +174,20 @@ impl AdminApi {
         json(self.send(request).await?).await
     }
 
-    /// How many issuers match `query`, whoever owns them. Stops reading pages once it has
-    /// counted `at_most`.
+    /// How many issuers match `query`, whoever owns them. Counts no further than it must to
+    /// tell whether there are at least `at_most`.
     pub async fn count_issuers(
         &self,
         query: &IssuerQuery,
         at_most: usize,
     ) -> Result<usize, AdminApiError> {
+        if at_most == 0 {
+            return Ok(0);
+        }
+        let page_size =
+            u8::try_from(at_most).map_or(MAX_PAGE_SIZE, |at_most| at_most.min(MAX_PAGE_SIZE));
         let mut query = IssuerQuery {
-            limit: Some(MAX_PAGE_SIZE),
+            limit: Some(page_size),
             ..query.clone()
         };
         let mut count = 0;
