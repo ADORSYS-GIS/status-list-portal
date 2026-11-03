@@ -133,6 +133,8 @@ pub struct Issuer {
 #[serde(rename_all = "lowercase")]
 pub enum KeyState {
     Active,
+    /// Kept by the server for the issuer, but not accepting tokens.
+    Reserved,
     Revoked,
 }
 

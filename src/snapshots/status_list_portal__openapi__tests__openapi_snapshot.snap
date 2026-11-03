@@ -787,6 +787,7 @@ expression: openapi
         "type": "string",
         "enum": [
           "active",
+          "reserved",
           "revoked"
         ]
       },
