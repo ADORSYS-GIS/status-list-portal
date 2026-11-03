@@ -18,8 +18,7 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use derive_more::{Deref, Display};
-use http::StatusCode;
-use http::header::{ETAG, IF_MATCH};
+use http::{HeaderName, StatusCode};
 use reqwest::{RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -38,6 +37,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 const ISSUER_ID_MAX_CHARS: usize = 255;
 /// The most issuers the admin API returns in one page.
 const MAX_PAGE_SIZE: u8 = 100;
+/// The version of an issuer's writable state, on every response about one issuer.
+const ISSUER_VERSION: HeaderName = HeaderName::from_static("issuer-version");
+/// A change applies only while the issuer is at the version this names.
+const IF_ISSUER_VERSION: HeaderName = HeaderName::from_static("if-issuer-version");
 
 /// Client of the admin API, signed in as the portal's admin principal.
 pub struct AdminApi {
@@ -59,7 +62,7 @@ pub struct OwnedIssuers<'a> {
 pub struct OwnedIssuer {
     #[deref]
     issuer: Issuer,
-    etag: ETag,
+    version: IssuerVersion,
 }
 
 impl OwnedIssuer {
@@ -126,10 +129,11 @@ struct ErrorResponse {
     error_description: Option<String>,
 }
 
-/// An issuer's version, from its `ETag` header (RFC 9110 §8.8.3). A change sends it back, and
-/// fails with [`ErrorCode::PreconditionFailed`] if the issuer changed since.
+/// The version of an issuer's writable state, from its `Issuer-Version` header. A change sends
+/// it back, and fails with [`ErrorCode::PreconditionFailed`] if the issuer changed since. Use
+/// and the expiry the server derives do not change it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ETag(String);
+struct IssuerVersion(String);
 
 #[derive(Serialize)]
 struct CreateIssuerRequest<'a> {
@@ -201,24 +205,28 @@ impl AdminApi {
     }
 
     /// `None` when the admin API knows no issuer with this id.
-    async fn get_issuer(&self, id: &str) -> Result<Option<(Issuer, ETag)>, AdminApiError> {
+    async fn get_issuer(&self, id: &str) -> Result<Option<(Issuer, IssuerVersion)>, AdminApiError> {
         let Some(url) = self.issuer_url(id) else {
             return Ok(None);
         };
         self.found(self.http.get(url)).await
     }
 
-    /// Changes the issuer, provided it is still at version `etag`.
+    /// Changes the issuer, provided it is still at `version`.
     async fn update_issuer(
         &self,
         id: &str,
-        etag: &ETag,
+        version: &IssuerVersion,
         change: &IssuerChange,
-    ) -> Result<Option<(Issuer, ETag)>, AdminApiError> {
+    ) -> Result<Option<(Issuer, IssuerVersion)>, AdminApiError> {
         let Some(url) = self.issuer_url(id) else {
             return Ok(None);
         };
-        let request = self.http.patch(url).header(IF_MATCH, &etag.0).json(change);
+        let request = self
+            .http
+            .patch(url)
+            .header(IF_ISSUER_VERSION, &version.0)
+            .json(change);
         self.found(request).await
     }
 
@@ -240,9 +248,9 @@ impl AdminApi {
     async fn found(
         &self,
         request: RequestBuilder,
-    ) -> Result<Option<(Issuer, ETag)>, AdminApiError> {
+    ) -> Result<Option<(Issuer, IssuerVersion)>, AdminApiError> {
         match self.send(request).await {
-            Ok(response) => Ok(Some(with_etag(response).await?)),
+            Ok(response) => Ok(Some(with_version(response).await?)),
             Err(error) if error.code() == Some(ErrorCode::IssuerNotFound) => Ok(None),
             Err(error) => Err(error),
         }
@@ -302,7 +310,7 @@ impl OwnedIssuers<'_> {
         let found = self.api.get_issuer(id).await?;
         Ok(found
             .filter(|(issuer, _)| self.owns(issuer))
-            .map(|(issuer, etag)| OwnedIssuer { issuer, etag }))
+            .map(|(issuer, version)| OwnedIssuer { issuer, version }))
     }
 
     /// Applies `change` to the version of the issuer that `current` holds. `None` when the
@@ -317,7 +325,7 @@ impl OwnedIssuers<'_> {
         }
         let updated = self
             .api
-            .update_issuer(&current.id, &current.etag, change)
+            .update_issuer(&current.id, &current.version, change)
             .await?;
         Ok(updated.map(|(issuer, _)| issuer))
     }
@@ -359,15 +367,19 @@ fn issuers_url(base: &Url) -> anyhow::Result<Url> {
     Ok(url)
 }
 
-/// The body of a response that carries the issuer's `ETag`.
-async fn with_etag<T: DeserializeOwned>(response: Response) -> Result<(T, ETag), AdminApiError> {
-    let etag = response
+/// The body of a response that carries the issuer's version.
+async fn with_version<T: DeserializeOwned>(
+    response: Response,
+) -> Result<(T, IssuerVersion), AdminApiError> {
+    let version = response
         .headers()
-        .get(ETAG)
+        .get(ISSUER_VERSION)
         .and_then(|value| value.to_str().ok())
-        .map(|value| ETag(value.to_owned()))
-        .ok_or_else(|| AdminApiError::Unexpected("a response without an ETag".to_string()))?;
-    Ok((json(response).await?, etag))
+        .map(|value| IssuerVersion(value.to_owned()))
+        .ok_or_else(|| {
+            AdminApiError::Unexpected("a response without an Issuer-Version".to_string())
+        })?;
+    Ok((json(response).await?, version))
 }
 
 /// The response's body. One that does not parse is contract drift, not a failed request.

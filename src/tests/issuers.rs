@@ -212,7 +212,7 @@ async fn registering_creates_an_issuer_the_user_owns() {
     sandbox_counts(app.admin_api(), &user, counts).await;
     Mock::given(method("POST"))
         .and(path("/admin/v1/issuers"))
-        .respond_with(issuer_response(201, "\"1\"", &own_issuer_json(&user)))
+        .respond_with(issuer_response(201, "1", &own_issuer_json(&user)))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -460,8 +460,8 @@ async fn renewing_keeps_an_issuer_active_for_another_lifetime() {
     admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
     Mock::given(method("PATCH"))
         .and(path(issuer_path(&own_issuer_json(&user))))
-        .and(header("if-match", "\"7\""))
-        .respond_with(issuer_response(200, "\"8\"", &own_issuer_json(&user)))
+        .and(header("if-issuer-version", "7"))
+        .respond_with(issuer_response(200, "8", &own_issuer_json(&user)))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -512,7 +512,7 @@ async fn renewing_an_expired_issuer_with_room_makes_it_active() {
     };
     sandbox_counts(app.admin_api(), &user, counts).await;
     Mock::given(method("PATCH"))
-        .respond_with(issuer_response(200, "\"8\"", &own_issuer_json(&user)))
+        .respond_with(issuer_response(200, "8", &own_issuer_json(&user)))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -558,9 +558,9 @@ async fn deleting_suspends_the_issuer() {
     admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
     Mock::given(method("PATCH"))
         .and(path(issuer_path(&own_issuer_json(&user))))
-        .and(header("if-match", "\"7\""))
+        .and(header("if-issuer-version", "7"))
         .and(body_json(json!({ "state": "suspended" })))
-        .respond_with(issuer_response(200, "\"8\"", &own_issuer_json(&user)))
+        .respond_with(issuer_response(200, "8", &own_issuer_json(&user)))
         .expect(1)
         .mount(app.admin_api())
         .await;

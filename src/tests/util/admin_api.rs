@@ -64,9 +64,9 @@ pub fn issuer_path(issuer: &Value) -> String {
     format!("/admin/v1/issuers/{id}")
 }
 
-pub fn issuer_response(status: u16, etag: &str, issuer: &Value) -> ResponseTemplate {
+pub fn issuer_response(status: u16, version: &str, issuer: &Value) -> ResponseTemplate {
     ResponseTemplate::new(status)
-        .insert_header("etag", etag)
+        .insert_header("issuer-version", version)
         .set_body_json(issuer)
 }
 
@@ -75,11 +75,11 @@ pub fn page_response(issuers: &[Value]) -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_json(json!({ "issuers": issuers, "next_cursor": null }))
 }
 
-/// The admin API holds `issuer` at version `"7"`.
+/// The admin API holds `issuer` at version `7`.
 pub async fn admin_api_holds(admin_api: &MockServer, issuer: &Value) {
     Mock::given(method("GET"))
         .and(path(issuer_path(issuer)))
-        .respond_with(issuer_response(200, "\"7\"", issuer))
+        .respond_with(issuer_response(200, "7", issuer))
         .mount(admin_api)
         .await;
 }

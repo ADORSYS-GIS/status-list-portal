@@ -130,7 +130,7 @@ async fn another_accounts_issuer_looks_missing() {
 async fn a_static_issuer_looks_missing() {
     let (app, _) = TestApp::init().empty().await;
     Mock::given(method("GET"))
-        .respond_with(issuer_response(200, "\"1\"", &static_issuer_json()))
+        .respond_with(issuer_response(200, "1", &static_issuer_json()))
         .mount(app.admin_api())
         .await;
     let owner = octocat();
@@ -166,7 +166,7 @@ async fn an_issuer_id_is_one_path_segment() {
     let (app, _) = TestApp::init().empty().await;
     Mock::given(method("GET"))
         .and(path("/admin/v1/issuers/a%2Fb%3Fc"))
-        .respond_with(issuer_response(200, "\"7\"", &issuer_json(GH_ID)))
+        .respond_with(issuer_response(200, "7", &issuer_json(GH_ID)))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -206,7 +206,7 @@ async fn creating_an_issuer_makes_the_account_its_owner() {
             "public_key": public_jwk_json(),
             "alg": "ES256",
         })))
-        .respond_with(issuer_response(201, "\"1\"", &issuer_json(GH_ID)))
+        .respond_with(issuer_response(201, "1", &issuer_json(GH_ID)))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -234,7 +234,7 @@ async fn creating_an_issuer_sends_its_expiry() {
             "alg": "ES256",
             "expires_at": EXPIRES_AT,
         })))
-        .respond_with(issuer_response(201, "\"1\"", &issuer_json(GH_ID)))
+        .respond_with(issuer_response(201, "1", &issuer_json(GH_ID)))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -255,9 +255,9 @@ async fn suspending_an_issuer_sends_the_version_it_read() {
     admin_api_holds(app.admin_api(), &issuer_json(GH_ID)).await;
     Mock::given(method("PATCH"))
         .and(path(ISSUER_PATH))
-        .and(header("if-match", "\"7\""))
+        .and(header("if-issuer-version", "7"))
         .and(body_json(json!({ "state": "suspended" })))
-        .respond_with(issuer_response(200, "\"8\"", &issuer_json(GH_ID)))
+        .respond_with(issuer_response(200, "8", &issuer_json(GH_ID)))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -278,9 +278,9 @@ async fn renewing_an_issuer_sends_the_new_expiry() {
     admin_api_holds(app.admin_api(), &issuer_json(GH_ID)).await;
     Mock::given(method("PATCH"))
         .and(path(ISSUER_PATH))
-        .and(header("if-match", "\"7\""))
+        .and(header("if-issuer-version", "7"))
         .and(body_json(json!({ "expires_at": EXPIRES_AT })))
-        .respond_with(issuer_response(200, "\"8\"", &issuer_json(GH_ID)))
+        .respond_with(issuer_response(200, "8", &issuer_json(GH_ID)))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -300,7 +300,7 @@ async fn another_accounts_issuer_is_never_changed() {
     let (app, _) = TestApp::init().empty().await;
     admin_api_holds(app.admin_api(), &issuer_json(GH_ID)).await;
     Mock::given(method("PATCH"))
-        .respond_with(issuer_response(200, "\"8\"", &issuer_json(GH_ID)))
+        .respond_with(issuer_response(200, "8", &issuer_json(GH_ID)))
         .expect(0)
         .mount(app.admin_api())
         .await;
@@ -346,7 +346,7 @@ async fn a_change_racing_another_is_refused() {
     Mock::given(method("PATCH"))
         .respond_with(
             ResponseTemplate::new(412)
-                .insert_header("etag", "\"8\"")
+                .insert_header("issuer-version", "8")
                 .set_body_json(json!({ "error": "precondition_failed" })),
         )
         .mount(app.admin_api())
@@ -401,7 +401,7 @@ async fn an_account_lists_only_its_own_issuers() {
 async fn an_issuer_created_for_another_owner_is_unexpected() {
     let (app, _) = TestApp::init().empty().await;
     Mock::given(method("POST"))
-        .respond_with(issuer_response(201, "\"1\"", &issuer_json(GH_ID + 1)))
+        .respond_with(issuer_response(201, "1", &issuer_json(GH_ID + 1)))
         .mount(app.admin_api())
         .await;
     let owner = octocat();
@@ -550,7 +550,7 @@ async fn errors_without_a_code_are_unexpected() {
 }
 
 #[tokio::test]
-async fn an_issuer_without_an_etag_is_unexpected() {
+async fn an_issuer_without_a_version_is_unexpected() {
     let (app, _) = TestApp::init().empty().await;
     Mock::given(any())
         .respond_with(ResponseTemplate::new(200).set_body_json(issuer_json(GH_ID)))
@@ -575,7 +575,7 @@ async fn a_body_that_does_not_match_the_contract_is_unexpected() {
     Mock::given(any())
         .respond_with(
             ResponseTemplate::new(200)
-                .insert_header("etag", "\"7\"")
+                .insert_header("issuer-version", "7")
                 .set_body_json(json!({ "id": ISSUER_ID, "state": "archived" })),
         )
         .mount(app.admin_api())
