@@ -68,7 +68,8 @@ impl From<AdminApiError> for BoxedAppError {
             Some(ErrorCode::IssuerNotFound) => not_found(),
             Some(ErrorCode::KeyMaterialInUse) => custom(
                 StatusCode::CONFLICT,
-                "This public key is already registered.",
+                "This public key is already registered. If you just registered it, check your \
+                 issuers.",
             ),
             Some(ErrorCode::InvalidPublicJwk | ErrorCode::UnsupportedAlgorithm) => {
                 unprocessable("The Status List Server does not accept this public key.")

@@ -361,8 +361,8 @@ async fn ensure_registrations_left(ctx: &ServerContext, owner: &Owner) -> AppRes
     let most = ctx.config.sandbox.max_registrations_per_account;
     if ctx.admin_api.count_issuers(&registered, most).await? >= most {
         return Err(errors::forbidden(format!(
-            "An account can register {most} sandbox issuers in all, deleted ones included, \
-             and this account has."
+            "This account cannot register more sandbox issuers: it has registered {most}, \
+             deleted ones included."
         )));
     }
     Ok(())

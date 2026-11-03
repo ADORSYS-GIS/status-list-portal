@@ -435,8 +435,8 @@ async fn an_account_that_used_its_registrations_registers_no_more() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
-            "detail": "An account can register 10 sandbox issuers in all, deleted ones \
-                       included, and this account has."
+            "detail": "This account cannot register more sandbox issuers: it has registered 10, \
+                       deleted ones included."
         }] })
     );
     assert!(
@@ -489,7 +489,10 @@ async fn a_key_registered_already_is_a_conflict() {
     assert_snapshot!(response.status(), @"409 Conflict");
     assert_eq!(
         response.json(),
-        json!({ "errors": [{ "detail": "This public key is already registered." }] })
+        json!({ "errors": [{
+            "detail": "This public key is already registered. If you just registered it, \
+                       check your issuers."
+        }] })
     );
 }
 
