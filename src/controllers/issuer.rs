@@ -201,7 +201,7 @@ pub async fn create_issuer(
     JsonBody(request): JsonBody<NewIssuerRequest>,
 ) -> AppResult<(StatusCode, [(HeaderName, String); 1], Json<IssuerResponse>)> {
     let mut conn = ctx.db.get().await?;
-    ensure_may_register(&mut conn, &user, &ctx.config.terms).await?;
+    ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
     let new_issuer = request.into_new_issuer(sandbox_expiry(&ctx.config.sandbox))?;
     let owner = Owner::github(user.gh_id);
 
@@ -273,7 +273,7 @@ pub async fn renew_issuer(
     Path(id): Path<String>,
 ) -> AppResult<Json<IssuerResponse>> {
     let mut conn = ctx.db.get().await?;
-    ensure_may_register(&mut conn, &user, &ctx.config.terms).await?;
+    ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
     let owner = Owner::github(user.gh_id);
     let issuers = ctx.admin_api.issuers_of(&owner);
     let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
@@ -338,7 +338,7 @@ pub async fn delete_issuer(
 }
 
 /// Registering and renewing need the current terms of use accepted.
-async fn ensure_may_register(
+async fn ensure_terms_accepted(
     conn: &mut AsyncPgConnection,
     user: &User,
     terms: &config::Terms,
