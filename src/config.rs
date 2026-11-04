@@ -141,7 +141,8 @@ pub struct Sandbox {
     #[serde(default = "default_max_registrations_per_account")]
     pub max_registrations_per_account: usize,
     /// Most active sandbox issuers all accounts together may have
-    /// (`APP_SANDBOX__MAX_ACTIVE_ISSUERS`).
+    /// (`APP_SANDBOX__MAX_ACTIVE_ISSUERS`). Each registration counts them through the admin
+    /// API, 100 to a call, so the cost of a registration grows with this number.
     #[serde(default = "default_max_active_issuers")]
     pub max_active_issuers: usize,
     /// Days a new or renewed issuer stays active (`APP_SANDBOX__LIFETIME_DAYS`). At most
