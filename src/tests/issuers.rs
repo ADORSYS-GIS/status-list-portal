@@ -4,13 +4,12 @@ use http::{Method, StatusCode};
 use insta::assert_snapshot;
 use serde_json::{Value, json};
 use status_list_portal::{config, db};
-use time::{Duration, OffsetDateTime};
 use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::util::admin_api::{
-    Counts, ISSUER_ID, admin_api_holds, issuer_json, issuer_path, issuer_response, new_issuer_body,
-    owner, page_response, public_jwk_json, sandbox_counts,
+    Counts, ISSUER_ID, admin_api_holds, assert_one_lifetime, issuer_json, issuer_path,
+    issuer_response, new_issuer_body, owner, page_response, public_jwk_json, sandbox_counts,
 };
 use crate::util::{MANAGEMENT_URL, MockCookieUser, ORIGIN, RequestHelper, TestApp};
 
@@ -36,18 +35,6 @@ fn shown_issuer_json() -> Value {
         "management_url": MANAGEMENT_URL,
         "audience": MANAGEMENT_URL,
     })
-}
-
-/// Checks that an issuer sent as `body` stays active for one sandbox lifetime from now.
-#[track_caller]
-fn assert_one_lifetime(body: &Value) {
-    let expires_at = body["expires_at"].as_i64().expect("no expires_at");
-    let expires_at = OffsetDateTime::from_unix_timestamp(expires_at).unwrap();
-    let expected = OffsetDateTime::now_utc() + Duration::days(30) - Duration::minutes(5);
-    assert!(
-        (expected - expires_at).abs() < Duration::minutes(1),
-        "{expires_at}"
-    );
 }
 
 async fn requests_with_method(admin_api: &MockServer, wanted: &str) -> Vec<wiremock::Request> {

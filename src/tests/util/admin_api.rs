@@ -2,6 +2,7 @@
 
 use serde_json::{Value, json};
 use status_list_portal::models::User;
+use time::{Duration, OffsetDateTime};
 use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -141,4 +142,16 @@ pub async fn sandbox_counts(admin_api: &MockServer, user: &User, counts: Counts)
         .respond_with(page_response(&vec![issuer_json(0); counts.in_sandbox]))
         .mount(admin_api)
         .await;
+}
+
+/// Checks that an issuer sent as `body` stays active for one sandbox lifetime from now.
+#[track_caller]
+pub fn assert_one_lifetime(body: &Value) {
+    let expires_at = body["expires_at"].as_i64().expect("no expires_at");
+    let expires_at = OffsetDateTime::from_unix_timestamp(expires_at).unwrap();
+    let expected = OffsetDateTime::now_utc() + Duration::days(30) - Duration::minutes(5);
+    assert!(
+        (expected - expires_at).abs() < Duration::minutes(1),
+        "{expires_at}"
+    );
 }

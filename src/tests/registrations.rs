@@ -10,8 +10,8 @@ use wiremock::matchers::{method, path, query_param_is_missing};
 use wiremock::{Mock, ResponseTemplate};
 
 use crate::util::admin_api::{
-    Counts, ISSUER_ID, admin_api_holds, issuer_json, issuer_response, new_issuer_body, owner,
-    page_response, public_jwk_json, sandbox_counts,
+    Counts, ISSUER_ID, admin_api_holds, assert_one_lifetime, issuer_json, issuer_response,
+    new_issuer_body, owner, page_response, public_jwk_json, sandbox_counts,
 };
 use crate::util::{MockCookieUser, RequestHelper, Response, TestApp};
 
@@ -128,6 +128,22 @@ async fn with_approval_on_a_registration_waits_for_an_operator() {
 }
 
 #[tokio::test]
+async fn with_approval_on_private_keys_are_refused_at_once() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    let mut body = new_issuer_body();
+    body["public_key"]["d"] = json!("c2VjcmV0");
+
+    let response = user.post("/api/v1/issuers", &body).await;
+
+    assert_snapshot!(response.status(), @"422 Unprocessable Entity");
+    assert!(registrations_of(&user).await.is_empty());
+}
+
+#[tokio::test]
 async fn without_approval_nothing_waits() {
     let (app, _anon) = TestApp::init().empty().await;
     let user = app.db_new_registrant("octocat").await;
@@ -218,6 +234,7 @@ async fn an_operator_approves_a_registration() {
     assert_eq!(sent["public_key"], public_jwk_json());
     assert_eq!(sent["display_name"], "Acme Wallet Issuer");
     assert_eq!(sent["alg"], "ES256");
+    assert_one_lifetime(&sent);
     let shown = &registrations_of(&user).await[0];
     assert_eq!(shown["state"], "approved");
     assert_eq!(shown["issuer_id"], ISSUER_ID);
