@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use diesel::QueryResult;
 use diesel_async::AsyncConnection;
 use insta::assert_snapshot;
@@ -12,6 +14,9 @@ use crate::util::admin_api::{
     page_response, public_jwk_json, sandbox_counts,
 };
 use crate::util::{MockCookieUser, RequestHelper, Response, TestApp};
+
+/// Long enough for another decision to try its luck while the admin API answers.
+const SLOW_ANSWER: Duration = Duration::from_millis(500);
 
 fn approval_needed() -> config::Sandbox {
     config::Sandbox {
@@ -47,10 +52,47 @@ async fn db_new_registration(app: &TestApp, user: &MockCookieUser) -> Registrati
 }
 
 async fn reject(app: &TestApp, registration: i64, reason: Option<&str>) {
-    let rejected = Registration::reject(&mut app.db_conn().await, registration, reason)
+    sandbox::reject(&mut app.db_conn().await, registration, reason)
         .await
-        .unwrap();
-    assert!(rejected, "the registration was not pending");
+        .expect("the registration was not rejected");
+}
+
+async fn withdraw(user: &MockCookieUser, registration: i64) -> Response {
+    user.delete(&format!("/api/v1/registrations/{registration}"))
+        .await
+}
+
+/// The admin API answers an issuer's creation for `user` after a while.
+async fn slow_creation(app: &TestApp, user: &MockCookieUser, status: u16) {
+    let body = if status == 201 {
+        issuer_json(user.user().gh_id)
+    } else {
+        json!({ "error": "service_unavailable" })
+    };
+    Mock::given(method("POST"))
+        .respond_with(issuer_response(status, "\"1\"", &body).set_delay(SLOW_ANSWER))
+        .expect(1)
+        .mount(app.admin_api())
+        .await;
+}
+
+/// Waits until the admin API has been asked to create an issuer.
+async fn creation_under_way(app: &TestApp) {
+    for _ in 0..200 {
+        let requests = app.admin_api().received_requests().await.unwrap();
+        if requests
+            .iter()
+            .any(|request| request.method.as_str() == "POST")
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the admin API was not asked to create an issuer");
+}
+
+fn detail(response: &Response) -> Value {
+    response.json()["errors"][0]["detail"].clone()
 }
 
 #[tokio::test]
@@ -290,6 +332,7 @@ async fn a_registration_whose_issuer_fails_stays_pending() {
 
     assert!(result.is_err());
     assert_eq!(registrations_of(&user).await[0]["state"], "pending");
+    assert_eq!(withdraw(&user, registration.id).await.status(), 204);
 }
 
 #[tokio::test]
@@ -568,4 +611,148 @@ async fn the_admin_api_failing_leaves_nothing_waiting() {
 
     assert_snapshot!(response.status(), @"503 Service Unavailable");
     assert!(registrations_of(&user).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_withdrawal_during_an_approval_is_refused() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
+    slow_creation(&app, &user, 201).await;
+    let registration = db_new_registration(&app, &user).await;
+    let mut conn = app.db_conn().await;
+
+    let (approved, withdrawn) = tokio::join!(
+        sandbox::approve(app.ctx(), &mut conn, registration.id),
+        async {
+            creation_under_way(&app).await;
+            withdraw(&user, registration.id).await
+        },
+    );
+
+    assert_snapshot!(withdrawn.status(), @"409 Conflict");
+    assert_snapshot!(detail(&withdrawn), @r#""This registration is being decided. Please try again in a moment.""#);
+    assert_eq!(approved.unwrap().id, ISSUER_ID);
+    assert_eq!(registrations_of(&user).await[0]["state"], "approved");
+}
+
+#[tokio::test]
+async fn a_withdrawal_after_a_failed_approval_goes_through() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
+    slow_creation(&app, &user, 503).await;
+    let registration = db_new_registration(&app, &user).await;
+    let mut conn = app.db_conn().await;
+
+    let (approved, withdrawn) = tokio::join!(
+        sandbox::approve(app.ctx(), &mut conn, registration.id),
+        async {
+            creation_under_way(&app).await;
+            withdraw(&user, registration.id).await
+        },
+    );
+
+    assert_eq!(withdrawn.status(), 409);
+    assert!(approved.is_err());
+    assert_snapshot!(withdraw(&user, registration.id).await.status(), @"204 No Content");
+    assert!(registrations_of(&user).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_rejection_during_an_approval_is_refused() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
+    slow_creation(&app, &user, 201).await;
+    let registration = db_new_registration(&app, &user).await;
+    let (mut approving, mut rejecting) = (app.db_conn().await, app.db_conn().await);
+
+    let (approved, rejected) = tokio::join!(
+        sandbox::approve(app.ctx(), &mut approving, registration.id),
+        async {
+            creation_under_way(&app).await;
+            sandbox::reject(&mut rejecting, registration.id, Some("No.")).await
+        },
+    );
+
+    assert_snapshot!(rejected.unwrap_err(), @"This registration is being decided. Please try again in a moment.");
+    assert_eq!(approved.unwrap().id, ISSUER_ID);
+    assert_eq!(registrations_of(&user).await[0]["state"], "approved");
+}
+
+#[tokio::test]
+async fn of_two_approvals_at_once_one_creates_the_issuer() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
+    slow_creation(&app, &user, 201).await;
+    let registration = db_new_registration(&app, &user).await;
+    let (mut first, mut second) = (app.db_conn().await, app.db_conn().await);
+
+    let (approved, approved_again) = tokio::join!(
+        sandbox::approve(app.ctx(), &mut first, registration.id),
+        async {
+            creation_under_way(&app).await;
+            sandbox::approve(app.ctx(), &mut second, registration.id).await
+        },
+    );
+
+    assert_snapshot!(approved_again.unwrap_err(), @"Another issuer is being registered. Please try again in a moment.");
+    assert_eq!(approved.unwrap().id, ISSUER_ID);
+    assert_eq!(registrations_of(&user).await[0]["state"], "approved");
+}
+
+#[tokio::test]
+async fn a_withdrawal_while_an_operator_rejects_is_refused() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    let registration = db_new_registration(&app, &user).await;
+    let mut conn = app.db_conn().await;
+
+    conn.transaction(async |conn| {
+        // Holds the registration as a rejection does until it commits.
+        let held = Registration::try_lock(conn, registration.id).await?;
+        assert!(held.is_some());
+
+        let response = withdraw(&user, registration.id).await;
+
+        assert_snapshot!(response.status(), @"409 Conflict");
+        QueryResult::Ok(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(registrations_of(&user).await[0]["state"], "pending");
+}
+
+#[tokio::test]
+async fn a_withdrawn_registration_cannot_be_rejected() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    let registration = db_new_registration(&app, &user).await;
+    assert_eq!(withdraw(&user, registration.id).await.status(), 204);
+
+    let error = sandbox::reject(&mut app.db_conn().await, registration.id, Some("No."))
+        .await
+        .unwrap_err();
+
+    assert_snapshot!(error, @"No registration has this id.");
 }

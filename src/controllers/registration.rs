@@ -3,7 +3,6 @@
 
 use axum::Json;
 use axum::extract::Path;
-use diesel::OptionalExtension;
 use http::StatusCode;
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -12,6 +11,7 @@ use utoipa::ToSchema;
 
 use crate::auth::AuthenticatedUser;
 use crate::models::{Registration, RegistrationState};
+use crate::sandbox;
 use crate::server::ServerContext;
 use crate::util::errors::{self, ApiErrorResponse, AppResult};
 
@@ -86,7 +86,7 @@ pub async fn list_registrations(
         (status = 204, description = "Withdrawn."),
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 404, description = "The user has no registration with this id.", body = ApiErrorResponse),
-        (status = 409, description = "The registration was decided already.", body = ApiErrorResponse),
+        (status = 409, description = "The registration was decided already, or is being decided.", body = ApiErrorResponse),
     ),
 )]
 pub async fn withdraw_registration(
@@ -96,28 +96,7 @@ pub async fn withdraw_registration(
 ) -> AppResult<StatusCode> {
     let id: i64 = id.parse().map_err(|_| errors::not_found())?;
     let mut conn = ctx.db.get().await?;
-    let registration = Registration::find(&mut conn, id)
-        .await
-        .optional()?
-        .filter(|registration| registration.user_id == user.id)
-        .ok_or_else(errors::not_found)?;
-    let decided = || {
-        errors::custom(
-            StatusCode::CONFLICT,
-            "This registration was decided already.",
-        )
-    };
-    if registration.state() != RegistrationState::Pending {
-        return Err(decided());
-    }
-    if !Registration::withdraw(&mut conn, id, user.id).await? {
-        // Withdrawn or decided since it was read.
-        let still_there = Registration::find(&mut conn, id).await.optional()?;
-        return Err(match still_there {
-            Some(_) => decided(),
-            None => errors::not_found(),
-        });
-    }
+    sandbox::withdraw(&mut conn, user.id, id).await?;
     info!(user.id, registration.id = id, "withdrew a registration");
     Ok(StatusCode::NO_CONTENT)
 }

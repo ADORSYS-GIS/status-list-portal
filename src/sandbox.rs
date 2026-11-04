@@ -87,25 +87,16 @@ pub async fn request(
 /// limits leave room for it now.
 ///
 /// The registration stays locked until the approval is recorded, so a withdrawal or a
-/// rejection meanwhile waits, then finds it decided. If the issuer cannot be created, the
-/// registration stays pending. If an earlier approval created the issuer but never heard
-/// back, approving again records that issuer.
+/// rejection meanwhile is refused. If the issuer cannot be created, the registration stays
+/// pending. If an earlier approval created the issuer but never heard back, approving again
+/// records that issuer.
 pub async fn approve(
     ctx: &ServerContext,
     conn: &mut AsyncPgConnection,
     id: i64,
 ) -> AppResult<Issuer> {
     with_limits_lock(conn, async |conn| {
-        let registration = Registration::find_for_update(conn, id)
-            .await
-            .optional()?
-            .ok_or_else(|| errors::custom(StatusCode::NOT_FOUND, "No registration has this id."))?;
-        if registration.state() != RegistrationState::Pending {
-            return Err(errors::custom(
-                StatusCode::CONFLICT,
-                "This registration was decided already.",
-            ));
-        }
+        let registration = lock_pending(conn, id, None).await?;
         let user = User::find(conn, registration.user_id).await?;
         if !TermsAcceptance::exists(conn, user.id, &ctx.config.terms.version).await? {
             return Err(errors::forbidden(
@@ -128,7 +119,11 @@ pub async fn approve(
         let created = created_earlier(&registered, registration.created_at, &new_issuer.public_key);
         let issuer = match created {
             Some(issuer) => {
-                warn!(registration.id = id, issuer.id = %issuer.id, "recorded the issuer an earlier approval created");
+                warn!(
+                    registration.id = id,
+                    issuer.id = %issuer.id,
+                    "recorded the issuer an earlier approval created"
+                );
                 issuer.clone()
             }
             None => {
@@ -136,12 +131,71 @@ pub async fn approve(
                 ctx.admin_api.issuers_of(&owner).create(&new_issuer).await?
             }
         };
-        if !Registration::approve(conn, id, &issuer.id).await? {
-            return Err(errors::internal("the locked registration was no longer pending"));
-        }
+        ensure_recorded(Registration::approve(conn, id, &issuer.id).await?)?;
         AppResult::Ok(issuer)
     })
     .await
+}
+
+/// Rejects a pending registration. The developer sees `reason`.
+pub async fn reject(conn: &mut AsyncPgConnection, id: i64, reason: Option<&str>) -> AppResult<()> {
+    in_transaction(conn, async |conn| {
+        lock_pending(conn, id, None).await?;
+        ensure_recorded(Registration::reject(conn, id, reason).await?)
+    })
+    .await
+}
+
+/// Withdraws a registration of the user `user_id` while it waits for approval.
+pub async fn withdraw(conn: &mut AsyncPgConnection, user_id: i64, id: i64) -> AppResult<()> {
+    in_transaction(conn, async |conn| {
+        lock_pending(conn, id, Some(user_id)).await?;
+        ensure_recorded(Registration::withdraw(conn, id).await?)
+    })
+    .await
+}
+
+/// Locks a pending registration until the transaction ends, so only one decision lands. A
+/// registration another decision holds is refused at once rather than waited for with a
+/// database connection. With `user_id`, only that user's registration is found.
+async fn lock_pending(
+    conn: &mut AsyncPgConnection,
+    id: i64,
+    user_id: Option<i64>,
+) -> AppResult<Registration> {
+    let found =
+        |registration: &Registration| user_id.is_none_or(|user_id| registration.user_id == user_id);
+    let not_found = || errors::custom(StatusCode::NOT_FOUND, "No registration has this id.");
+    let Some(registration) = Registration::try_lock(conn, id).await? else {
+        return match Registration::find(conn, id).await.optional()? {
+            Some(held) if found(&held) => Err(errors::custom(
+                StatusCode::CONFLICT,
+                "This registration is being decided. Please try again in a moment.",
+            )),
+            _ => Err(not_found()),
+        };
+    };
+    if !found(&registration) {
+        return Err(not_found());
+    }
+    if registration.state() != RegistrationState::Pending {
+        return Err(errors::custom(
+            StatusCode::CONFLICT,
+            "This registration was decided already.",
+        ));
+    }
+    Ok(registration)
+}
+
+/// A locked pending registration is always recorded; anything else is a bug, so the
+/// transaction rolls back.
+fn ensure_recorded(recorded: bool) -> AppResult<()> {
+    if !recorded {
+        return Err(errors::internal(
+            "the locked registration was no longer pending",
+        ));
+    }
+    Ok(())
 }
 
 /// Runs `work` in a transaction that holds the sandbox limits lock, so two issuers cannot
@@ -153,8 +207,7 @@ pub(crate) async fn with_limits_lock<T>(
     conn: &mut AsyncPgConnection,
     work: impl AsyncFnOnce(&mut AsyncPgConnection) -> AppResult<T>,
 ) -> AppResult<T> {
-    AnsiTransactionManager::begin_transaction(conn).await?;
-    let result = async {
+    in_transaction(conn, async |conn| {
         if !db::try_lock_issuer_limits(conn).await? {
             return Err(errors::custom(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -162,9 +215,17 @@ pub(crate) async fn with_limits_lock<T>(
             ));
         }
         work(conn).await
-    }
-    .await;
+    })
+    .await
+}
 
+/// Runs `work` in a transaction on `conn` itself. An error rolls the transaction back.
+async fn in_transaction<T>(
+    conn: &mut AsyncPgConnection,
+    work: impl AsyncFnOnce(&mut AsyncPgConnection) -> AppResult<T>,
+) -> AppResult<T> {
+    AnsiTransactionManager::begin_transaction(conn).await?;
+    let result = work(conn).await;
     match result {
         Ok(value) => {
             AnsiTransactionManager::commit_transaction(conn).await?;
@@ -172,7 +233,7 @@ pub(crate) async fn with_limits_lock<T>(
         }
         Err(error) => {
             if let Err(rollback) = AnsiTransactionManager::rollback_transaction(conn).await {
-                warn!(error = %rollback, "failed to roll back the sandbox limits transaction");
+                warn!(error = %rollback, "failed to roll back a sandbox transaction");
             }
             Err(error)
         }

@@ -541,7 +541,7 @@ expression: openapi
             }
           },
           "409": {
-            "description": "The registration was decided already.",
+            "description": "The registration was decided already, or is being decided.",
             "content": {
               "application/json": {
                 "schema": {

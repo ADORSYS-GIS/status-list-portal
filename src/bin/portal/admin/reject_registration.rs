@@ -1,7 +1,5 @@
-use anyhow::bail;
-use diesel::OptionalExtension;
-use status_list_portal::ServerContext;
-use status_list_portal::models::{Registration, RegistrationState};
+use anyhow::{anyhow, bail};
+use status_list_portal::{ServerContext, sandbox};
 
 /// The longest reason a developer is shown.
 const REASON_MAX_CHARS: usize = 500;
@@ -25,14 +23,9 @@ pub async fn run(ctx: &ServerContext, opts: Opts) -> anyhow::Result<()> {
 
     let mut conn = ctx.db.get().await?;
     let id = opts.id;
-    let Some(registration) = Registration::find(&mut conn, id).await.optional()? else {
-        bail!("No registration has the id {id}.");
-    };
-    if registration.state() != RegistrationState::Pending
-        || !Registration::reject(&mut conn, id, opts.reason.as_deref()).await?
-    {
-        bail!("Registration {id} was decided already.");
-    }
+    sandbox::reject(&mut conn, id, opts.reason.as_deref())
+        .await
+        .map_err(|error| anyhow!("{error}"))?;
     println!("Rejected registration {id}.");
     Ok(())
 }

@@ -53,18 +53,20 @@ impl Registration {
             .await
     }
 
-    /// Reads the registration and locks it until the transaction ends: an approval holds it
-    /// while it creates the issuer, so a withdrawal or a rejection waits for the outcome.
-    pub async fn find_for_update(
+    /// Reads the registration and locks it until the transaction ends, unless another
+    /// transaction holds it: `None` then, as when there is none.
+    pub async fn try_lock(
         conn: &mut AsyncPgConnection,
         id: i64,
-    ) -> QueryResult<Registration> {
+    ) -> QueryResult<Option<Registration>> {
         registrations::table
             .find(id)
             .select(Registration::as_select())
             .for_update()
+            .skip_locked()
             .first(conn)
             .await
+            .optional()
     }
 
     /// The user's registrations, newest first.
@@ -153,15 +155,9 @@ impl Registration {
         Ok(decided == 1)
     }
 
-    /// Deletes the user's registration while it is pending. `false` when there is none.
-    pub async fn withdraw(
-        conn: &mut AsyncPgConnection,
-        id: i64,
-        user_id: i64,
-    ) -> QueryResult<bool> {
-        let deleted = diesel::delete(pending(id).filter(registrations::user_id.eq(user_id)))
-            .execute(conn)
-            .await?;
+    /// Deletes the registration while it is pending. `false` when it was not.
+    pub async fn withdraw(conn: &mut AsyncPgConnection, id: i64) -> QueryResult<bool> {
+        let deleted = diesel::delete(pending(id)).execute(conn).await?;
         Ok(deleted == 1)
     }
 }
