@@ -661,6 +661,20 @@ async fn a_change_made_in_between_is_a_conflict() {
 }
 
 #[tokio::test]
+async fn a_throttled_status_list_server_is_unavailable() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_user("octocat").await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "60"))
+        .mount(app.admin_api())
+        .await;
+
+    let response = user.get("/api/v1/issuers").await;
+
+    assert_snapshot!(response.status(), @"503 Service Unavailable");
+}
+
+#[tokio::test]
 async fn an_unreachable_status_list_server_is_a_bad_gateway() {
     let (app, _anon) = TestApp::init().empty().await;
     let user = app.db_new_user("octocat").await;

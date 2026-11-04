@@ -87,6 +87,10 @@ pub enum AdminApiError {
     /// The admin API answered in a way its contract does not allow.
     #[error("the admin API sent {0}")]
     Unexpected(String),
+    /// The admin API limits how often the portal may call it, and the portal called too
+    /// often.
+    #[error("the admin API is throttling the portal")]
+    Throttled,
     #[error("admin API request failed")]
     Request(#[from] reqwest::Error),
     #[error("failed to sign an admin token")]
@@ -357,6 +361,10 @@ impl AdminApiError {
 
     async fn from_response(response: Response) -> Self {
         let status = response.status();
+        // The admin API's rate limiter answers before its handlers, without an error code.
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            return Self::Throttled;
+        }
         match response.json::<ErrorResponse>().await {
             Ok(body) => Self::Refused {
                 status,

@@ -64,6 +64,10 @@ impl From<PoolError> for BoxedAppError {
 
 impl From<AdminApiError> for BoxedAppError {
     fn from(error: AdminApiError) -> Self {
+        if matches!(error, AdminApiError::Throttled) {
+            warn!(error.message = %describe(&error), "the admin API is unavailable");
+            return service_unavailable();
+        }
         match error.code() {
             Some(ErrorCode::IssuerNotFound) => not_found(),
             Some(ErrorCode::KeyMaterialInUse) => custom(
