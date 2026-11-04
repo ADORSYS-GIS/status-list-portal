@@ -9,6 +9,7 @@ use time::OffsetDateTime;
 use tracing::info;
 use utoipa::ToSchema;
 
+use crate::admin_api::SigningAlgorithm;
 use crate::auth::AuthenticatedUser;
 use crate::models::{Registration, RegistrationState};
 use crate::sandbox;
@@ -21,31 +22,33 @@ pub struct RegistrationResponse {
     id: i64,
     #[schema(example = "Acme Wallet Issuer")]
     display_name: String,
-    #[schema(example = "ES256")]
-    alg: String,
+    alg: SigningAlgorithm,
     state: RegistrationState,
     /// The issuer the approval created.
+    #[schema(required = true)]
     issuer_id: Option<String>,
     /// Why an operator rejected the registration.
+    #[schema(required = true)]
     rejection_reason: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
+    #[schema(required = true)]
     decided_at: Option<OffsetDateTime>,
 }
 
-impl From<Registration> for RegistrationResponse {
-    fn from(registration: Registration) -> Self {
-        Self {
+impl RegistrationResponse {
+    pub(crate) fn new(registration: Registration) -> AppResult<Self> {
+        Ok(Self {
             state: registration.state(),
+            alg: registration.signing_algorithm()?,
             id: registration.id,
             display_name: registration.display_name,
-            alg: registration.alg,
             issuer_id: registration.issuer_id,
             rejection_reason: registration.rejection_reason,
             created_at: registration.created_at,
             decided_at: registration.decided_at,
-        }
+        })
     }
 }
 
@@ -70,10 +73,12 @@ pub async fn list_registrations(
     AuthenticatedUser(user): AuthenticatedUser,
 ) -> AppResult<Json<RegistrationListResponse>> {
     let mut conn = ctx.db.get().await?;
-    let registrations = Registration::of_user(&mut conn, user.id).await?;
-    Ok(Json(RegistrationListResponse {
-        registrations: registrations.into_iter().map(Into::into).collect(),
-    }))
+    let registrations = Registration::of_user(&mut conn, user.id)
+        .await?
+        .into_iter()
+        .map(RegistrationResponse::new)
+        .collect::<AppResult<_>>()?;
+    Ok(Json(RegistrationListResponse { registrations }))
 }
 
 /// Withdraws one of the signed-in user's registrations while it waits for approval.

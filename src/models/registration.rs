@@ -7,8 +7,10 @@ use serde_json::Value;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 
+use crate::admin_api::{SigningAlgorithm, UnknownAlgorithm};
 use crate::models::User;
 use crate::schema::{registrations, users};
+use crate::util::errors::{self, BoxedAppError};
 
 /// An issuer a developer asked for while registrations need an operator's approval.
 #[derive(Debug, Clone, PartialEq, Queryable, Selectable)]
@@ -37,6 +39,14 @@ pub enum RegistrationState {
 }
 
 impl Registration {
+    /// The key's algorithm. The portal stores only algorithms it knows, so another one
+    /// is a bug.
+    pub fn signing_algorithm(&self) -> Result<SigningAlgorithm, BoxedAppError> {
+        self.alg
+            .parse()
+            .map_err(|error: UnknownAlgorithm| errors::internal(error.to_string()))
+    }
+
     pub fn state(&self) -> RegistrationState {
         match (self.decided_at, &self.issuer_id) {
             (None, _) => RegistrationState::Pending,

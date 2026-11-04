@@ -177,7 +177,9 @@ impl NewIssuerRequest {
 ///
 /// It stays active for one sandbox lifetime. The account needs the current terms of use
 /// accepted and registrations left, and both the account and the sandbox need a free place.
-/// When registrations need an operator's approval, the request waits for it instead.
+/// When registrations need an operator's approval, the request waits for it instead, and the
+/// Status List Server only sees the key then: a key it refuses, or one registered already,
+/// fails the approval rather than this request.
 #[utoipa::path(
     post,
     path = "/api/v1/issuers",
@@ -206,7 +208,7 @@ pub async fn create_issuer(
     if ctx.config.sandbox.manual_approval {
         let registration = sandbox::request(&ctx, &mut conn, &user, &new_issuer).await?;
         info!(user.id, registration.id, "asked for an issuer");
-        let body = RegistrationResponse::from(registration);
+        let body = RegistrationResponse::new(registration)?;
         return Ok((StatusCode::ACCEPTED, Json(body)).into_response());
     }
 

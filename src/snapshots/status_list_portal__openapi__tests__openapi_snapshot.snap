@@ -70,7 +70,7 @@ expression: openapi
           "issuers"
         ],
         "summary": "Registers a sandbox issuer for the signed-in user.",
-        "description": "It stays active for one sandbox lifetime. The account needs the current terms of use\naccepted and registrations left, and both the account and the sandbox need a free place.\nWhen registrations need an operator's approval, the request waits for it instead.",
+        "description": "It stays active for one sandbox lifetime. The account needs the current terms of use\naccepted and registrations left, and both the account and the sandbox need a free place.\nWhen registrations need an operator's approval, the request waits for it instead, and the\nStatus List Server only sees the key then: a key it refuses, or one registered already,\nfails the approval rather than this request.",
         "operationId": "create_issuer",
         "requestBody": {
           "content": {
@@ -977,12 +977,14 @@ expression: openapi
           "display_name",
           "alg",
           "state",
-          "created_at"
+          "issuer_id",
+          "rejection_reason",
+          "created_at",
+          "decided_at"
         ],
         "properties": {
           "alg": {
-            "type": "string",
-            "example": "ES256"
+            "$ref": "#/components/schemas/SigningAlgorithm"
           },
           "created_at": {
             "type": "string",

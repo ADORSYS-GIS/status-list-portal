@@ -14,7 +14,6 @@ use tracing::{info, warn};
 
 use crate::admin_api::{
     Issuer, IssuerQuery, IssuerSource, IssuerState, IssuerTier, NewIssuer, Owner, PublicJwk,
-    UnknownAlgorithm,
 };
 use crate::config;
 use crate::db;
@@ -106,14 +105,10 @@ pub async fn approve(
                 "The developer has not accepted the current terms of use.",
             ));
         }
-        let alg = registration
-            .alg
-            .parse()
-            .map_err(|error: UnknownAlgorithm| errors::internal(error.to_string()))?;
         let new_issuer = NewIssuer {
+            alg: registration.signing_algorithm()?,
             display_name: registration.display_name,
             public_key: serde_json::from_value(registration.public_key)?,
-            alg,
             expires_at: Some(expiry(&ctx.config.sandbox)),
         };
 
