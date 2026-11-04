@@ -206,8 +206,15 @@ pub async fn create_issuer(
     let owner = Owner::github(user.gh_id);
 
     let issuer = with_limits_lock(&mut conn, async {
-        ensure_registrations_left(&ctx, &owner).await?;
-        ensure_room(&ctx, &owner).await?;
+        // One read answers both limits on the account: when it holds fewer issuers than the
+        // account may register, it holds all of them.
+        let registered = registered_issuers(&ctx, &owner).await?;
+        ensure_registrations_left(&ctx.config.sandbox, &registered)?;
+        let active = registered
+            .iter()
+            .filter(|issuer| issuer.state == IssuerState::Active)
+            .count();
+        ensure_room(&ctx, active).await?;
         AppResult::Ok(ctx.admin_api.issuers_of(&owner).create(&new_issuer).await?)
     })
     .await?;
@@ -285,8 +292,9 @@ pub async fn renew_issuer(
         // accepted.
         IssuerState::Active => issuers.update(&current, &renewal).await?,
         IssuerState::Expired => {
+            let mut conn = ctx.db.get().await?;
             with_limits_lock(&mut conn, async {
-                ensure_room(&ctx, &owner).await?;
+                ensure_room(&ctx, count_active(&ctx, &owner).await?).await?;
                 AppResult::Ok(issuers.update(&current, &renewal).await?)
             })
             .await?
@@ -352,17 +360,36 @@ async fn ensure_terms_accepted(
     Ok(())
 }
 
-/// Refuses another registration when the account registered as many issuers as it may.
-/// Deleted issuers count: the admin API keeps them.
-async fn ensure_registrations_left(ctx: &ServerContext, owner: &Owner) -> AppResult<()> {
-    let registered = IssuerQuery {
+/// The account's sandbox issuers in every state: all of them, or at least as many as it
+/// may register.
+async fn registered_issuers(ctx: &ServerContext, owner: &Owner) -> AppResult<Vec<Issuer>> {
+    let query = sandbox_issuers(Some(owner), None);
+    let most = ctx.config.sandbox.max_registrations_per_account;
+    Ok(ctx.admin_api.first_issuers(&query, most).await?)
+}
+
+/// How many active issuers the account has, as far as the limit on them needs to know.
+async fn count_active(ctx: &ServerContext, owner: &Owner) -> AppResult<usize> {
+    let query = sandbox_issuers(Some(owner), Some(IssuerState::Active));
+    let per_account = ctx.config.sandbox.max_issuers_per_account;
+    Ok(ctx.admin_api.count_issuers(&query, per_account).await?)
+}
+
+fn sandbox_issuers(owner: Option<&Owner>, state: Option<IssuerState>) -> IssuerQuery {
+    IssuerQuery {
         source: Some(IssuerSource::Portal),
         tier: Some(IssuerTier::Sandbox),
-        owner: Some(owner.clone()),
+        owner: owner.cloned(),
+        state,
         ..IssuerQuery::default()
-    };
-    let most = ctx.config.sandbox.max_registrations_per_account;
-    if ctx.admin_api.count_issuers(&registered, most).await? >= most {
+    }
+}
+
+/// Refuses another registration when the account registered as many issuers as it may.
+/// Deleted issuers count: the admin API keeps them.
+fn ensure_registrations_left(sandbox: &config::Sandbox, registered: &[Issuer]) -> AppResult<()> {
+    let most = sandbox.max_registrations_per_account;
+    if registered.len() >= most {
         return Err(errors::forbidden(format!(
             "This account cannot register more sandbox issuers: it has registered {most}, \
              deleted ones included."
@@ -371,30 +398,20 @@ async fn ensure_registrations_left(ctx: &ServerContext, owner: &Owner) -> AppRes
     Ok(())
 }
 
-/// Refuses another active issuer when the account, or the sandbox as a whole, has as many
-/// as allowed.
-async fn ensure_room(ctx: &ServerContext, owner: &Owner) -> AppResult<()> {
+/// Refuses another active issuer when the account, which has `active` already, or the
+/// sandbox as a whole, has as many as allowed.
+async fn ensure_room(ctx: &ServerContext, active: usize) -> AppResult<()> {
     let limits = &ctx.config.sandbox;
-    let active = IssuerQuery {
-        source: Some(IssuerSource::Portal),
-        tier: Some(IssuerTier::Sandbox),
-        state: Some(IssuerState::Active),
-        ..IssuerQuery::default()
-    };
-    let owned = IssuerQuery {
-        owner: Some(owner.clone()),
-        ..active.clone()
-    };
-
     let per_account = limits.max_issuers_per_account;
-    if ctx.admin_api.count_issuers(&owned, per_account).await? >= per_account {
+    if active >= per_account {
         return Err(errors::custom(
             StatusCode::CONFLICT,
             format!("An account can have {per_account} active sandbox issuers. Delete one first."),
         ));
     }
     let in_total = limits.max_active_issuers;
-    if ctx.admin_api.count_issuers(&active, in_total).await? >= in_total {
+    let in_sandbox = sandbox_issuers(None, Some(IssuerState::Active));
+    if ctx.admin_api.count_issuers(&in_sandbox, in_total).await? >= in_total {
         return Err(errors::custom(
             StatusCode::SERVICE_UNAVAILABLE,
             "The sandbox has no room for another issuer right now. Please try again later.",

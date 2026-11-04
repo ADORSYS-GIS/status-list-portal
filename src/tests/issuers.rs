@@ -60,7 +60,7 @@ fn new_issuer_body() -> Value {
 struct Counts {
     /// The user's active issuers.
     active: usize,
-    /// The user's issuers in any state.
+    /// The user's issuers in any state: the active ones, then deleted ones.
     registered: usize,
     /// Active issuers of every account.
     in_sandbox: usize,
@@ -68,6 +68,10 @@ struct Counts {
 
 async fn sandbox_counts(admin_api: &MockServer, user: &MockCookieUser, counts: Counts) {
     let own = |count| page_response(&vec![own_issuer_json(user); count]);
+    let mut deleted = own_issuer_json(user);
+    deleted["state"] = json!("suspended");
+    let mut registered = vec![own_issuer_json(user); counts.active];
+    registered.resize(counts.registered, deleted);
     Mock::given(method("GET"))
         .and(path("/admin/v1/issuers"))
         .and(query_param("owner", owner(user)))
@@ -83,7 +87,7 @@ async fn sandbox_counts(admin_api: &MockServer, user: &MockCookieUser, counts: C
         .and(query_param_is_missing("state"))
         .and(query_param("tier", "sandbox"))
         .and(query_param("source", "portal"))
-        .respond_with(own(counts.registered))
+        .respond_with(page_response(&registered))
         .mount(admin_api)
         .await;
     Mock::given(method("GET"))
@@ -234,6 +238,8 @@ async fn registering_creates_an_issuer_the_user_owns() {
     assert_eq!(sent["public_key"], public_jwk_json());
     assert_eq!(sent["alg"], "ES256");
     assert_one_lifetime(&sent);
+    // One read of the account's issuers, one count of the sandbox's.
+    assert_eq!(requests_with_method(app.admin_api(), "GET").await.len(), 2);
 }
 
 #[tokio::test]

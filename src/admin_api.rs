@@ -185,8 +185,18 @@ impl AdminApi {
         query: &IssuerQuery,
         at_most: usize,
     ) -> Result<usize, AdminApiError> {
+        Ok(self.first_issuers(query, at_most).await?.len())
+    }
+
+    /// The issuers that match `query`, whoever owns them: all of them, or at least the first
+    /// `at_most`. Reads no more pages than that takes.
+    pub async fn first_issuers(
+        &self,
+        query: &IssuerQuery,
+        at_most: usize,
+    ) -> Result<Vec<Issuer>, AdminApiError> {
         if at_most == 0 {
-            return Ok(0);
+            return Ok(Vec::new());
         }
         let page_size =
             u8::try_from(at_most).map_or(MAX_PAGE_SIZE, |at_most| at_most.min(MAX_PAGE_SIZE));
@@ -194,7 +204,7 @@ impl AdminApi {
             limit: Some(page_size),
             ..query.clone()
         };
-        let mut count = 0;
+        let mut issuers = Vec::new();
         loop {
             let page = self.list_issuers(&query).await?;
             if page.issuers.is_empty() && page.next_cursor.is_some() {
@@ -203,10 +213,10 @@ impl AdminApi {
                     "an empty page that is not the last".to_string(),
                 ));
             }
-            count += page.issuers.len();
+            issuers.extend(page.issuers);
             match page.next_cursor {
-                Some(cursor) if count < at_most => query.cursor = Some(cursor),
-                _ => return Ok(count),
+                Some(cursor) if issuers.len() < at_most => query.cursor = Some(cursor),
+                _ => return Ok(issuers),
             }
         }
     }
