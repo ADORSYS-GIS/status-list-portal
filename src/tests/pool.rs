@@ -8,7 +8,7 @@ use secrecy::SecretString;
 use status_list_portal::{config, db};
 
 #[tokio::test]
-async fn pool_connections_cancel_long_queries() {
+async fn pool_connections_time_out_long_queries_and_open_transactions() {
     let test_db = TestDatabase::new().await;
     let pool = db::pool(&config::Database {
         url: SecretString::from(test_db.url()),
@@ -17,10 +17,13 @@ async fn pool_connections_cancel_long_queries() {
     .unwrap();
     let mut conn = pool.get().await.unwrap();
 
-    let timeout = diesel::select(sql::<Text>("current_setting('statement_timeout')"))
-        .get_result::<String>(&mut conn)
-        .await
-        .unwrap();
+    let timeouts = diesel::select(sql::<(Text, Text)>(
+        "current_setting('statement_timeout'), \
+         current_setting('idle_in_transaction_session_timeout')",
+    ))
+    .get_result::<(String, String)>(&mut conn)
+    .await
+    .unwrap();
 
-    assert_eq!(timeout, "10s");
+    assert_eq!(timeouts, ("10s".to_string(), "1min".to_string()));
 }

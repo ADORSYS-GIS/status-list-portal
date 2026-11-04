@@ -33,6 +33,11 @@ const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 /// up on a query drops the future, not the query, and its connection returns to the pool.
 const STATEMENT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Longest a pool connection may sit in an open transaction. A request cut off inside one
+/// leaves it open, and the pool only notices when it next hands the connection out; until
+/// then, its locks would stay held. The server ends such a session instead.
+const IDLE_IN_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Longest the pool's check of an idle connection may take. A connection still busy with
 /// an abandoned query is replaced instead of waited for.
 const RECYCLE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -77,13 +82,22 @@ pub fn pool(config: &config::Database) -> anyhow::Result<Pool> {
         .context("failed to build the database pool")
 }
 
-/// Opens a pool connection, with [`STATEMENT_TIMEOUT`] set.
+/// Opens a pool connection, with [`STATEMENT_TIMEOUT`] and [`IDLE_IN_TRANSACTION_TIMEOUT`]
+/// set.
 fn establish(url: &str) -> BoxFuture<'_, ConnectionResult<AsyncPgConnection>> {
     Box::pin(async move {
         let mut conn = AsyncPgConnection::establish(url).await?;
-        set_timeout(&mut conn, "statement_timeout", STATEMENT_TIMEOUT)
-            .await
-            .map_err(ConnectionError::CouldntSetupConfiguration)?;
+        for (setting, timeout) in [
+            ("statement_timeout", STATEMENT_TIMEOUT),
+            (
+                "idle_in_transaction_session_timeout",
+                IDLE_IN_TRANSACTION_TIMEOUT,
+            ),
+        ] {
+            set_timeout(&mut conn, setting, timeout)
+                .await
+                .map_err(ConnectionError::CouldntSetupConfiguration)?;
+        }
         Ok(conn)
     })
 }
