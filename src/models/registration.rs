@@ -91,28 +91,28 @@ impl Registration {
             .await
     }
 
-    /// How many registrations of the user, or of everyone, wait for a decision.
+    /// How many of the user's registrations, other than `except`, wait for a decision.
     pub async fn count_pending(
         conn: &mut AsyncPgConnection,
-        user_id: Option<i64>,
+        user_id: i64,
+        except: Option<i64>,
     ) -> QueryResult<usize> {
-        let mut query = registrations::table
+        let count: i64 = others_of_user(user_id, except)
             .filter(registrations::decided_at.is_null())
-            .into_boxed();
-        if let Some(user_id) = user_id {
-            query = query.filter(registrations::user_id.eq(user_id));
-        }
-        let count: i64 = query.select(count_star()).get_result(conn).await?;
+            .select(count_star())
+            .get_result(conn)
+            .await?;
         Ok(usize::try_from(count).unwrap_or(usize::MAX))
     }
 
-    /// How many of the user's registrations created no issuer: pending and rejected ones.
+    /// How many of the user's registrations, other than `except`, created no issuer: pending
+    /// and rejected ones.
     pub async fn count_without_issuer(
         conn: &mut AsyncPgConnection,
         user_id: i64,
+        except: Option<i64>,
     ) -> QueryResult<usize> {
-        let count: i64 = registrations::table
-            .filter(registrations::user_id.eq(user_id))
+        let count: i64 = others_of_user(user_id, except)
             .filter(registrations::issuer_id.is_null())
             .select(count_star())
             .get_result(conn)
@@ -163,6 +163,17 @@ impl Registration {
             .execute(conn)
             .await?;
         Ok(deleted == 1)
+    }
+}
+
+/// The user's registrations, but `except`.
+fn others_of_user(user_id: i64, except: Option<i64>) -> registrations::BoxedQuery<'static, Pg> {
+    let query = registrations::table
+        .filter(registrations::user_id.eq(user_id))
+        .into_boxed();
+    match except {
+        Some(id) => query.filter(registrations::id.ne(id)),
+        None => query,
     }
 }
 

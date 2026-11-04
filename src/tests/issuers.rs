@@ -313,7 +313,7 @@ async fn an_account_at_its_limit_registers_no_more() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
-            "detail": "An account can have 2 active sandbox issuers. Delete one first."
+            "detail": "An account can have 2 active sandbox issuers, registrations waiting for approval included. Delete one, or withdraw a registration, first."
         }] })
     );
     assert!(
@@ -381,7 +381,7 @@ async fn an_account_that_used_its_registrations_registers_no_more() {
         response.json(),
         json!({ "errors": [{
             "detail": "This account cannot register more sandbox issuers: it has registered 10, \
-                       deleted and rejected ones included."
+                       deleted, rejected and waiting ones included."
         }] })
     );
     assert!(

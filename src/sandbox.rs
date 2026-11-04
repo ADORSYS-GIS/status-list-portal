@@ -25,13 +25,6 @@ use crate::util::errors::{self, AppResult};
 /// clock runs behind the portal's.
 const LIFETIME_MARGIN: Duration = Duration::minutes(5);
 
-/// Registrations that wait for approval. Each becomes an active issuer when approved.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct Pending {
-    pub(crate) of_account: usize,
-    pub(crate) in_sandbox: usize,
-}
-
 /// When an issuer registered or renewed now stops being active.
 pub fn expiry(sandbox: &config::Sandbox) -> OffsetDateTime {
     let lifetime = Duration::days(sandbox.lifetime_days.get().into());
@@ -50,22 +43,23 @@ pub async fn ensure_terms_accepted(
     Ok(())
 }
 
-/// Creates an issuer for `owner`, if the limits leave room for it.
+/// Creates an issuer for `user`, if the limits leave room for it.
 pub async fn register(
     ctx: &ServerContext,
     conn: &mut AsyncPgConnection,
-    owner: &Owner,
+    user: &User,
     issuer: &NewIssuer,
 ) -> AppResult<Issuer> {
-    with_limits_lock(conn, async |_| {
-        ensure_may_add(ctx, owner, 0, Pending::default()).await?;
-        AppResult::Ok(ctx.admin_api.issuers_of(owner).create(issuer).await?)
+    let owner = Owner::github(user.gh_id);
+    with_limits_lock(conn, async |conn| {
+        ensure_may_add(ctx, conn, user.id, &owner, None).await?;
+        AppResult::Ok(ctx.admin_api.issuers_of(&owner).create(issuer).await?)
     })
     .await
 }
 
 /// Records what `user` asks for, for an operator to approve, if the limits leave room for
-/// it. Pending registrations count as active issuers, and rejected ones as registered.
+/// it.
 pub async fn request(
     ctx: &ServerContext,
     conn: &mut AsyncPgConnection,
@@ -76,12 +70,7 @@ pub async fn request(
     let alg = issuer.alg.to_string();
     let public_key = serde_json::to_value(&issuer.public_key)?;
     with_limits_lock(conn, async |conn| {
-        let without_issuer = Registration::count_without_issuer(conn, user.id).await?;
-        let pending = Pending {
-            of_account: Registration::count_pending(conn, Some(user.id)).await?,
-            in_sandbox: Registration::count_pending(conn, None).await?,
-        };
-        ensure_may_add(ctx, &owner, without_issuer, pending).await?;
+        ensure_may_add(ctx, conn, user.id, &owner, None).await?;
         let registration = NewRegistration {
             user_id: user.id,
             display_name: &issuer.display_name,
@@ -133,7 +122,7 @@ pub async fn approve(
         };
 
         let owner = Owner::github(user.gh_id);
-        ensure_may_add(ctx, &owner, 0, Pending::default()).await?;
+        ensure_may_add(ctx, conn, user.id, &owner, Some(id)).await?;
         let issuer = ctx.admin_api.issuers_of(&owner).create(&new_issuer).await?;
         Registration::approve(conn, id, &issuer.id).await?;
         AppResult::Ok(issuer)
@@ -176,24 +165,45 @@ pub(crate) async fn with_limits_lock<T>(
     }
 }
 
-/// Refuses another issuer for `owner` when the account registered as many as it may, or
-/// when it or the sandbox has no room for another active one. `requested` registrations
-/// that created no issuer count as registered, and `pending` ones as active.
+/// Refuses another issuer for `owner`, the GitHub account of the user `user_id`, when the
+/// account registered as many as it may, or when it or the sandbox has no room for another
+/// active one.
+///
+/// The account's registrations that wait for approval count as active issuers, and those
+/// that created no issuer as registered ones, whether approval is on or not: `approving`
+/// leaves out the registration being approved.
 async fn ensure_may_add(
     ctx: &ServerContext,
+    conn: &mut AsyncPgConnection,
+    user_id: i64,
     owner: &Owner,
-    requested: usize,
-    pending: Pending,
+    approving: Option<i64>,
 ) -> AppResult<()> {
     // One read answers both limits on the account: when it holds fewer issuers than the
     // account may register, it holds all of them.
     let registered = registered_issuers(ctx, owner).await?;
-    ensure_registrations_left(&ctx.config.sandbox, registered.len() + requested)?;
+    let without_issuer = Registration::count_without_issuer(conn, user_id, approving).await?;
+    ensure_registrations_left(&ctx.config.sandbox, registered.len() + without_issuer)?;
     let active = registered
         .iter()
         .filter(|issuer| issuer.state == IssuerState::Active)
         .count();
-    ensure_room(ctx, active, pending).await
+    let pending = Registration::count_pending(conn, user_id, approving).await?;
+    ensure_room(ctx, active + pending).await
+}
+
+/// Refuses to make an expired issuer of `owner`, the GitHub account of the user `user_id`,
+/// active again when the account or the sandbox has no room for it. The account's
+/// registrations that wait for approval count as active issuers.
+pub(crate) async fn ensure_room_to_renew(
+    ctx: &ServerContext,
+    conn: &mut AsyncPgConnection,
+    user_id: i64,
+    owner: &Owner,
+) -> AppResult<()> {
+    let active = count_active(ctx, owner).await?;
+    let pending = Registration::count_pending(conn, user_id, None).await?;
+    ensure_room(ctx, active + pending).await
 }
 
 /// The account's sandbox issuers in every state: all of them, or at least as many as it
@@ -205,7 +215,7 @@ async fn registered_issuers(ctx: &ServerContext, owner: &Owner) -> AppResult<Vec
 }
 
 /// How many active issuers the account has, as far as the limit on them needs to know.
-pub(crate) async fn count_active(ctx: &ServerContext, owner: &Owner) -> AppResult<usize> {
+async fn count_active(ctx: &ServerContext, owner: &Owner) -> AppResult<usize> {
     let query = sandbox_issuers(Some(owner), Some(IssuerState::Active));
     let per_account = ctx.config.sandbox.max_issuers_per_account;
     Ok(ctx.admin_api.count_issuers(&query, per_account).await?)
@@ -228,30 +238,30 @@ fn ensure_registrations_left(sandbox: &config::Sandbox, registered: usize) -> Ap
     if registered >= most {
         return Err(errors::forbidden(format!(
             "This account cannot register more sandbox issuers: it has registered {most}, \
-             deleted and rejected ones included."
+             deleted, rejected and waiting ones included."
         )));
     }
     Ok(())
 }
 
 /// Refuses another active issuer when the account, which has `active` already, or the
-/// sandbox as a whole, has as many as allowed. `pending` registrations count as active.
-pub(crate) async fn ensure_room(
-    ctx: &ServerContext,
-    active: usize,
-    pending: Pending,
-) -> AppResult<()> {
+/// sandbox as a whole, has as many as allowed. Only the account counts its registrations
+/// that wait for approval: an approval checks the sandbox again.
+async fn ensure_room(ctx: &ServerContext, active: usize) -> AppResult<()> {
     let limits = &ctx.config.sandbox;
     let per_account = limits.max_issuers_per_account;
-    if active + pending.of_account >= per_account {
+    if active >= per_account {
         return Err(errors::custom(
             StatusCode::CONFLICT,
-            format!("An account can have {per_account} active sandbox issuers. Delete one first."),
+            format!(
+                "An account can have {per_account} active sandbox issuers, registrations \
+                 waiting for approval included. Delete one, or withdraw a registration, first."
+            ),
         ));
     }
     let in_total = limits.max_active_issuers;
     let in_sandbox = sandbox_issuers(None, Some(IssuerState::Active));
-    if ctx.admin_api.count_issuers(&in_sandbox, in_total).await? + pending.in_sandbox >= in_total {
+    if ctx.admin_api.count_issuers(&in_sandbox, in_total).await? >= in_total {
         return Err(errors::custom(
             StatusCode::SERVICE_UNAVAILABLE,
             "The sandbox has no room for another issuer right now. Please try again later.",

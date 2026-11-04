@@ -24,7 +24,7 @@ use crate::admin_api::{
 use crate::auth::AuthenticatedUser;
 use crate::config::{self, PublicOrigin};
 use crate::controllers::registration::RegistrationResponse;
-use crate::sandbox::{self, Pending};
+use crate::sandbox;
 use crate::server::ServerContext;
 use crate::util::JsonBody;
 use crate::util::errors::{self, ApiErrorResponse, AppResult};
@@ -210,8 +210,7 @@ pub async fn create_issuer(
         return Ok((StatusCode::ACCEPTED, Json(body)).into_response());
     }
 
-    let owner = Owner::github(user.gh_id);
-    let issuer = sandbox::register(&ctx, &mut conn, &owner, &new_issuer).await?;
+    let issuer = sandbox::register(&ctx, &mut conn, &user, &new_issuer).await?;
     info!(user.id, issuer.id = %issuer.id, "registered an issuer");
 
     let location = issuer_location(&ctx.config.server.origin, &issuer.id);
@@ -290,9 +289,8 @@ pub async fn renew_issuer(
         IssuerState::Active => issuers.update(&current, &renewal).await?,
         IssuerState::Expired => {
             let mut conn = ctx.db.get().await?;
-            sandbox::with_limits_lock(&mut conn, async |_| {
-                let active = sandbox::count_active(&ctx, &owner).await?;
-                sandbox::ensure_room(&ctx, active, Pending::default()).await?;
+            sandbox::with_limits_lock(&mut conn, async |conn| {
+                sandbox::ensure_room_to_renew(&ctx, conn, user.id, &owner).await?;
                 AppResult::Ok(issuers.update(&current, &renewal).await?)
             })
             .await?

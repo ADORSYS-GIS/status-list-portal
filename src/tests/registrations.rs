@@ -8,8 +8,8 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
 
 use crate::util::admin_api::{
-    Counts, ISSUER_ID, issuer_json, issuer_response, new_issuer_body, owner, public_jwk_json,
-    sandbox_counts,
+    Counts, ISSUER_ID, admin_api_holds, issuer_json, issuer_response, new_issuer_body, owner,
+    public_jwk_json, sandbox_counts,
 };
 use crate::util::{MockCookieUser, RequestHelper, Response, TestApp};
 
@@ -201,7 +201,7 @@ async fn approving_needs_room_too() {
         .await
         .unwrap_err();
 
-    assert_snapshot!(error, @"An account can have 2 active sandbox issuers. Delete one first.");
+    assert_snapshot!(error, @"An account can have 2 active sandbox issuers, registrations waiting for approval included. Delete one, or withdraw a registration, first.");
     assert_eq!(registrations_of(&user).await[0]["state"], "pending");
 }
 
@@ -251,7 +251,7 @@ async fn approving_needs_the_current_terms() {
 }
 
 #[tokio::test]
-async fn pending_registrations_of_every_account_count_against_the_sandbox() {
+async fn pending_registrations_of_other_accounts_leave_the_sandbox_alone() {
     let sandbox = config::Sandbox {
         max_active_issuers: 1,
         ..approval_needed()
@@ -264,7 +264,83 @@ async fn pending_registrations_of_every_account_count_against_the_sandbox() {
 
     let response = ask_for_an_issuer(&user).await;
 
-    assert_snapshot!(response.status(), @"503 Service Unavailable");
+    assert_snapshot!(response.status(), @"202 Accepted");
+}
+
+#[tokio::test]
+async fn pending_registrations_count_when_approval_is_turned_off() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_registrant("octocat").await;
+    let counts = Counts {
+        active: 1,
+        registered: 1,
+        in_sandbox: 1,
+    };
+    sandbox_counts(app.admin_api(), user.user(), counts).await;
+    db_new_registration(&app, &user).await;
+
+    let response = ask_for_an_issuer(&user).await;
+
+    assert_snapshot!(response.status(), @"409 Conflict");
+    assert!(
+        app.admin_api()
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| request.method.as_str() == "GET")
+    );
+}
+
+#[tokio::test]
+async fn renewing_an_expired_issuer_leaves_pending_registrations_their_place() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    let mut expired = issuer_json(user.user().gh_id);
+    expired["state"] = json!("expired");
+    admin_api_holds(app.admin_api(), &expired).await;
+    let counts = Counts {
+        active: 1,
+        registered: 2,
+        in_sandbox: 1,
+    };
+    sandbox_counts(app.admin_api(), user.user(), counts).await;
+    db_new_registration(&app, &user).await;
+
+    let response = user
+        .post(&format!("/api/v1/issuers/{ISSUER_ID}/renew"), &json!({}))
+        .await;
+
+    assert_snapshot!(response.status(), @"409 Conflict");
+}
+
+#[tokio::test]
+async fn approving_leaves_out_the_registration_it_approves() {
+    let sandbox = config::Sandbox {
+        max_issuers_per_account: 1,
+        max_registrations_per_account: 1,
+        ..approval_needed()
+    };
+    let (app, _anon) = TestApp::init().with_sandbox(sandbox).empty().await;
+    let user = app.db_new_registrant("octocat").await;
+    sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
+    Mock::given(method("POST"))
+        .respond_with(issuer_response(
+            201,
+            "\"1\"",
+            &issuer_json(user.user().gh_id),
+        ))
+        .expect(1)
+        .mount(app.admin_api())
+        .await;
+    let registration = db_new_registration(&app, &user).await;
+
+    let issuer = sandbox::approve(app.ctx(), &mut app.db_conn().await, registration.id).await;
+
+    assert_eq!(issuer.unwrap().id, ISSUER_ID);
 }
 
 #[tokio::test]
