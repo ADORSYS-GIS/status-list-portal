@@ -498,8 +498,9 @@ async fn a_key_registered_already_is_a_conflict() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
-            "detail": "This public key is already registered. If you just registered it, \
-                       check your issuers."
+            "detail": "This public key is already registered, maybe for an issuer you \
+                       deleted, since a deleted issuer keeps its key. Make a new key pair, or, \
+                       if you just registered this one, check your issuers."
         }] })
     );
 }
