@@ -565,6 +565,8 @@ async fn renewing_an_expired_issuer_with_room_makes_it_active() {
     };
     sandbox_counts(app.admin_api(), &user, counts).await;
     Mock::given(method("PATCH"))
+        .and(path(issuer_path(&expired)))
+        .and(header("if-issuer-version", "7"))
         .respond_with(issuer_response(200, "8", &own_issuer_json(&user)))
         .expect(1)
         .mount(app.admin_api())
@@ -574,6 +576,8 @@ async fn renewing_an_expired_issuer_with_room_makes_it_active() {
 
     assert_snapshot!(response.status(), @"200 OK");
     assert_eq!(response.json()["state"], "active");
+    let patch = &requests_with_method(app.admin_api(), "PATCH").await[0];
+    assert_one_lifetime(&serde_json::from_slice(&patch.body).unwrap());
 }
 
 #[tokio::test]
