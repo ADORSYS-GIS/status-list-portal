@@ -34,7 +34,8 @@ pub enum IssuerState {
     Expired,
 }
 
-/// The JWS algorithms the server accepts, for issuer keys and admin keys alike.
+// The server accepts these for issuer keys and admin keys alike.
+/// The JWS algorithm a key signs with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, ToSchema)]
 pub enum SigningAlgorithm {
     #[serde(rename = "ES256")]

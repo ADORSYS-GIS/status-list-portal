@@ -143,7 +143,8 @@ pub async fn list_issuers(
     }))
 }
 
-/// No `Debug`: a pasted private key must not reach the logs.
+// No `Debug`: a pasted private key must not reach the logs.
+/// A sandbox issuer to register.
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewIssuerRequest {
@@ -269,7 +270,7 @@ pub async fn get_issuer(
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 403, description = "The current terms are not accepted.", body = ApiErrorResponse),
         (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
-        (status = 409, description = "The issuer is deleted, or the account has as many active issuers as allowed.", body = ApiErrorResponse),
+        (status = 409, description = "The issuer is deleted, the account has as many active issuers as allowed, or the issuer changed while this request ran.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
         (status = 503, description = "The sandbox has no room for another issuer, or another one is being registered.", body = ApiErrorResponse),
     ),
@@ -317,7 +318,7 @@ pub async fn renew_issuer(
     )))
 }
 
-/// Deletes one of the signed-in user's issuers: suspends it for good.
+/// Deletes one of the signed-in user's issuers: suspends it.
 #[utoipa::path(
     delete,
     path = "/api/v1/issuers/{id}",

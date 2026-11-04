@@ -228,7 +228,7 @@ expression: openapi
         "tags": [
           "issuers"
         ],
-        "summary": "Deletes one of the signed-in user's issuers: suspends it for good.",
+        "summary": "Deletes one of the signed-in user's issuers: suspends it.",
         "operationId": "delete_issuer",
         "parameters": [
           {
@@ -349,7 +349,7 @@ expression: openapi
             }
           },
           "409": {
-            "description": "The issuer is deleted, or the account has as many active issuers as allowed.",
+            "description": "The issuer is deleted, the account has as many active issuers as allowed, or the issuer changed while this request ran.",
             "content": {
               "application/json": {
                 "schema": {
@@ -836,7 +836,7 @@ expression: openapi
       },
       "NewIssuerRequest": {
         "type": "object",
-        "description": "No `Debug`: a pasted private key must not reach the logs.",
+        "description": "A sandbox issuer to register.",
         "required": [
           "display_name",
           "alg",
@@ -861,7 +861,7 @@ expression: openapi
       },
       "SigningAlgorithm": {
         "type": "string",
-        "description": "The JWS algorithms the server accepts, for issuer keys and admin keys alike.",
+        "description": "The JWS algorithm a key signs with.",
         "enum": [
           "ES256",
           "ES384",
