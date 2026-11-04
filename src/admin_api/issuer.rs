@@ -73,6 +73,17 @@ pub enum KeyType {
     Rsa,
 }
 
+impl KeyType {
+    /// The key type as a JSON Web Key's `kty` writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ec => "EC",
+            Self::Okp => "OKP",
+            Self::Rsa => "RSA",
+        }
+    }
+}
+
 /// A public JSON Web Key (RFC 7517). It has no field for a private member, so none can be
 /// sent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

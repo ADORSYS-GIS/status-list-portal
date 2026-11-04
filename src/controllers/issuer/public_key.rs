@@ -19,7 +19,6 @@ const PRIVATE_KEY: &str = "This is a private key. The portal did not store it, b
 /// What a public key for one algorithm looks like.
 struct KeyShape {
     kty: KeyType,
-    kty_name: &'static str,
     crv: Option<&'static str>,
     members: &'static [&'static str],
     description: &'static str,
@@ -29,28 +28,24 @@ fn shape(alg: SigningAlgorithm) -> KeyShape {
     match alg {
         SigningAlgorithm::Es256 => KeyShape {
             kty: KeyType::Ec,
-            kty_name: "EC",
             crv: Some("P-256"),
             members: &["x", "y"],
             description: "an EC key on the P-256 curve, with \"x\" and \"y\"",
         },
         SigningAlgorithm::Es384 => KeyShape {
             kty: KeyType::Ec,
-            kty_name: "EC",
             crv: Some("P-384"),
             members: &["x", "y"],
             description: "an EC key on the P-384 curve, with \"x\" and \"y\"",
         },
         SigningAlgorithm::EdDsa => KeyShape {
             kty: KeyType::Okp,
-            kty_name: "OKP",
             crv: Some("Ed25519"),
             members: &["x"],
             description: "an OKP key on the Ed25519 curve, with \"x\"",
         },
         SigningAlgorithm::Ps256 => KeyShape {
             kty: KeyType::Rsa,
-            kty_name: "RSA",
             crv: None,
             members: &["n", "e"],
             description: "an RSA key, with \"n\" and \"e\"",
@@ -79,7 +74,7 @@ pub(super) fn parse(value: &Value, alg: SigningAlgorithm) -> Result<PublicJwk, B
     }
 
     let shape = shape(alg);
-    let fits = member(jwk, "kty") == Some(shape.kty_name)
+    let fits = member(jwk, "kty") == Some(shape.kty.as_str())
         && member(jwk, "crv") == shape.crv
         && shape
             .members
