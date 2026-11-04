@@ -13,7 +13,8 @@ use time::{Duration, OffsetDateTime};
 use tracing::warn;
 
 use crate::admin_api::{
-    Issuer, IssuerQuery, IssuerSource, IssuerState, IssuerTier, NewIssuer, Owner, UnknownAlgorithm,
+    Issuer, IssuerQuery, IssuerSource, IssuerState, IssuerTier, NewIssuer, Owner, PublicJwk,
+    UnknownAlgorithm,
 };
 use crate::config;
 use crate::db;
@@ -87,7 +88,8 @@ pub async fn request(
 ///
 /// The registration stays locked until the approval is recorded, so a withdrawal or a
 /// rejection meanwhile waits, then finds it decided. If the issuer cannot be created, the
-/// registration stays pending.
+/// registration stays pending. If an earlier approval created the issuer but never heard
+/// back, approving again records that issuer.
 pub async fn approve(
     ctx: &ServerContext,
     conn: &mut AsyncPgConnection,
@@ -122,9 +124,21 @@ pub async fn approve(
         };
 
         let owner = Owner::github(user.gh_id);
-        ensure_may_add(ctx, conn, user.id, &owner, Some(id)).await?;
-        let issuer = ctx.admin_api.issuers_of(&owner).create(&new_issuer).await?;
-        Registration::approve(conn, id, &issuer.id).await?;
+        let registered = registered_issuers(ctx, &owner).await?;
+        let created = created_earlier(&registered, registration.created_at, &new_issuer.public_key);
+        let issuer = match created {
+            Some(issuer) => {
+                warn!(registration.id = id, issuer.id = %issuer.id, "recorded the issuer an earlier approval created");
+                issuer.clone()
+            }
+            None => {
+                ensure_limits(ctx, conn, user.id, &registered, Some(id)).await?;
+                ctx.admin_api.issuers_of(&owner).create(&new_issuer).await?
+            }
+        };
+        if !Registration::approve(conn, id, &issuer.id).await? {
+            return Err(errors::internal("the locked registration was no longer pending"));
+        }
         AppResult::Ok(issuer)
     })
     .await
@@ -179,9 +193,20 @@ async fn ensure_may_add(
     owner: &Owner,
     approving: Option<i64>,
 ) -> AppResult<()> {
+    let registered = registered_issuers(ctx, owner).await?;
+    ensure_limits(ctx, conn, user_id, &registered, approving).await
+}
+
+/// [`ensure_may_add`], with the account's `registered` issuers read already.
+async fn ensure_limits(
+    ctx: &ServerContext,
+    conn: &mut AsyncPgConnection,
+    user_id: i64,
+    registered: &[Issuer],
+    approving: Option<i64>,
+) -> AppResult<()> {
     // One read answers both limits on the account: when it holds fewer issuers than the
     // account may register, it holds all of them.
-    let registered = registered_issuers(ctx, owner).await?;
     let without_issuer = Registration::count_without_issuer(conn, user_id, approving).await?;
     ensure_registrations_left(&ctx.config.sandbox, registered.len() + without_issuer)?;
     let active = registered
@@ -190,6 +215,23 @@ async fn ensure_may_add(
         .count();
     let pending = Registration::count_pending(conn, user_id, approving).await?;
     ensure_room(ctx, active + pending).await
+}
+
+/// The issuer an earlier approval of a registration made at `asked_at` created, if its answer
+/// never came back: an active issuer of the account with the registration's key, created
+/// since. The admin API refuses a key in use, so there is at most one.
+fn created_earlier<'a>(
+    registered: &'a [Issuer],
+    asked_at: OffsetDateTime,
+    key: &PublicJwk,
+) -> Option<&'a Issuer> {
+    registered.iter().find(|issuer| {
+        issuer.state == IssuerState::Active
+            && issuer
+                .created_at
+                .is_some_and(|created_at| created_at >= asked_at)
+            && issuer.keys.iter().any(|known| known.public_key == *key)
+    })
 }
 
 /// Refuses to make an expired issuer of `owner`, the GitHub account of the user `user_id`,

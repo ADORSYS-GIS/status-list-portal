@@ -4,12 +4,12 @@ use insta::assert_snapshot;
 use serde_json::{Value, json};
 use status_list_portal::models::{NewRegistration, Registration};
 use status_list_portal::{config, db, sandbox};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param_is_missing};
 use wiremock::{Mock, ResponseTemplate};
 
 use crate::util::admin_api::{
     Counts, ISSUER_ID, admin_api_holds, issuer_json, issuer_response, new_issuer_body, owner,
-    public_jwk_json, sandbox_counts,
+    page_response, public_jwk_json, sandbox_counts,
 };
 use crate::util::{MockCookieUser, RequestHelper, Response, TestApp};
 
@@ -180,6 +180,71 @@ async fn an_operator_approves_a_registration() {
     assert_eq!(shown["state"], "approved");
     assert_eq!(shown["issuer_id"], ISSUER_ID);
     assert!(shown["decided_at"].is_string());
+}
+
+#[tokio::test]
+async fn approving_again_records_the_issuer_an_unanswered_approval_created() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    let registration = db_new_registration(&app, &user).await;
+    let mut created = issuer_json(user.user().gh_id);
+    created["created_at"] = json!(registration.created_at.unix_timestamp() + 1);
+    Mock::given(method("GET"))
+        .and(path("/admin/v1/issuers"))
+        .and(query_param_is_missing("state"))
+        .respond_with(page_response(&[created]))
+        .with_priority(1)
+        .mount(app.admin_api())
+        .await;
+    let counts = Counts {
+        active: 2,
+        registered: 2,
+        in_sandbox: 2,
+    };
+    sandbox_counts(app.admin_api(), user.user(), counts).await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(app.admin_api())
+        .await;
+
+    let issuer = sandbox::approve(app.ctx(), &mut app.db_conn().await, registration.id).await;
+
+    assert_eq!(issuer.unwrap().id, ISSUER_ID);
+    let shown = &registrations_of(&user).await[0];
+    assert_eq!(shown["state"], "approved");
+    assert_eq!(shown["issuer_id"], ISSUER_ID);
+}
+
+#[tokio::test]
+async fn an_older_issuer_with_the_key_is_not_taken_for_the_approval() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    let counts = Counts {
+        active: 1,
+        registered: 1,
+        in_sandbox: 1,
+    };
+    sandbox_counts(app.admin_api(), user.user(), counts).await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({
+            "error": "key_material_in_use",
+        })))
+        .expect(1)
+        .mount(app.admin_api())
+        .await;
+    let registration = db_new_registration(&app, &user).await;
+
+    let result = sandbox::approve(app.ctx(), &mut app.db_conn().await, registration.id).await;
+
+    assert!(result.is_err());
+    assert_eq!(registrations_of(&user).await[0]["state"], "pending");
 }
 
 #[tokio::test]
