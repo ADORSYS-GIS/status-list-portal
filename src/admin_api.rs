@@ -193,6 +193,12 @@ impl AdminApi {
         let mut count = 0;
         loop {
             let page = self.list_issuers(&query).await?;
+            if page.issuers.is_empty() && page.next_cursor.is_some() {
+                // Following its cursor could go on until the request times out.
+                return Err(AdminApiError::Unexpected(
+                    "an empty page that is not the last".to_string(),
+                ));
+            }
             count += page.issuers.len();
             match page.next_cursor {
                 Some(cursor) if count < at_most => query.cursor = Some(cursor),

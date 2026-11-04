@@ -450,6 +450,29 @@ async fn counting_reads_pages_until_it_has_counted_enough() {
 }
 
 #[tokio::test]
+async fn an_empty_page_that_is_not_the_last_is_unexpected() {
+    let (app, _) = TestApp::init().empty().await;
+    Mock::given(method("GET"))
+        .and(path("/admin/v1/issuers"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "issuers": [],
+            "next_cursor": "again",
+        })))
+        .expect(1)
+        .mount(app.admin_api())
+        .await;
+
+    let error = app
+        .ctx()
+        .admin_api
+        .count_issuers(&IssuerQuery::default(), 3)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, AdminApiError::Unexpected(_)), "{error}");
+}
+
+#[tokio::test]
 async fn counting_to_zero_asks_nothing() {
     let (app, _) = TestApp::init().empty().await;
 
