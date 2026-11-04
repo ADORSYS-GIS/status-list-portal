@@ -51,7 +51,7 @@ async fn db_new_registration(app: &TestApp, user: &MockCookieUser) -> Registrati
     .expect("failed to create the registration")
 }
 
-async fn reject(app: &TestApp, registration: i64, reason: Option<&str>) {
+async fn reject(app: &TestApp, registration: i64, reason: &str) {
     sandbox::reject(&mut app.db_conn().await, registration, reason)
         .await
         .expect("the registration was not rejected");
@@ -177,7 +177,7 @@ async fn rejected_registrations_count_as_registered() {
     let user = app.db_new_registrant("octocat").await;
     sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
     let first = db_new_registration(&app, &user).await;
-    reject(&app, first.id, None).await;
+    reject(&app, first.id, "Not now.").await;
     assert_eq!(ask_for_an_issuer(&user).await.status(), 202);
 
     let response = ask_for_an_issuer(&user).await;
@@ -481,7 +481,7 @@ async fn decided_registrations_are_not_approved() {
         .await;
     let user = app.db_new_registrant("octocat").await;
     let registration = db_new_registration(&app, &user).await;
-    reject(&app, registration.id, None).await;
+    reject(&app, registration.id, "Not now.").await;
 
     let error = sandbox::approve(app.ctx(), &mut app.db_conn().await, registration.id)
         .await
@@ -509,7 +509,7 @@ async fn developers_see_why_an_operator_rejected() {
     reject(
         &app,
         registration.id,
-        Some("Use a key you made for this sandbox."),
+        " Use a key you made for this sandbox. ",
     )
     .await;
 
@@ -520,6 +520,43 @@ async fn developers_see_why_an_operator_rejected() {
         "Use a key you made for this sandbox."
     );
     assert_eq!(shown["issuer_id"], Value::Null);
+}
+
+#[tokio::test]
+async fn a_rejection_needs_a_reason_on_one_line() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    let registration = db_new_registration(&app, &user).await;
+    let mut conn = app.db_conn().await;
+
+    for reason in [" ", "Two\nlines", &"a".repeat(501)] {
+        let error = sandbox::reject(&mut conn, registration.id, reason)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "The reason must be 1 to 500 characters, on one line."
+        );
+    }
+    assert_eq!(registrations_of(&user).await[0]["state"], "pending");
+}
+
+#[tokio::test]
+async fn the_database_keeps_rejections_without_a_reason_out() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    let registration = db_new_registration(&app, &user).await;
+
+    let result = Registration::reject(&mut app.db_conn().await, registration.id, " ").await;
+
+    assert!(result.is_err());
 }
 
 #[tokio::test]
@@ -566,7 +603,7 @@ async fn decided_registrations_cannot_be_withdrawn() {
         .await;
     let user = app.db_new_registrant("octocat").await;
     let registration = db_new_registration(&app, &user).await;
-    reject(&app, registration.id, None).await;
+    reject(&app, registration.id, "Not now.").await;
 
     let response = user
         .delete(&format!("/api/v1/registrations/{}", registration.id))
@@ -681,7 +718,7 @@ async fn a_rejection_during_an_approval_is_refused() {
         sandbox::approve(app.ctx(), &mut approving, registration.id),
         async {
             creation_under_way(&app).await;
-            sandbox::reject(&mut rejecting, registration.id, Some("No.")).await
+            sandbox::reject(&mut rejecting, registration.id, "No.").await
         },
     );
 
@@ -750,7 +787,7 @@ async fn a_withdrawn_registration_cannot_be_rejected() {
     let registration = db_new_registration(&app, &user).await;
     assert_eq!(withdraw(&user, registration.id).await.status(), 204);
 
-    let error = sandbox::reject(&mut app.db_conn().await, registration.id, Some("No."))
+    let error = sandbox::reject(&mut app.db_conn().await, registration.id, "No.")
         .await
         .unwrap_err();
 

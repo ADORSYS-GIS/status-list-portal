@@ -140,11 +140,7 @@ impl Registration {
     }
 
     /// Records the rejection. `false` when the registration was no longer pending.
-    pub async fn reject(
-        conn: &mut AsyncPgConnection,
-        id: i64,
-        reason: Option<&str>,
-    ) -> QueryResult<bool> {
+    pub async fn reject(conn: &mut AsyncPgConnection, id: i64, reason: &str) -> QueryResult<bool> {
         let decided = diesel::update(pending(id))
             .set((
                 registrations::decided_at.eq(diesel::dsl::now),

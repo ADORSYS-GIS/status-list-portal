@@ -26,6 +26,9 @@ use crate::util::errors::{self, AppResult};
 /// clock runs behind the portal's.
 const LIFETIME_MARGIN: Duration = Duration::minutes(5);
 
+/// The longest reason for a rejection a developer is shown.
+const REASON_MAX_CHARS: usize = 500;
+
 /// When an issuer registered or renewed now stops being active.
 pub fn expiry(sandbox: &config::Sandbox) -> OffsetDateTime {
     let lifetime = Duration::days(sandbox.lifetime_days.get().into());
@@ -137,8 +140,17 @@ pub async fn approve(
     .await
 }
 
-/// Rejects a pending registration. The developer sees `reason`.
-pub async fn reject(conn: &mut AsyncPgConnection, id: i64, reason: Option<&str>) -> AppResult<()> {
+/// Rejects a pending registration. The developer sees `reason`, which says why on one line.
+pub async fn reject(conn: &mut AsyncPgConnection, id: i64, reason: &str) -> AppResult<()> {
+    let reason = reason.trim();
+    if reason.is_empty()
+        || reason.chars().count() > REASON_MAX_CHARS
+        || reason.contains(char::is_control)
+    {
+        return Err(errors::unprocessable(format!(
+            "The reason must be 1 to {REASON_MAX_CHARS} characters, on one line."
+        )));
+    }
     in_transaction(conn, async |conn| {
         lock_pending(conn, id, None).await?;
         ensure_recorded(Registration::reject(conn, id, reason).await?)
