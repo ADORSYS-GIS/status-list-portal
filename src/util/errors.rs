@@ -64,16 +64,21 @@ impl From<PoolError> for BoxedAppError {
 
 impl From<AdminApiError> for BoxedAppError {
     fn from(error: AdminApiError) -> Self {
+        if matches!(error, AdminApiError::Throttled) {
+            warn!(error.message = %describe(&error), "the admin API is unavailable");
+            return service_unavailable();
+        }
         match error.code() {
             Some(ErrorCode::IssuerNotFound) => not_found(),
             Some(ErrorCode::KeyMaterialInUse) => custom(
                 StatusCode::CONFLICT,
-                "This public key is already registered.",
+                "This public key is already registered, maybe for an issuer you deleted, since \
+                 a deleted issuer keeps its key. Make a new key pair, or, if you just \
+                 registered this one, check your issuers.",
             ),
-            Some(ErrorCode::InvalidPublicJwk | ErrorCode::UnsupportedAlgorithm) => custom(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "The Status List Server does not accept this public key.",
-            ),
+            Some(ErrorCode::InvalidPublicJwk | ErrorCode::UnsupportedAlgorithm) => {
+                unprocessable("The Status List Server does not accept this public key.")
+            }
             Some(ErrorCode::PreconditionFailed) => custom(
                 StatusCode::CONFLICT,
                 "The issuer changed while this request ran. Please try again.",
@@ -114,6 +119,11 @@ pub fn bad_gateway(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
 
 pub fn forbidden(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
     custom(StatusCode::FORBIDDEN, detail)
+}
+
+/// The request is well-formed but its content cannot be accepted.
+pub fn unprocessable(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
+    custom(StatusCode::UNPROCESSABLE_ENTITY, detail)
 }
 
 pub fn not_found() -> BoxedAppError {

@@ -14,7 +14,7 @@ use status_list_portal::admin_api::{AdminApi, SigningAlgorithm};
 use status_list_portal::auth::Session;
 use status_list_portal::config::{self, Config, PublicOrigin, SessionKey};
 use status_list_portal::github::GitHub;
-use status_list_portal::models::{NewUser, User};
+use status_list_portal::models::{NewUser, TermsAcceptance, User};
 use status_list_portal::util::logging::LogFormat;
 use status_list_portal::{Env, ServerContext, ServerContextInner, build_handler, db};
 use url::Url;
@@ -24,6 +24,9 @@ use super::{MockAnonymousUser, MockCookieUser, TestDatabase};
 
 /// Where the tests pretend browsers reach the portal.
 pub const ORIGIN: &str = "https://portal.example.com";
+/// Where the tests pretend issuers reach the management API.
+pub const MANAGEMENT_URL: &str = "https://status.example.com";
+pub const TERMS_VERSION: &str = "2026-10-22";
 
 /// Nothing listens on port 1, so connections are refused at once.
 const UNREACHABLE_DATABASE_URL: &str = "postgres://portal@127.0.0.1:1/portal";
@@ -58,6 +61,7 @@ impl TestApp {
     pub fn init() -> TestAppBuilder {
         TestAppBuilder {
             unreachable_database: false,
+            sandbox: config::Sandbox::default(),
         }
     }
 
@@ -108,6 +112,18 @@ impl TestApp {
         }
     }
 
+    /// Records that `user` accepted the current terms of use.
+    pub async fn accept_terms(&self, user: &User) {
+        TermsAcceptance {
+            user_id: user.id,
+            terms_version: TERMS_VERSION,
+            email: &user.email,
+        }
+        .record(&mut self.db_conn().await)
+        .await
+        .expect("failed to record the acceptance");
+    }
+
     /// A `Cookie` header with a new session for `user`, encrypted the way the app does it.
     pub fn session_cookie(&self, user: &User) -> String {
         self.cookie_for(Session::new(user))
@@ -128,6 +144,7 @@ impl TestApp {
 
 pub struct TestAppBuilder {
     unreachable_database: bool,
+    sandbox: config::Sandbox,
 }
 
 impl TestAppBuilder {
@@ -135,7 +152,13 @@ impl TestAppBuilder {
     pub fn with_unreachable_database(self) -> Self {
         Self {
             unreachable_database: true,
+            ..self
         }
+    }
+
+    /// Limits sandbox issuers as `sandbox` says, instead of with the defaults.
+    pub fn with_sandbox(self, sandbox: config::Sandbox) -> Self {
+        Self { sandbox, ..self }
     }
 
     /// Builds the app and returns it with a user who is not signed in.
@@ -153,12 +176,15 @@ impl TestAppBuilder {
         let admin_api_url = Url::parse(&admin_api.uri()).expect("the mock server has a valid URL");
         let session_key = SessionKey::generate();
 
-        let config = simple_config(
-            database_url,
-            &github_url,
-            admin_api_url,
-            session_key.clone(),
-        );
+        let config = Config {
+            sandbox: self.sandbox,
+            ..simple_config(
+                database_url,
+                &github_url,
+                admin_api_url,
+                session_key.clone(),
+            )
+        };
         let db = db::pool(&config.database).expect("failed to build the database pool");
         let github_client = GitHub::new(&config.github, &config.server.origin)
             .expect("failed to build the GitHub client");
@@ -214,6 +240,15 @@ fn simple_config(
             signing_key_file: ADMIN_SIGNING_KEY_FILE.into(),
             key_id: ADMIN_KEY_ID.to_string(),
             algorithm: SigningAlgorithm::Es256,
+        },
+        management_api: config::ManagementApi {
+            url: Url::parse(MANAGEMENT_URL).expect("the URL is valid"),
+            audience: MANAGEMENT_URL.to_string(),
+        },
+        sandbox: config::Sandbox::default(),
+        terms: config::Terms {
+            version: TERMS_VERSION.to_string(),
+            url: Url::parse(&format!("{ORIGIN}/terms")).expect("the URL is valid"),
         },
     }
 }

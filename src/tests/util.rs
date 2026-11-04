@@ -1,14 +1,16 @@
+pub mod admin_api;
 mod test_app;
 mod test_db;
 
 pub use test_app::{
-    ADMIN_AUDIENCE, ADMIN_KEY_ID, ADMIN_PRINCIPAL, ADMIN_SIGNING_KEY_FILE, ORIGIN, TestApp,
+    ADMIN_AUDIENCE, ADMIN_KEY_ID, ADMIN_PRINCIPAL, ADMIN_SIGNING_KEY_FILE, MANAGEMENT_URL, ORIGIN,
+    TERMS_VERSION, TestApp,
 };
 pub use test_db::TestDatabase;
 
 use axum::body::{Body, Bytes};
 use axum_extra::extract::cookie::Cookie;
-use http::header::{AsHeaderName, COOKIE, SET_COOKIE};
+use http::header::{AsHeaderName, CONTENT_TYPE, COOKIE, SET_COOKIE};
 use http::{HeaderMap, Method, Request, StatusCode};
 use status_list_portal::models::User;
 use tower::ServiceExt;
@@ -85,6 +87,25 @@ pub trait RequestHelper {
         let request = self
             .request_builder(Method::DELETE, path)
             .body(Body::empty())
+            .expect("invalid request");
+        self.run(request).await
+    }
+
+    /// Sends `body` as JSON.
+    async fn post(&self, path: &str, body: &serde_json::Value) -> Response {
+        self.send_json(Method::POST, path, body).await
+    }
+
+    /// Sends `body` as JSON.
+    async fn put(&self, path: &str, body: &serde_json::Value) -> Response {
+        self.send_json(Method::PUT, path, body).await
+    }
+
+    async fn send_json(&self, method: Method, path: &str, body: &serde_json::Value) -> Response {
+        let request = self
+            .request_builder(method, path)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
             .expect("invalid request");
         self.run(request).await
     }

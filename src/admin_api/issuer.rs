@@ -6,6 +6,7 @@
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use utoipa::ToSchema;
 
 /// Where an issuer comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +26,7 @@ pub enum IssuerTier {
 }
 
 /// Only `active` issuers can write status lists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum IssuerState {
     Active,
@@ -33,8 +34,9 @@ pub enum IssuerState {
     Expired,
 }
 
-/// The JWS algorithms the server accepts, for issuer keys and admin keys alike.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display)]
+// The server accepts these for issuer keys and admin keys alike.
+/// The JWS algorithm a key signs with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, ToSchema)]
 pub enum SigningAlgorithm {
     #[serde(rename = "ES256")]
     #[display("ES256")]
@@ -69,6 +71,17 @@ pub enum KeyType {
     Okp,
     #[serde(rename = "RSA")]
     Rsa,
+}
+
+impl KeyType {
+    /// The key type as a JSON Web Key's `kty` writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ec => "EC",
+            Self::Okp => "OKP",
+            Self::Rsa => "RSA",
+        }
+    }
 }
 
 /// A public JSON Web Key (RFC 7517). It has no field for a private member, so none can be
@@ -128,10 +141,12 @@ pub struct Issuer {
     pub usage: IssuerUsage,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum KeyState {
     Active,
+    /// Kept by the server for the issuer, but not accepting tokens.
+    Reserved,
     Revoked,
 }
 

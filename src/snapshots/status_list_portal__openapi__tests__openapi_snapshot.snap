@@ -14,6 +14,373 @@ expression: openapi
     "version": "0.0.0"
   },
   "paths": {
+    "/api/v1/issuers": {
+      "get": {
+        "tags": [
+          "issuers"
+        ],
+        "summary": "The signed-in user's issuers, deleted ones included, a page at a time.",
+        "operationId": "list_issuers",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the user's issuers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuerListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The Status List Server did not complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "issuers"
+        ],
+        "summary": "Registers a sandbox issuer for the signed-in user.",
+        "description": "It stays active for one sandbox lifetime. The account needs the current terms of use\naccepted and registrations left, and both the account and the sandbox need a free place.",
+        "operationId": "create_issuer",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewIssuerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Registered.",
+            "headers": {
+              "location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuerResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The current terms are not accepted, or the account registered as many issuers as it may.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The account has as many active issuers as allowed, or the key is registered already.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The display name or the public key cannot be used.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The Status List Server did not complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The sandbox has no room for another issuer, or another one is being registered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/issuers/{id}": {
+      "get": {
+        "tags": [
+          "issuers"
+        ],
+        "summary": "One of the signed-in user's issuers.",
+        "operationId": "get_issuer",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The issuer's id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The issuer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuerResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The user has no issuer with this id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The Status List Server did not complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "issuers"
+        ],
+        "summary": "Deletes one of the signed-in user's issuers: suspends it.",
+        "operationId": "delete_issuer",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The issuer's id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted, now or before."
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The user has no issuer with this id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The issuer changed while this request ran.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The Status List Server did not complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/issuers/{id}/renew": {
+      "post": {
+        "tags": [
+          "issuers"
+        ],
+        "summary": "Keeps one of the signed-in user's issuers active for another sandbox lifetime.",
+        "description": "An expired issuer becomes active again, so it needs a free place, like a new one.",
+        "operationId": "renew_issuer",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The issuer's id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Renewed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuerResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The current terms are not accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The user has no issuer with this id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The issuer is deleted, the account has as many active issuers as allowed, or the issuer changed while this request ran.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The Status List Server did not complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The sandbox has no room for another issuer, or another one is being registered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me": {
       "get": {
         "tags": [
@@ -34,6 +401,50 @@ expression: openapi
           },
           "401": {
             "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/terms": {
+      "put": {
+        "tags": [
+          "terms"
+        ],
+        "summary": "Accepts the current terms of use on behalf of the signed-in user.",
+        "operationId": "accept_terms",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptTermsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Accepted, now or before."
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The terms changed since the user read them.",
             "content": {
               "application/json": {
                 "schema": {
@@ -131,6 +542,27 @@ expression: openapi
         }
       }
     },
+    "/api/v1/terms": {
+      "get": {
+        "tags": [
+          "terms"
+        ],
+        "summary": "The current terms of use.",
+        "operationId": "get_terms",
+        "responses": {
+          "200": {
+            "description": "The current terms of use.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "tags": [
@@ -204,6 +636,20 @@ expression: openapi
   },
   "components": {
     "schemas": {
+      "AcceptTermsRequest": {
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Version of the terms the user read.",
+            "example": "2026-10-22"
+          }
+        },
+        "additionalProperties": false
+      },
       "ApiErrorDetail": {
         "type": "object",
         "required": [
@@ -232,12 +678,136 @@ expression: openapi
           }
         }
       },
+      "IssuerKeyResponse": {
+        "type": "object",
+        "required": [
+          "kid",
+          "alg",
+          "state"
+        ],
+        "properties": {
+          "alg": {
+            "$ref": "#/components/schemas/SigningAlgorithm"
+          },
+          "kid": {
+            "type": "string",
+            "description": "The `kid` in the header of the tokens the key signs.",
+            "example": "QoRTRSkzlInq0eOmPqJwmZ5OS9pxkN_SIf5KgZP2F8M"
+          },
+          "state": {
+            "$ref": "#/components/schemas/KeyState"
+          }
+        }
+      },
+      "IssuerListResponse": {
+        "type": "object",
+        "required": [
+          "issuers",
+          "next_cursor"
+        ],
+        "properties": {
+          "issuers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssuerResponse"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass it as `cursor` to read the next page. `null` on the last page."
+          }
+        }
+      },
+      "IssuerResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "state",
+          "created_at",
+          "expires_at",
+          "keys",
+          "management_url",
+          "audience"
+        ],
+        "properties": {
+          "audience": {
+            "type": "string",
+            "description": "The `aud` of the issuer's management tokens.",
+            "example": "https://status.example.com"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "Acme Wallet Issuer"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the issuer stops being active, unless it is renewed."
+          },
+          "id": {
+            "type": "string",
+            "description": "The `iss` of the issuer's management tokens.",
+            "example": "6f1c2a9e-0b7d-4c1e-9a53-2f8d7e4b1c00"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssuerKeyResponse"
+            },
+            "description": "Keys that may sign the issuer's management tokens, newest first."
+          },
+          "management_url": {
+            "type": "string",
+            "description": "Where the issuer's management tokens go.",
+            "example": "https://status.example.com"
+          },
+          "state": {
+            "$ref": "#/components/schemas/IssuerState",
+            "description": "Only `active` issuers can write status lists. Deleted issuers are `suspended`."
+          }
+        }
+      },
+      "IssuerState": {
+        "type": "string",
+        "description": "Only `active` issuers can write status lists.",
+        "enum": [
+          "active",
+          "suspended",
+          "expired"
+        ]
+      },
+      "KeyState": {
+        "type": "string",
+        "enum": [
+          "active",
+          "reserved",
+          "revoked"
+        ]
+      },
       "MeResponse": {
         "type": "object",
         "required": [
           "login",
           "name",
-          "email"
+          "email",
+          "terms_accepted"
         ],
         "properties": {
           "email": {
@@ -257,6 +827,64 @@ expression: openapi
             ],
             "description": "Display name from the GitHub profile.",
             "example": "The Octocat"
+          },
+          "terms_accepted": {
+            "type": "boolean",
+            "description": "Whether the user accepted the current terms of use. Registering an issuer needs it."
+          }
+        }
+      },
+      "NewIssuerRequest": {
+        "type": "object",
+        "description": "A sandbox issuer to register.",
+        "required": [
+          "display_name",
+          "alg",
+          "public_key"
+        ],
+        "properties": {
+          "alg": {
+            "$ref": "#/components/schemas/SigningAlgorithm",
+            "description": "The algorithm the issuer signs its management tokens with."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Shown in the portal and to the server's operators. 1 to 100 characters.",
+            "example": "Acme Wallet Issuer"
+          },
+          "public_key": {
+            "type": "object",
+            "description": "The public key that checks them, as a JSON Web Key. Private keys are refused."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SigningAlgorithm": {
+        "type": "string",
+        "description": "The JWS algorithm a key signs with.",
+        "enum": [
+          "ES256",
+          "ES384",
+          "EdDSA",
+          "PS256"
+        ]
+      },
+      "TermsResponse": {
+        "type": "object",
+        "required": [
+          "version",
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Where the current terms are published.",
+            "example": "https://portal.example.com/terms"
+          },
+          "version": {
+            "type": "string",
+            "description": "Version of the current terms. Accepting them names it.",
+            "example": "2026-10-22"
           }
         }
       }

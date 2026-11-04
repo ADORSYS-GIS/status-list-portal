@@ -1,0 +1,85 @@
+//! Issuers as the mock admin API returns them.
+
+use serde_json::{Value, json};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+pub const ISSUER_ID: &str = "6f1c2a9e-0b7d-4c1e-9a53-2f8d7e4b1c00";
+pub const CREATED_AT: i64 = 1_790_000_000;
+pub const EXPIRES_AT: i64 = 1_792_592_000;
+
+/// The public key of the test issuers, from `test_data/admin-keys/es256.pem`.
+pub fn public_jwk_json() -> Value {
+    json!({
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "GtkCNIXEFHQ8j_gwyoS0H9eZQGCI_Iaqm2wUymJvOfQ",
+        "y": "D9yk2oGE-yZjX50UqD1j68vpRbEhM-WyuhAWrEPAcyI",
+    })
+}
+
+/// An active sandbox issuer that the GitHub account `gh_id` registered through the portal.
+pub fn issuer_json(gh_id: i64) -> Value {
+    json!({
+        "id": ISSUER_ID,
+        "aggregation_id": "0b8ef1c4-3c6a-4d2e-9f1a-5b7c9d2e4f60",
+        "display_name": "Acme Wallet Issuer",
+        "source": "portal",
+        "tier": "sandbox",
+        "state": "active",
+        "owner": format!("github|{gh_id}"),
+        "created_at": CREATED_AT,
+        "expires_at": EXPIRES_AT,
+        "keys": [{
+            "kid": "QoRTRSkzlInq0eOmPqJwmZ5OS9pxkN_SIf5KgZP2F8M",
+            "alg": "ES256",
+            "state": "active",
+            "not_before": null,
+            "not_after": null,
+            "created_at": CREATED_AT,
+            "public_key": public_jwk_json(),
+        }],
+        "usage": { "lists": 3, "lists_limit": 10, "keys": 1, "keys_limit": null },
+    })
+}
+
+/// An issuer from the server's registry file, which has no owner and never expires.
+pub fn static_issuer_json() -> Value {
+    json!({
+        "id": "https://issuer.example.com",
+        "aggregation_id": "a1d2c3b4-0000-4000-8000-000000000001",
+        "source": "static",
+        "tier": "standard",
+        "state": "active",
+        "owner": null,
+        "created_at": null,
+        "expires_at": null,
+        "keys": [],
+        "usage": { "lists": 0, "lists_limit": 1000, "keys": 0, "keys_limit": null },
+    })
+}
+
+pub fn issuer_path(issuer: &Value) -> String {
+    let id = issuer["id"].as_str().expect("the issuer has no id");
+    format!("/admin/v1/issuers/{id}")
+}
+
+pub fn issuer_response(status: u16, version: &str, issuer: &Value) -> ResponseTemplate {
+    ResponseTemplate::new(status)
+        .insert_header("issuer-version", version)
+        .set_body_json(issuer)
+}
+
+/// One page of issuers, the last one.
+pub fn page_response(issuers: &[Value]) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({ "issuers": issuers, "next_cursor": null }))
+}
+
+/// The admin API holds `issuer` at version `7`.
+pub async fn admin_api_holds(admin_api: &MockServer, issuer: &Value) {
+    Mock::given(method("GET"))
+        .and(path(issuer_path(issuer)))
+        .respond_with(issuer_response(200, "7", issuer))
+        .mount(admin_api)
+        .await;
+}

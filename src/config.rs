@@ -6,7 +6,7 @@
 //! every setting.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU16, NonZeroUsize};
 use std::path::PathBuf;
 
 use ::config::{ConfigError, Environment};
@@ -23,6 +23,11 @@ const DEFAULT_BIND_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LO
 const DEFAULT_DATABASE_POOL_SIZE: NonZeroUsize = NonZeroUsize::new(10).unwrap();
 /// Bytes in the session key: half signs the cookies, half encrypts them.
 const SESSION_KEY_LEN: usize = 64;
+const DEFAULT_MAX_ISSUERS_PER_ACCOUNT: usize = 2;
+const DEFAULT_MAX_REGISTRATIONS_PER_ACCOUNT: usize = 10;
+const DEFAULT_MAX_ACTIVE_ISSUERS: usize = 100;
+/// The server's longest lifetime for the sandbox tier.
+const DEFAULT_SANDBOX_LIFETIME_DAYS: NonZeroU16 = NonZeroU16::new(30).unwrap();
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -37,6 +42,10 @@ pub struct Config {
     pub session: Session,
     pub github: GitHub,
     pub admin_api: AdminApi,
+    pub management_api: ManagementApi,
+    #[serde(default)]
+    pub sandbox: Sandbox,
+    pub terms: Terms,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,6 +113,65 @@ pub struct AdminApi {
     /// The key's `alg` in the registry file (`APP_ADMIN_API__ALGORITHM`).
     #[serde(default = "default_admin_api_algorithm")]
     pub algorithm: SigningAlgorithm,
+}
+
+/// The Status List Server's management API, as developers' issuers reach it. The portal
+/// shows both settings next to every issuer.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManagementApi {
+    /// Public URL of the management API (`APP_MANAGEMENT_API__URL`).
+    #[serde(deserialize_with = "http_url")]
+    pub url: Url,
+    /// The `aud` that management tokens name: one of the server's
+    /// `management_auth.audiences` (`APP_MANAGEMENT_API__AUDIENCE`).
+    pub audience: String,
+}
+
+/// Limits on sandbox issuers. A limit of 0 stops new registrations.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sandbox {
+    /// Most active issuers one account may have (`APP_SANDBOX__MAX_ISSUERS_PER_ACCOUNT`).
+    #[serde(default = "default_max_issuers_per_account")]
+    pub max_issuers_per_account: usize,
+    /// Most issuers one account may register, deleted ones included
+    /// (`APP_SANDBOX__MAX_REGISTRATIONS_PER_ACCOUNT`). The admin API keeps every issuer, so
+    /// this bounds what one account can leave behind.
+    #[serde(default = "default_max_registrations_per_account")]
+    pub max_registrations_per_account: usize,
+    /// Most active sandbox issuers all accounts together may have
+    /// (`APP_SANDBOX__MAX_ACTIVE_ISSUERS`). Each registration counts them through the admin
+    /// API, 100 to a call, so the cost of a registration grows with this number.
+    #[serde(default = "default_max_active_issuers")]
+    pub max_active_issuers: usize,
+    /// Days a new or renewed issuer stays active (`APP_SANDBOX__LIFETIME_DAYS`). At most
+    /// the server's longest lifetime for the sandbox tier.
+    #[serde(default = "default_sandbox_lifetime_days")]
+    pub lifetime_days: NonZeroU16,
+}
+
+impl Default for Sandbox {
+    fn default() -> Self {
+        Self {
+            max_issuers_per_account: default_max_issuers_per_account(),
+            max_registrations_per_account: default_max_registrations_per_account(),
+            max_active_issuers: default_max_active_issuers(),
+            lifetime_days: default_sandbox_lifetime_days(),
+        }
+    }
+}
+
+/// The terms of use developers accept before they register an issuer.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Terms {
+    /// Version of the current terms (`APP_TERMS__VERSION`). Changing it asks every developer
+    /// to accept again.
+    pub version: String,
+    /// Where the current terms are published (`APP_TERMS__URL`).
+    #[serde(deserialize_with = "http_url")]
+    pub url: Url,
 }
 
 /// The scheme, host and port browsers use to reach the portal, such as
@@ -274,6 +342,22 @@ fn default_admin_api_algorithm() -> SigningAlgorithm {
     SigningAlgorithm::Es256
 }
 
+fn default_max_issuers_per_account() -> usize {
+    DEFAULT_MAX_ISSUERS_PER_ACCOUNT
+}
+
+fn default_max_registrations_per_account() -> usize {
+    DEFAULT_MAX_REGISTRATIONS_PER_ACCOUNT
+}
+
+fn default_max_active_issuers() -> usize {
+    DEFAULT_MAX_ACTIVE_ISSUERS
+}
+
+fn default_sandbox_lifetime_days() -> NonZeroU16 {
+    DEFAULT_SANDBOX_LIFETIME_DAYS
+}
+
 fn http_url<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Url, D::Error> {
     let input = String::deserialize(deserializer)?;
     Url::parse(&input)
@@ -313,6 +397,10 @@ mod tests {
             "/run/secrets/admin-key.pem",
         ),
         ("APP_ADMIN_API__KEY_ID", "portal-1"),
+        ("APP_MANAGEMENT_API__URL", "https://status.example.com"),
+        ("APP_MANAGEMENT_API__AUDIENCE", "https://status.example.com"),
+        ("APP_TERMS__VERSION", "2026-10-22"),
+        ("APP_TERMS__URL", "https://portal.example.com/terms"),
     ];
 
     fn load_exactly<'a>(
@@ -345,6 +433,10 @@ mod tests {
         assert_eq!(config.github.web_url.as_str(), "https://github.com/");
         assert_eq!(config.github.api_url.as_str(), "https://api.github.com/");
         assert_eq!(config.admin_api.algorithm, SigningAlgorithm::Es256);
+        assert_eq!(config.sandbox.max_issuers_per_account, 2);
+        assert_eq!(config.sandbox.max_registrations_per_account, 10);
+        assert_eq!(config.sandbox.max_active_issuers, 100);
+        assert_eq!(config.sandbox.lifetime_days.get(), 30);
     }
 
     #[test]
@@ -355,6 +447,10 @@ mod tests {
             ("APP_SERVER__BIND_ADDRESS", "0.0.0.0:9000"),
             ("APP_DATABASE__POOL_SIZE", "3"),
             ("APP_ADMIN_API__ALGORITHM", "EdDSA"),
+            ("APP_SANDBOX__MAX_ISSUERS_PER_ACCOUNT", "1"),
+            ("APP_SANDBOX__MAX_REGISTRATIONS_PER_ACCOUNT", "4"),
+            ("APP_SANDBOX__MAX_ACTIVE_ISSUERS", "500"),
+            ("APP_SANDBOX__LIFETIME_DAYS", "7"),
         ])
         .unwrap();
 
@@ -377,6 +473,20 @@ mod tests {
         );
         assert_eq!(config.admin_api.key_id, "portal-1");
         assert_eq!(config.admin_api.algorithm, SigningAlgorithm::EdDsa);
+        assert_eq!(
+            config.management_api.url.as_str(),
+            "https://status.example.com/"
+        );
+        assert_eq!(config.management_api.audience, "https://status.example.com");
+        assert_eq!(config.sandbox.max_issuers_per_account, 1);
+        assert_eq!(config.sandbox.max_registrations_per_account, 4);
+        assert_eq!(config.sandbox.max_active_issuers, 500);
+        assert_eq!(config.sandbox.lifetime_days.get(), 7);
+        assert_eq!(config.terms.version, "2026-10-22");
+        assert_eq!(
+            config.terms.url.as_str(),
+            "https://portal.example.com/terms"
+        );
     }
 
     #[test]
@@ -390,6 +500,8 @@ mod tests {
             ("APP_ADMIN_API__AUDIENCE", "audience"),
             ("APP_ADMIN_API__SIGNING_KEY_FILE", "signing_key_file"),
             ("APP_ADMIN_API__KEY_ID", "key_id"),
+            ("APP_MANAGEMENT_API__AUDIENCE", "audience"),
+            ("APP_TERMS__VERSION", "version"),
         ] {
             let error = load_without(variable).unwrap_err();
 
@@ -548,6 +660,16 @@ mod tests {
                 "{url}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn renewals_last_at_least_a_day() {
+        let error = load(&[("APP_SANDBOX__LIFETIME_DAYS", "0")]).unwrap_err();
+
+        assert!(
+            error.to_string().contains("sandbox.lifetime_days"),
+            "{error}"
+        );
     }
 
     #[test]
