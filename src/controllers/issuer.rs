@@ -279,8 +279,11 @@ pub async fn renew_issuer(
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<String>,
 ) -> AppResult<Json<IssuerResponse>> {
+    // The connection goes back to the pool before the admin API is called. Only an expired
+    // issuer needs one again, for the lock.
     let mut conn = ctx.db.get().await?;
     ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
+    drop(conn);
     let owner = Owner::github(user.gh_id);
     let issuers = ctx.admin_api.issuers_of(&owner);
     let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
@@ -424,8 +427,7 @@ async fn ensure_room(ctx: &ServerContext, active: usize) -> AppResult<()> {
 /// both take the last free place. A request that finds the lock taken gives up at once
 /// rather than wait with a database connection.
 ///
-/// The handlers hold their connection across every admin API call, not only while locked,
-/// so the pool size also bounds how many registrations and renewals run at once.
+/// The connection stays checked out while `work` calls the admin API, so the lock holds.
 async fn with_limits_lock<T: Send>(
     conn: &mut AsyncPgConnection,
     work: impl Future<Output = AppResult<T>> + Send,
