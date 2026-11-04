@@ -7,6 +7,7 @@ use anyhow::Context;
 use clap::Parser;
 use status_list_portal::config::Config;
 use status_list_portal::util;
+use status_list_portal::util::logging::LogOutput;
 
 /// Developer portal for the Status List Server. Every command reads the `APP_*` settings
 /// that `.env.template` lists, and the operators' commands expect the database that
@@ -26,7 +27,11 @@ async fn main() -> anyhow::Result<()> {
     load_dotenv()?;
     let config = Config::from_environment()
         .context("invalid configuration (.env.template lists every APP_* setting)")?;
-    util::logging::init(config.log_format)?;
+    let log_output = match command {
+        Command::Server => LogOutput::Stdout,
+        Command::Admin(_) => LogOutput::Stderr,
+    };
+    util::logging::init(config.log_format, log_output)?;
 
     match command {
         Command::Server => server::run(config).await,

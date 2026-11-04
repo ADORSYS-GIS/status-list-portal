@@ -16,7 +16,7 @@ pub async fn run(ctx: &ServerContext) -> anyhow::Result<()> {
             "{}\t{}\t{}\t{}\t{}\t{}",
             registration.id,
             registration.created_at.format(&Rfc3339)?,
-            user.gh_login,
+            user.gh_login.escape_debug(),
             user.email.escape_debug(),
             registration.alg,
             registration.display_name.escape_debug(),

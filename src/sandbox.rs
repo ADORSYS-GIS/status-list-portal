@@ -10,7 +10,7 @@ use diesel::OptionalExtension;
 use diesel_async::{AnsiTransactionManager, AsyncPgConnection, TransactionManager};
 use http::StatusCode;
 use time::{Duration, OffsetDateTime};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::admin_api::{
     Issuer, IssuerQuery, IssuerSource, IssuerState, IssuerTier, NewIssuer, Owner, PublicJwk,
@@ -135,6 +135,7 @@ pub async fn approve(
             }
         };
         ensure_recorded(Registration::approve(conn, id, &issuer.id).await?)?;
+        info!(registration.id = id, issuer.id = %issuer.id, "approved a registration");
         AppResult::Ok(issuer)
     })
     .await
@@ -153,7 +154,9 @@ pub async fn reject(conn: &mut AsyncPgConnection, id: i64, reason: &str) -> AppR
     }
     in_transaction(conn, async |conn| {
         lock_pending(conn, id, None).await?;
-        ensure_recorded(Registration::reject(conn, id, reason).await?)
+        ensure_recorded(Registration::reject(conn, id, reason).await?)?;
+        info!(registration.id = id, "rejected a registration");
+        Ok(())
     })
     .await
 }
