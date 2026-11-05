@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use diesel::QueryResult;
-use diesel_async::AsyncConnection;
+use diesel::sql_types::BigInt;
+use diesel_async::{AsyncConnection, RunQueryDsl};
 use insta::assert_snapshot;
 use serde_json::{Value, json};
 use status_list_portal::models::{NewRegistration, Registration};
@@ -570,10 +571,16 @@ async fn the_database_keeps_rejections_without_a_reason_out() {
         .await;
     let user = app.db_new_registrant("octocat").await;
     let registration = db_new_registration(&app, &user).await;
+    let mut conn = app.db_conn().await;
 
-    let result = Registration::reject(&mut app.db_conn().await, registration.id, " ").await;
+    let blank = Registration::reject(&mut conn, registration.id, " ").await;
+    let missing = diesel::sql_query("UPDATE registrations SET decided_at = now() WHERE id = $1")
+        .bind::<BigInt, _>(registration.id)
+        .execute(&mut conn)
+        .await;
 
-    assert!(result.is_err());
+    assert!(blank.is_err());
+    assert!(missing.is_err());
 }
 
 #[tokio::test]

@@ -17,7 +17,7 @@ CREATE TABLE registrations (
     CHECK (issuer_id IS NULL OR decided_at IS NOT NULL),
     CHECK (rejection_reason IS NULL OR (decided_at IS NOT NULL AND issuer_id IS NULL)),
     -- A rejection always says why.
-    CHECK (decided_at IS NULL OR issuer_id IS NOT NULL OR btrim(rejection_reason) <> '')
+    CHECK (decided_at IS NULL OR issuer_id IS NOT NULL OR coalesce(btrim(rejection_reason), '') <> '')
 );
 
 CREATE INDEX registrations_user_id ON registrations (user_id);
