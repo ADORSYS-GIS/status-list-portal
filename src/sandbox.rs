@@ -114,7 +114,15 @@ pub async fn approve(
 
         let owner = Owner::github(user.gh_id);
         let registered = registered_issuers(ctx, &owner).await?;
-        let created = created_earlier(&registered, registration.created_at, &new_issuer.public_key);
+        // An issuer another registration records is that registration's, even with the
+        // same key: creating one again then fails on the key, as it should.
+        let created =
+            match created_earlier(&registered, registration.created_at, &new_issuer.public_key) {
+                Some(issuer) if !Registration::records_issuer(conn, &issuer.id).await? => {
+                    Some(issuer)
+                }
+                _ => None,
+            };
         let issuer = match created {
             Some(issuer) => {
                 warn!(

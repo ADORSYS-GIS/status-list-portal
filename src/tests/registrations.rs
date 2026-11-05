@@ -280,6 +280,49 @@ async fn approving_again_records_the_issuer_an_unanswered_approval_created() {
 }
 
 #[tokio::test]
+async fn a_second_registration_of_a_key_does_not_take_the_first_ones_issuer() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    let first = db_new_registration(&app, &user).await;
+    let second = db_new_registration(&app, &user).await;
+    let mut created = issuer_json(user.user().gh_id);
+    created["created_at"] = json!(second.created_at.unix_timestamp() + 1);
+    Mock::given(method("GET"))
+        .and(path("/admin/v1/issuers"))
+        .and(query_param_is_missing("state"))
+        .respond_with(page_response(&[created]))
+        .with_priority(1)
+        .mount(app.admin_api())
+        .await;
+    sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({
+            "error": "key_material_in_use",
+        })))
+        .expect(1)
+        .mount(app.admin_api())
+        .await;
+    let mut conn = app.db_conn().await;
+    assert!(
+        Registration::approve(&mut conn, first.id, ISSUER_ID)
+            .await
+            .unwrap()
+    );
+
+    let error = sandbox::approve(app.ctx(), &mut conn, second.id)
+        .await
+        .unwrap_err();
+
+    assert_snapshot!(error, @"This public key is already registered, maybe for an issuer you deleted, since a deleted issuer keeps its key. Make a new key pair, or, if you just registered this one, check your issuers.");
+    let shown = registrations_of(&user).await;
+    assert_eq!(shown[0]["id"], second.id);
+    assert_eq!(shown[0]["state"], "pending");
+}
+
+#[tokio::test]
 async fn an_older_issuer_with_the_key_is_not_taken_for_the_approval() {
     let (app, _anon) = TestApp::init()
         .with_sandbox(approval_needed())

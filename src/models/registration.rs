@@ -132,6 +132,18 @@ impl Registration {
         Ok(usize::try_from(count).unwrap_or(usize::MAX))
     }
 
+    /// Whether a registration's approval created `issuer_id`.
+    pub async fn records_issuer(
+        conn: &mut AsyncPgConnection,
+        issuer_id: &str,
+    ) -> QueryResult<bool> {
+        diesel::select(diesel::dsl::exists(
+            registrations::table.filter(registrations::issuer_id.eq(issuer_id)),
+        ))
+        .get_result(conn)
+        .await
+    }
+
     /// Records that the registration created `issuer_id`. `false` when it was no longer
     /// pending.
     pub async fn approve(
