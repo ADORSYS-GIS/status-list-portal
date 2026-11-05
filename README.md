@@ -13,10 +13,12 @@ Requires [Rust](https://rustup.rs) 1.99 or later (`rustup update`) and [Docker](
 ```sh
 cp .env.template .env   # every setting, documented
 docker compose up -d    # Postgres
-cargo run               # http://localhost:8080
+cargo run -- server     # http://localhost:8080
 ```
 
 Signing in needs a [GitHub OAuth app](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) with the callback URL `http://localhost:8080/api/v1/session/github/callback`. Put its client ID and secret in `.env`, next to a session key.
+
+`cargo run -- help` lists the operators' commands, such as approving registrations when `APP_SANDBOX__MANUAL_APPROVAL` is on.
 
 ## Test
 

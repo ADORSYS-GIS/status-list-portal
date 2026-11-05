@@ -24,6 +24,21 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    registrations (id) {
+        id -> Int8,
+        user_id -> Int8,
+        display_name -> Varchar,
+        alg -> Varchar,
+        public_key -> Jsonb,
+        created_at -> Timestamptz,
+        decided_at -> Nullable<Timestamptz>,
+        issuer_id -> Nullable<Varchar>,
+        rejection_reason -> Nullable<Varchar>,
+    }
+}
+
+diesel::joinable!(registrations -> users (user_id));
 diesel::joinable!(terms_acceptances -> users (user_id));
 
-diesel::allow_tables_to_appear_in_same_query!(terms_acceptances, users);
+diesel::allow_tables_to_appear_in_same_query!(registrations, terms_acceptances, users);

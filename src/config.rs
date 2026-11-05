@@ -149,6 +149,10 @@ pub struct Sandbox {
     /// the server's longest lifetime for the sandbox tier.
     #[serde(default = "default_sandbox_lifetime_days")]
     pub lifetime_days: NonZeroU16,
+    /// Whether an operator approves every registration (`APP_SANDBOX__MANUAL_APPROVAL`).
+    /// Off by default: registering creates the issuer at once.
+    #[serde(default)]
+    pub manual_approval: bool,
 }
 
 impl Default for Sandbox {
@@ -158,6 +162,7 @@ impl Default for Sandbox {
             max_registrations_per_account: default_max_registrations_per_account(),
             max_active_issuers: default_max_active_issuers(),
             lifetime_days: default_sandbox_lifetime_days(),
+            manual_approval: false,
         }
     }
 }
@@ -437,6 +442,7 @@ mod tests {
         assert_eq!(config.sandbox.max_registrations_per_account, 10);
         assert_eq!(config.sandbox.max_active_issuers, 100);
         assert_eq!(config.sandbox.lifetime_days.get(), 30);
+        assert!(!config.sandbox.manual_approval);
     }
 
     #[test]
@@ -451,6 +457,7 @@ mod tests {
             ("APP_SANDBOX__MAX_REGISTRATIONS_PER_ACCOUNT", "4"),
             ("APP_SANDBOX__MAX_ACTIVE_ISSUERS", "500"),
             ("APP_SANDBOX__LIFETIME_DAYS", "7"),
+            ("APP_SANDBOX__MANUAL_APPROVAL", "true"),
         ])
         .unwrap();
 
@@ -482,6 +489,7 @@ mod tests {
         assert_eq!(config.sandbox.max_registrations_per_account, 4);
         assert_eq!(config.sandbox.max_active_issuers, 500);
         assert_eq!(config.sandbox.lifetime_days.get(), 7);
+        assert!(config.sandbox.manual_approval);
         assert_eq!(config.terms.version, "2026-10-22");
         assert_eq!(
             config.terms.url.as_str(),

@@ -11,7 +11,7 @@ mod token;
 pub use issuer::{
     Issuer, IssuerChange, IssuerKey, IssuerPage, IssuerQuery, IssuerSource, IssuerState,
     IssuerTier, IssuerUsage, KeyState, KeyType, NewIssuer, Owner, PublicJwk, RequestedState,
-    SigningAlgorithm,
+    SigningAlgorithm, UnknownAlgorithm,
 };
 
 use std::time::Duration;

@@ -4,28 +4,16 @@ use http::{Method, StatusCode};
 use insta::assert_snapshot;
 use serde_json::{Value, json};
 use status_list_portal::{config, db};
-use time::{Duration, OffsetDateTime};
-use wiremock::matchers::{body_json, header, method, path, query_param, query_param_is_missing};
+use wiremock::matchers::{body_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::util::admin_api::{
-    ISSUER_ID, admin_api_holds, issuer_json, issuer_path, issuer_response, page_response,
-    public_jwk_json,
+    Counts, ISSUER_ID, admin_api_holds, assert_one_lifetime, issuer_json, issuer_path,
+    issuer_response, new_issuer_body, owner, page_response, public_jwk_json, sandbox_counts,
 };
 use crate::util::{MANAGEMENT_URL, MockCookieUser, ORIGIN, RequestHelper, TestApp};
 
 const ISSUER_URL: &str = "/api/v1/issuers/6f1c2a9e-0b7d-4c1e-9a53-2f8d7e4b1c00";
-
-/// A user who may register issuers: they accepted the terms.
-async fn registrant(app: &TestApp) -> MockCookieUser {
-    let user = app.db_new_user("octocat").await;
-    app.accept_terms(user.user()).await;
-    user
-}
-
-fn owner(user: &MockCookieUser) -> String {
-    format!("github|{}", user.user().gh_id)
-}
 
 fn own_issuer_json(user: &MockCookieUser) -> Value {
     issuer_json(user.user().gh_id)
@@ -47,70 +35,6 @@ fn shown_issuer_json() -> Value {
         "management_url": MANAGEMENT_URL,
         "audience": MANAGEMENT_URL,
     })
-}
-
-fn new_issuer_body() -> Value {
-    let mut public_key = public_jwk_json();
-    public_key["kid"] = json!("my-key");
-    json!({ "display_name": " Acme Wallet Issuer ", "alg": "ES256", "public_key": public_key })
-}
-
-/// Sandbox issuers as the admin API counts them.
-#[derive(Default)]
-struct Counts {
-    /// The user's active issuers.
-    active: usize,
-    /// The user's issuers in any state: the active ones, then deleted ones.
-    registered: usize,
-    /// Active issuers of every account.
-    in_sandbox: usize,
-}
-
-async fn sandbox_counts(admin_api: &MockServer, user: &MockCookieUser, counts: Counts) {
-    let own = |count| page_response(&vec![own_issuer_json(user); count]);
-    let mut deleted = own_issuer_json(user);
-    deleted["state"] = json!("suspended");
-    let mut registered = vec![own_issuer_json(user); counts.active];
-    registered.resize(counts.registered, deleted);
-    Mock::given(method("GET"))
-        .and(path("/admin/v1/issuers"))
-        .and(query_param("owner", owner(user)))
-        .and(query_param("state", "active"))
-        .and(query_param("tier", "sandbox"))
-        .and(query_param("source", "portal"))
-        .respond_with(own(counts.active))
-        .mount(admin_api)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/admin/v1/issuers"))
-        .and(query_param("owner", owner(user)))
-        .and(query_param_is_missing("state"))
-        .and(query_param("tier", "sandbox"))
-        .and(query_param("source", "portal"))
-        .respond_with(page_response(&registered))
-        .mount(admin_api)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/admin/v1/issuers"))
-        .and(query_param_is_missing("owner"))
-        .and(query_param("state", "active"))
-        .and(query_param("tier", "sandbox"))
-        .and(query_param("source", "portal"))
-        .respond_with(page_response(&vec![issuer_json(0); counts.in_sandbox]))
-        .mount(admin_api)
-        .await;
-}
-
-/// Checks that an issuer sent as `body` stays active for one sandbox lifetime from now.
-#[track_caller]
-fn assert_one_lifetime(body: &Value) {
-    let expires_at = body["expires_at"].as_i64().expect("no expires_at");
-    let expires_at = OffsetDateTime::from_unix_timestamp(expires_at).unwrap();
-    let expected = OffsetDateTime::now_utc() + Duration::days(30) - Duration::minutes(5);
-    assert!(
-        (expected - expires_at).abs() < Duration::minutes(1),
-        "{expires_at}"
-    );
 }
 
 async fn requests_with_method(admin_api: &MockServer, wanted: &str) -> Vec<wiremock::Request> {
@@ -155,7 +79,7 @@ async fn users_list_their_own_issuers() {
     let user = app.db_new_user("octocat").await;
     Mock::given(method("GET"))
         .and(path("/admin/v1/issuers"))
-        .and(query_param("owner", owner(&user)))
+        .and(query_param("owner", owner(user.user())))
         .and(query_param("cursor", "page-2"))
         .respond_with(page_response(&[own_issuer_json(&user)]))
         .mount(app.admin_api())
@@ -186,9 +110,9 @@ async fn users_get_their_own_issuer() {
 async fn another_users_issuer_is_out_of_reach() {
     let (app, _anon) = TestApp::init().empty().await;
     let owner = app.db_new_user("octocat").await;
-    let someone_else = registrant(&app).await;
+    let someone_else = app.db_new_registrant("octocat").await;
     admin_api_holds(app.admin_api(), &own_issuer_json(&owner)).await;
-    sandbox_counts(app.admin_api(), &someone_else, Counts::default()).await;
+    sandbox_counts(app.admin_api(), someone_else.user(), Counts::default()).await;
 
     let read = someone_else.get(ISSUER_URL).await;
     let renewed = someone_else
@@ -209,13 +133,13 @@ async fn another_users_issuer_is_out_of_reach() {
 #[tokio::test]
 async fn registering_creates_an_issuer_the_user_owns() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     let counts = Counts {
         active: 1,
         registered: 3,
         in_sandbox: 99,
     };
-    sandbox_counts(app.admin_api(), &user, counts).await;
+    sandbox_counts(app.admin_api(), user.user(), counts).await;
     Mock::given(method("POST"))
         .and(path("/admin/v1/issuers"))
         .respond_with(issuer_response(201, "1", &own_issuer_json(&user)))
@@ -234,7 +158,7 @@ async fn registering_creates_an_issuer_the_user_owns() {
     let post = &requests_with_method(app.admin_api(), "POST").await[0];
     let sent: Value = serde_json::from_slice(&post.body).unwrap();
     assert_eq!(sent["display_name"], "Acme Wallet Issuer");
-    assert_eq!(sent["owner"], owner(&user));
+    assert_eq!(sent["owner"], owner(user.user()));
     assert_eq!(sent["public_key"], public_jwk_json());
     assert_eq!(sent["alg"], "ES256");
     assert_one_lifetime(&sent);
@@ -245,7 +169,7 @@ async fn registering_creates_an_issuer_the_user_owns() {
 #[tokio::test]
 async fn a_registration_under_way_holds_back_others() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     let mut conn = app.db_conn().await;
 
     conn.transaction(async |conn| {
@@ -270,7 +194,7 @@ async fn a_registration_under_way_holds_back_others() {
 #[tokio::test]
 async fn unknown_members_are_refused() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     let mut body = new_issuer_body();
     body["tier"] = json!("standard");
 
@@ -306,7 +230,7 @@ async fn registering_needs_the_current_terms() {
 #[tokio::test]
 async fn private_keys_never_leave_the_portal() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     let mut body = new_issuer_body();
     body["public_key"]["d"] = json!("c2VjcmV0");
 
@@ -325,7 +249,7 @@ async fn private_keys_never_leave_the_portal() {
 #[tokio::test]
 async fn a_key_for_another_algorithm_is_refused() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     let mut body = new_issuer_body();
     body["alg"] = json!("ES384");
 
@@ -343,7 +267,7 @@ async fn a_key_for_another_algorithm_is_refused() {
 #[tokio::test]
 async fn display_names_are_one_to_a_hundred_printable_characters() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
 
     for name in [
         "   ".to_string(),
@@ -362,13 +286,13 @@ async fn display_names_are_one_to_a_hundred_printable_characters() {
 #[tokio::test]
 async fn an_account_at_its_limit_registers_no_more() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     let counts = Counts {
         active: 2,
         registered: 2,
         in_sandbox: 2,
     };
-    sandbox_counts(app.admin_api(), &user, counts).await;
+    sandbox_counts(app.admin_api(), user.user(), counts).await;
 
     let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
 
@@ -376,7 +300,7 @@ async fn an_account_at_its_limit_registers_no_more() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
-            "detail": "An account can have 2 active sandbox issuers. Delete one first."
+            "detail": "An account can have 2 active sandbox issuers, registrations waiting for approval included. Delete one, or withdraw a registration, first."
         }] })
     );
     assert!(
@@ -393,7 +317,7 @@ async fn no_registrations_allowed_stops_registering() {
         ..config::Sandbox::default()
     };
     let (app, _anon) = TestApp::init().with_sandbox(sandbox).empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
 
     let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
 
@@ -414,8 +338,8 @@ async fn no_active_issuers_allowed_stops_registering() {
         ..config::Sandbox::default()
     };
     let (app, _anon) = TestApp::init().with_sandbox(sandbox).empty().await;
-    let user = registrant(&app).await;
-    sandbox_counts(app.admin_api(), &user, Counts::default()).await;
+    let user = app.db_new_registrant("octocat").await;
+    sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
 
     let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
 
@@ -430,12 +354,12 @@ async fn no_active_issuers_allowed_stops_registering() {
 #[tokio::test]
 async fn an_account_that_used_its_registrations_registers_no_more() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     let counts = Counts {
         registered: 10,
         ..Counts::default()
     };
-    sandbox_counts(app.admin_api(), &user, counts).await;
+    sandbox_counts(app.admin_api(), user.user(), counts).await;
 
     let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
 
@@ -444,7 +368,7 @@ async fn an_account_that_used_its_registrations_registers_no_more() {
         response.json(),
         json!({ "errors": [{
             "detail": "This account cannot register more sandbox issuers: it has registered 10, \
-                       deleted ones included."
+                       deleted, rejected and waiting ones included."
         }] })
     );
     assert!(
@@ -461,12 +385,12 @@ async fn a_full_sandbox_registers_no_more() {
         ..config::Sandbox::default()
     };
     let (app, _anon) = TestApp::init().with_sandbox(sandbox).empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     let counts = Counts {
         in_sandbox: 3,
         ..Counts::default()
     };
-    sandbox_counts(app.admin_api(), &user, counts).await;
+    sandbox_counts(app.admin_api(), user.user(), counts).await;
 
     let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
 
@@ -481,8 +405,8 @@ async fn a_full_sandbox_registers_no_more() {
 #[tokio::test]
 async fn a_key_registered_already_is_a_conflict() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
-    sandbox_counts(app.admin_api(), &user, Counts::default()).await;
+    let user = app.db_new_registrant("octocat").await;
+    sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
     Mock::given(method("POST"))
         .and(path("/admin/v1/issuers"))
         .respond_with(ResponseTemplate::new(409).set_body_json(json!({
@@ -509,7 +433,7 @@ async fn a_key_registered_already_is_a_conflict() {
 async fn renewing_keeps_an_issuer_active_for_another_lifetime() {
     // No counts are mounted: an active issuer keeps its place, so nothing is counted.
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
     Mock::given(method("PATCH"))
         .and(path(issuer_path(&own_issuer_json(&user))))
@@ -529,7 +453,7 @@ async fn renewing_keeps_an_issuer_active_for_another_lifetime() {
 #[tokio::test]
 async fn renewing_an_expired_issuer_needs_room() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     let mut expired = own_issuer_json(&user);
     expired["state"] = json!("expired");
     admin_api_holds(app.admin_api(), &expired).await;
@@ -538,7 +462,7 @@ async fn renewing_an_expired_issuer_needs_room() {
         registered: 3,
         in_sandbox: 2,
     };
-    sandbox_counts(app.admin_api(), &user, counts).await;
+    sandbox_counts(app.admin_api(), user.user(), counts).await;
 
     let response = user.post(&format!("{ISSUER_URL}/renew"), &json!({})).await;
 
@@ -553,7 +477,7 @@ async fn renewing_an_expired_issuer_needs_room() {
 #[tokio::test]
 async fn renewing_an_expired_issuer_with_room_makes_it_active() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     let mut expired = own_issuer_json(&user);
     expired["state"] = json!("expired");
     admin_api_holds(app.admin_api(), &expired).await;
@@ -563,7 +487,7 @@ async fn renewing_an_expired_issuer_with_room_makes_it_active() {
         registered: 10,
         in_sandbox: 1,
     };
-    sandbox_counts(app.admin_api(), &user, counts).await;
+    sandbox_counts(app.admin_api(), user.user(), counts).await;
     Mock::given(method("PATCH"))
         .and(path(issuer_path(&expired)))
         .and(header("if-issuer-version", "7"))
@@ -583,7 +507,7 @@ async fn renewing_an_expired_issuer_with_room_makes_it_active() {
 #[tokio::test]
 async fn deleted_issuers_cannot_be_renewed() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     let mut deleted = own_issuer_json(&user);
     deleted["state"] = json!("suspended");
     admin_api_holds(app.admin_api(), &deleted).await;
@@ -648,7 +572,7 @@ async fn deleting_a_deleted_issuer_changes_nothing() {
 #[tokio::test]
 async fn a_change_made_in_between_is_a_conflict() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = registrant(&app).await;
+    let user = app.db_new_registrant("octocat").await;
     admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
     Mock::given(method("PATCH"))
         .respond_with(

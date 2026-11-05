@@ -14,6 +14,7 @@ pub mod middleware;
 pub mod models;
 pub mod openapi;
 mod router;
+pub mod sandbox;
 pub mod schema;
 pub mod server;
 pub mod util;

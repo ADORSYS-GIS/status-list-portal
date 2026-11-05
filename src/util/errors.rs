@@ -54,6 +54,12 @@ impl From<diesel::result::Error> for BoxedAppError {
     }
 }
 
+impl From<serde_json::Error> for BoxedAppError {
+    fn from(error: serde_json::Error) -> Self {
+        Box::new(error)
+    }
+}
+
 /// No database connection is available: the database is down or every connection is busy.
 impl From<PoolError> for BoxedAppError {
     fn from(error: PoolError) -> Self {

@@ -2,7 +2,7 @@ use axum::Router;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::controllers::{health, issuer, session, terms, user};
+use crate::controllers::{health, issuer, registration, session, terms, user};
 use crate::openapi::BaseOpenApi;
 use crate::server::ServerContext;
 use crate::util::errors::{self, BoxedAppError};
@@ -21,6 +21,8 @@ pub(crate) fn openapi_router() -> OpenApiRouter<ServerContext> {
         .routes(routes!(issuer::list_issuers, issuer::create_issuer))
         .routes(routes!(issuer::get_issuer, issuer::delete_issuer))
         .routes(routes!(issuer::renew_issuer))
+        .routes(routes!(registration::list_registrations))
+        .routes(routes!(registration::withdraw_registration))
 }
 
 pub(crate) fn build_router(ctx: ServerContext) -> Router {
