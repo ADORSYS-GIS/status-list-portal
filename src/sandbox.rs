@@ -184,7 +184,7 @@ async fn lock_pending(
     let found =
         |registration: &Registration| user_id.is_none_or(|user_id| registration.user_id == user_id);
     let not_found = || errors::custom(StatusCode::NOT_FOUND, "No registration has this id.");
-    let Some(registration) = Registration::try_lock(conn, id).await? else {
+    let Some(registration) = Registration::try_lock(conn, id, user_id).await? else {
         return match Registration::find(conn, id).await.optional()? {
             Some(held) if found(&held) => Err(errors::custom(
                 StatusCode::CONFLICT,
@@ -193,9 +193,6 @@ async fn lock_pending(
             _ => Err(not_found()),
         };
     };
-    if !found(&registration) {
-        return Err(not_found());
-    }
     if registration.state() != RegistrationState::Pending {
         return Err(errors::custom(
             StatusCode::CONFLICT,

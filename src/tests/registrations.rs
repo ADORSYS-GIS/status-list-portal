@@ -663,6 +663,31 @@ async fn another_users_registration_is_out_of_reach() {
 }
 
 #[tokio::test]
+async fn another_users_registration_is_never_locked() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(approval_needed())
+        .empty()
+        .await;
+    let owner = app.db_new_registrant("octocat").await;
+    let registration = db_new_registration(&app, &owner).await;
+    let someone_else = app.db_new_registrant("hubot").await;
+    let mut conn = app.db_conn().await;
+
+    conn.transaction(async |conn| {
+        let theirs =
+            Registration::try_lock(conn, registration.id, Some(someone_else.user().id)).await?;
+
+        assert!(theirs.is_none());
+        let mut other = app.db_conn().await;
+        let free = Registration::try_lock(&mut other, registration.id, None).await?;
+        assert!(free.is_some(), "the registration was locked");
+        QueryResult::Ok(())
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn decided_registrations_cannot_be_withdrawn() {
     let (app, _anon) = TestApp::init()
         .with_sandbox(approval_needed())
@@ -831,7 +856,7 @@ async fn a_withdrawal_while_an_operator_rejects_is_refused() {
 
     conn.transaction(async |conn| {
         // Holds the registration as a rejection does until it commits.
-        let held = Registration::try_lock(conn, registration.id).await?;
+        let held = Registration::try_lock(conn, registration.id, None).await?;
         assert!(held.is_some());
 
         let response = withdraw(&user, registration.id).await;

@@ -63,20 +63,29 @@ impl Registration {
             .await
     }
 
-    /// Reads the registration and locks it until the transaction ends, unless another
-    /// transaction holds it: `None` then, as when there is none.
+    /// Reads the registration, of the user `user_id` when given, and locks it until the
+    /// transaction ends, unless another transaction holds it: `None` then, as when there is
+    /// none. Another user's registration is never locked.
     pub async fn try_lock(
         conn: &mut AsyncPgConnection,
         id: i64,
+        user_id: Option<i64>,
     ) -> QueryResult<Option<Registration>> {
-        registrations::table
+        let query = registrations::table
             .find(id)
-            .select(Registration::as_select())
-            .for_update()
-            .skip_locked()
-            .first(conn)
-            .await
-            .optional()
+            .select(Registration::as_select());
+        match user_id {
+            Some(user_id) => {
+                query
+                    .filter(registrations::user_id.eq(user_id))
+                    .for_update()
+                    .skip_locked()
+                    .first(conn)
+                    .await
+            }
+            None => query.for_update().skip_locked().first(conn).await,
+        }
+        .optional()
     }
 
     /// The user's registrations, newest first.
