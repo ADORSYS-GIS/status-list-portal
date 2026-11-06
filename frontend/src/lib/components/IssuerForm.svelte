@@ -38,10 +38,12 @@
   let alg = $state<SigningAlgorithm>('ES256');
   let publicKey = $state('');
   let acceptTerms = $state(false);
-  let errors = $state<{ displayName?: string; publicKey?: string; terms?: string }>({});
+  // Shown once a submit fails, then kept up to date as the fields change.
+  let submitted = $state(false);
+  const errors = $derived(submitted ? check() : {});
   let form: HTMLFormElement;
 
-  function check() {
+  function check(): { displayName?: string; publicKey?: string; terms?: string } {
     const name = displayName.trim();
     return {
       displayName:
@@ -55,8 +57,9 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    errors = check();
-    if (errors.displayName || errors.publicKey || errors.terms) {
+    const problems = check();
+    if (problems.displayName || problems.publicKey || problems.terms) {
+      submitted = true;
       await tick();
       form.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
       return;
