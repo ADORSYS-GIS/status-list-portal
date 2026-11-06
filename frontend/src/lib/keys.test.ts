@@ -100,6 +100,21 @@ test('text that is not a JSON object is refused', () => {
   expect(publicKeyProblem('[1, 2]')).toMatch(/JSON object/);
 });
 
+test('a private key inside a key set is refused before it is sent', () => {
+  const keySet = JSON.stringify({
+    keys: [{ kty: 'EC', crv: 'P-256', x: 'AAAA', y: 'BBBB', d: 'c2Vj' }],
+  });
+
+  expect(publicKeyProblem(keySet)).toMatch(/private key/);
+});
+
+test('only one key is accepted', () => {
+  const keySet = JSON.stringify({ keys: [{ kty: 'EC', crv: 'P-256', x: 'AAAA', y: 'BBBB' }] });
+
+  expect(publicKeyProblem(keySet)).toMatch(/one public key/);
+  expect(publicKeyProblem('{"kty": 1}')).toMatch(/one public key/);
+});
+
 test('publishing goes to the management API with a token', () => {
   const commands = publishCommands(issuer('ES256'));
 
