@@ -46,10 +46,24 @@ export function publicKeyProblem(text: string): string | null {
   if (typeof key !== 'object' || key === null || Array.isArray(key)) {
     return 'Paste the public key as a JSON Web Key: a JSON object.';
   }
-  if (PRIVATE_MEMBERS.some((member) => Object.hasOwn(key, member))) {
+  if (hasPrivateMembers(key)) {
     return 'This is a private key. Do not send it anywhere: make a new key pair and paste only its public key.';
   }
+  if (!('kty' in key) || typeof key.kty !== 'string') {
+    return 'Paste one public key as a JSON Web Key, with its "kty" member, not a key set.';
+  }
   return null;
+}
+
+/** Whether `value`, at any depth, has a member that only private keys have. */
+function hasPrivateMembers(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  if (!Array.isArray(value) && PRIVATE_MEMBERS.some((member) => Object.hasOwn(value, member))) {
+    return true;
+  }
+  return Object.values(value).some(hasPrivateMembers);
 }
 
 /** A Node.js script that makes an `alg` key pair, saves the private key and prints the public one. */
