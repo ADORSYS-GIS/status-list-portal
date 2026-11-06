@@ -33,6 +33,7 @@ const UNREACHABLE_DATABASE_URL: &str = "postgres://portal@127.0.0.1:1/portal";
 pub const ADMIN_PRINCIPAL: &str = "portal";
 pub const ADMIN_AUDIENCE: &str = "test-admin-audience";
 pub const ADMIN_KEY_ID: &str = "test-admin-key";
+const FRONTEND_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/test_data/frontend");
 pub const ADMIN_SIGNING_KEY_FILE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/test_data/admin-keys/es256.pem"
@@ -61,6 +62,7 @@ impl TestApp {
         TestAppBuilder {
             unreachable_database: false,
             sandbox: config::Sandbox::default(),
+            frontend: false,
         }
     }
 
@@ -151,6 +153,7 @@ impl TestApp {
 pub struct TestAppBuilder {
     unreachable_database: bool,
     sandbox: config::Sandbox,
+    frontend: bool,
 }
 
 impl TestAppBuilder {
@@ -158,6 +161,14 @@ impl TestAppBuilder {
     pub fn with_unreachable_database(self) -> Self {
         Self {
             unreachable_database: true,
+            ..self
+        }
+    }
+
+    /// Serves the frontend build in `test_data/frontend`.
+    pub fn with_frontend(self) -> Self {
+        Self {
+            frontend: true,
             ..self
         }
     }
@@ -182,7 +193,7 @@ impl TestAppBuilder {
         let admin_api_url = Url::parse(&admin_api.uri()).expect("the mock server has a valid URL");
         let session_key = SessionKey::generate();
 
-        let config = Config {
+        let mut config = Config {
             sandbox: self.sandbox,
             ..simple_config(
                 database_url,
@@ -191,6 +202,9 @@ impl TestAppBuilder {
                 session_key.clone(),
             )
         };
+        if self.frontend {
+            config.server.frontend_dir = Some(FRONTEND_DIR.into());
+        }
         let ctx = ServerContext::from_config(config).expect("failed to build the server context");
         let app = TestApp(Arc::new(TestAppInner {
             router: build_handler(ctx.clone()),
@@ -217,6 +231,7 @@ fn simple_config(
         server: config::Server {
             bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
             origin: PublicOrigin::parse(ORIGIN).expect("the origin is valid"),
+            frontend_dir: None,
         },
         database: config::Database {
             url: SecretString::from(database_url),

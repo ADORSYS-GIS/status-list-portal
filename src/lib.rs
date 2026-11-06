@@ -41,5 +41,6 @@ pub enum Env {
 /// Builds the router with every route and middleware.
 pub fn build_handler(ctx: ServerContext) -> axum::Router {
     let origin = ctx.config.server.origin.clone();
-    middleware::apply_middleware(router::build_router(ctx), &origin)
+    let frontend = ctx.frontend.clone();
+    middleware::apply_middleware(router::build_router(ctx), &origin, frontend)
 }

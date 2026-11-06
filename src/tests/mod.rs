@@ -3,6 +3,7 @@
 
 mod admin_api;
 mod cross_origin;
+mod frontend;
 mod headers;
 mod health;
 mod issuers;

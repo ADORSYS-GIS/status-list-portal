@@ -1,0 +1,52 @@
+{
+  "name": "status-list-portal-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "imports": {
+    "#lib/*": "./src/lib/*"
+  },
+  "scripts": {
+    "build": "vite build",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "dev": "vite dev",
+    "format": "prettier --write .",
+    "lint": "prettier --check . && eslint .",
+    "prepare": "svelte-kit sync || echo ''",
+    "preview": "vite preview",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@fontsource-variable/ibm-plex-sans": "^5.3",
+    "@fontsource-variable/jetbrains-mono": "^5.3",
+    "openapi-fetch": "^0.17"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0",
+    "@sveltejs/adapter-static": "^4.0",
+    "@sveltejs/kit": "^3.1",
+    "@sveltejs/vite-plugin-svelte": "^7.3",
+    "@types/node": "^26.6",
+    "@vitest/browser-playwright": "^5.0",
+    "eslint": "^10.13",
+    "eslint-plugin-svelte": "^3.23",
+    "globals": "^17.13",
+    "heroicons": "^2.2",
+    "openapi-typescript": "^7.13",
+    "playwright": "^1.64",
+    "prettier": "^3.9",
+    "prettier-plugin-svelte": "^4.1",
+    "simple-icons": "^16.35",
+    "svelte": "^5.57",
+    "svelte-check": "^4.7",
+    "typescript": "~6.0",
+    "typescript-eslint": "^8.72",
+    "vite": "^8.3",
+    "vitest": "^5.0",
+    "vitest-browser-svelte": "^3.1"
+  },
+  "engines": {
+    "bun": ">=1.4"
+  }
+}
