@@ -70,3 +70,15 @@ test('the terms must be accepted the first time', async () => {
 
   expect(onsubmit).toHaveBeenCalledOnce();
 });
+
+test('an error goes away once its field is fixed', async () => {
+  const { screen } = await renderForm();
+  await screen.getByRole('button', { name: 'Register issuer' }).click();
+  await expect.element(screen.getByText(/Give your issuer a name/)).toBeVisible();
+
+  await screen.getByLabelText('Display name').fill('Acme Wallet Issuer');
+
+  await expect.element(screen.getByText(/Give your issuer a name/)).not.toBeInTheDocument();
+  await expect.element(screen.getByLabelText('Display name')).not.toHaveAttribute('aria-invalid');
+  await expect.element(screen.getByText(/This is not JSON/)).toBeVisible();
+});
