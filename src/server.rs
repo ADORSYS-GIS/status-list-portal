@@ -2,6 +2,7 @@
 
 use crate::admin_api::AdminApi;
 use crate::config::Config;
+use crate::controllers::health::DatabaseReadiness;
 use crate::db;
 use crate::github::GitHub;
 use axum::extract::{FromRef, FromRequestParts, State};
@@ -13,6 +14,7 @@ use std::sync::Arc;
 pub struct ServerContextInner {
     pub config: Config,
     pub db: db::Pool,
+    pub readiness: DatabaseReadiness,
     pub github: GitHub,
     pub admin_api: AdminApi,
 }
@@ -30,11 +32,13 @@ impl ServerContext {
     /// Builds the shared components from the configuration. Opens no connection yet.
     pub fn from_config(config: Config) -> anyhow::Result<Self> {
         let db = db::pool(&config.database)?;
+        let readiness = DatabaseReadiness::start(db::readiness_pool(&config.database)?);
         let github = GitHub::new(&config.github, &config.server.origin)?;
         let admin_api = AdminApi::new(&config.admin_api)?;
         Ok(Self::new(ServerContextInner {
             config,
             db,
+            readiness,
             github,
             admin_api,
         }))

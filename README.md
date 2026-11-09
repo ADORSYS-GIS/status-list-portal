@@ -20,6 +20,40 @@ Signing in needs a [GitHub OAuth app](https://docs.github.com/en/apps/oauth-apps
 
 `cargo run -- help` lists the operators' commands, such as approving registrations when `APP_SANDBOX__MANUAL_APPROVAL` is on.
 
+## Kubernetes probes
+
+Set `APP_SERVER__BIND_ADDRESS=0.0.0.0:8080` in the container. The HTTP listener
+starts after database migrations finish. Give startup enough time for the longest
+migration and for waiting on another replica's migration lock. For example, these
+container probes allow up to five minutes of startup before liveness takes effect:
+
+```yaml
+startupProbe:
+  httpGet:
+    path: /health/live
+    port: 8080
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 60
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: 8080
+  periodSeconds: 10
+  timeoutSeconds: 3
+readinessProbe:
+  httpGet:
+    path: /health/ready
+    port: 8080
+  periodSeconds: 5
+  timeoutSeconds: 3
+```
+
+Readiness begins as unavailable. A separate one-connection pool checks PostgreSQL every
+five seconds, with a two-second deadline. One failed check is tolerated; two consecutive
+failures make the instance unready. Results older than 15 seconds are unready. Size the
+database connection limit for one extra connection per portal replica.
+
 ## Test
 
 ```sh

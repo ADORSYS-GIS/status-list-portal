@@ -695,7 +695,7 @@ expression: openapi
         "tags": [
           "health"
         ],
-        "summary": "Readiness probe: the server can reach its database.",
+        "summary": "Readiness probe: a recent background check reached the database.",
         "operationId": "ready",
         "responses": {
           "200": {
@@ -718,7 +718,7 @@ expression: openapi
             }
           },
           "503": {
-            "description": "The database cannot be reached.",
+            "description": "No recent successful database check is available.",
             "content": {
               "application/json": {
                 "schema": {

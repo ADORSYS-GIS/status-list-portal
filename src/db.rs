@@ -68,12 +68,21 @@ pub async fn try_lock_issuer_limits(conn: &mut AsyncPgConnection) -> QueryResult
 
 /// Builds the pool. Connections are opened on first use, not here.
 pub fn pool(config: &config::Database) -> anyhow::Result<Pool> {
+    build_pool(config, config.pool_size.get())
+}
+
+/// Keeps health checks independent of application pool contention.
+pub fn readiness_pool(config: &config::Database) -> anyhow::Result<Pool> {
+    build_pool(config, 1)
+}
+
+fn build_pool(config: &config::Database, max_size: usize) -> anyhow::Result<Pool> {
     let mut manager_config = ManagerConfig::default();
     manager_config.custom_setup = Box::new(establish);
     let manager =
         AsyncDieselConnectionManager::new_with_config(config.url.expose_secret(), manager_config);
     Pool::builder(manager)
-        .max_size(config.pool_size.get())
+        .max_size(max_size)
         .wait_timeout(Some(CONNECTION_TIMEOUT))
         .create_timeout(Some(CONNECTION_TIMEOUT))
         .recycle_timeout(Some(RECYCLE_TIMEOUT))
