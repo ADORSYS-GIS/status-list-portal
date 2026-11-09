@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use diesel::QueryResult;
@@ -7,8 +8,9 @@ use insta::assert_snapshot;
 use serde_json::{Value, json};
 use status_list_portal::models::{NewRegistration, Registration};
 use status_list_portal::{config, db, sandbox};
+use tokio::sync::Notify;
 use wiremock::matchers::{method, path, query_param_is_missing};
-use wiremock::{Mock, ResponseTemplate};
+use wiremock::{Mock, Request, Respond, ResponseTemplate};
 
 use crate::util::admin_api::{
     Counts, ISSUER_ID, admin_api_holds, assert_one_lifetime, issuer_json, issuer_response,
@@ -16,8 +18,8 @@ use crate::util::admin_api::{
 };
 use crate::util::{MockCookieUser, RequestHelper, Response, TestApp};
 
-/// Long enough for another decision to try its luck while the admin API answers.
-const SLOW_ANSWER: Duration = Duration::from_millis(500);
+/// The longest the admin API holds an issuer's creation, in case a test never releases it.
+const HOLD_LIMIT: Duration = Duration::from_secs(10);
 
 fn approval_needed() -> config::Sandbox {
     config::Sandbox {
@@ -63,33 +65,68 @@ async fn withdraw(user: &MockCookieUser, registration: i64) -> Response {
         .await
 }
 
-/// The admin API answers an issuer's creation for `user` after a while.
-async fn slow_creation(app: &TestApp, user: &MockCookieUser, status: u16) {
+/// An issuer's creation that the admin API holds until the test releases it, so another
+/// decision can try its luck while the approval waits for the answer.
+struct HeldCreation {
+    arrived: Arc<Notify>,
+    release: mpsc::Sender<()>,
+}
+
+impl HeldCreation {
+    /// Waits until the admin API has been asked to create the issuer.
+    async fn under_way(&self) {
+        tokio::time::timeout(HOLD_LIMIT, self.arrived.notified())
+            .await
+            .expect("the admin API was not asked to create an issuer");
+    }
+
+    /// Lets the admin API answer.
+    fn release(&self) {
+        // Fails only when the hold ran out, and the answer went out already.
+        let _ = self.release.send(());
+    }
+}
+
+/// The admin API's answer, held until the test releases it. Each mock server runs on a
+/// thread of its own, which the hold blocks: nothing else may call the admin API meanwhile.
+struct HeldAnswer {
+    answer: ResponseTemplate,
+    arrived: Arc<Notify>,
+    released: Mutex<mpsc::Receiver<()>>,
+}
+
+impl Respond for HeldAnswer {
+    fn respond(&self, _request: &Request) -> ResponseTemplate {
+        self.arrived.notify_one();
+        // A test that fails before releasing it drops the sender, which ends the wait too.
+        let _ = self
+            .released
+            .lock()
+            .expect("the hold was poisoned")
+            .recv_timeout(HOLD_LIMIT);
+        self.answer.clone()
+    }
+}
+
+/// The admin API answers an issuer's creation for `user` with `status`, once released.
+async fn held_creation(app: &TestApp, user: &MockCookieUser, status: u16) -> HeldCreation {
     let body = if status == 201 {
         issuer_json(user.user().gh_id)
     } else {
         json!({ "error": "service_unavailable" })
     };
+    let arrived = Arc::new(Notify::new());
+    let (release, released) = mpsc::channel();
     Mock::given(method("POST"))
-        .respond_with(issuer_response(status, "\"1\"", &body).set_delay(SLOW_ANSWER))
+        .respond_with(HeldAnswer {
+            answer: issuer_response(status, "\"1\"", &body),
+            arrived: Arc::clone(&arrived),
+            released: Mutex::new(released),
+        })
         .expect(1)
         .mount(app.admin_api())
         .await;
-}
-
-/// Waits until the admin API has been asked to create an issuer.
-async fn creation_under_way(app: &TestApp) {
-    for _ in 0..200 {
-        let requests = app.admin_api().received_requests().await.unwrap();
-        if requests
-            .iter()
-            .any(|request| request.method.as_str() == "POST")
-        {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("the admin API was not asked to create an issuer");
+    HeldCreation { arrived, release }
 }
 
 fn detail(response: &Response) -> Value {
@@ -750,15 +787,17 @@ async fn a_withdrawal_during_an_approval_is_refused() {
         .await;
     let user = app.db_new_registrant("octocat").await;
     sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
-    slow_creation(&app, &user, 201).await;
+    let creation = held_creation(&app, &user, 201).await;
     let registration = db_new_registration(&app, &user).await;
     let mut conn = app.db_conn().await;
 
     let (approved, withdrawn) = tokio::join!(
         sandbox::approve(app.ctx(), &mut conn, registration.id),
         async {
-            creation_under_way(&app).await;
-            withdraw(&user, registration.id).await
+            creation.under_way().await;
+            let contender = withdraw(&user, registration.id).await;
+            creation.release();
+            contender
         },
     );
 
@@ -776,15 +815,17 @@ async fn a_withdrawal_after_a_failed_approval_goes_through() {
         .await;
     let user = app.db_new_registrant("octocat").await;
     sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
-    slow_creation(&app, &user, 503).await;
+    let creation = held_creation(&app, &user, 503).await;
     let registration = db_new_registration(&app, &user).await;
     let mut conn = app.db_conn().await;
 
     let (approved, withdrawn) = tokio::join!(
         sandbox::approve(app.ctx(), &mut conn, registration.id),
         async {
-            creation_under_way(&app).await;
-            withdraw(&user, registration.id).await
+            creation.under_way().await;
+            let contender = withdraw(&user, registration.id).await;
+            creation.release();
+            contender
         },
     );
 
@@ -802,15 +843,17 @@ async fn a_rejection_during_an_approval_is_refused() {
         .await;
     let user = app.db_new_registrant("octocat").await;
     sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
-    slow_creation(&app, &user, 201).await;
+    let creation = held_creation(&app, &user, 201).await;
     let registration = db_new_registration(&app, &user).await;
     let (mut approving, mut rejecting) = (app.db_conn().await, app.db_conn().await);
 
     let (approved, rejected) = tokio::join!(
         sandbox::approve(app.ctx(), &mut approving, registration.id),
         async {
-            creation_under_way(&app).await;
-            sandbox::reject(&mut rejecting, registration.id, "No.").await
+            creation.under_way().await;
+            let contender = sandbox::reject(&mut rejecting, registration.id, "No.").await;
+            creation.release();
+            contender
         },
     );
 
@@ -827,15 +870,17 @@ async fn of_two_approvals_at_once_one_creates_the_issuer() {
         .await;
     let user = app.db_new_registrant("octocat").await;
     sandbox_counts(app.admin_api(), user.user(), Counts::default()).await;
-    slow_creation(&app, &user, 201).await;
+    let creation = held_creation(&app, &user, 201).await;
     let registration = db_new_registration(&app, &user).await;
     let (mut first, mut second) = (app.db_conn().await, app.db_conn().await);
 
     let (approved, approved_again) = tokio::join!(
         sandbox::approve(app.ctx(), &mut first, registration.id),
         async {
-            creation_under_way(&app).await;
-            sandbox::approve(app.ctx(), &mut second, registration.id).await
+            creation.under_way().await;
+            let contender = sandbox::approve(app.ctx(), &mut second, registration.id).await;
+            creation.release();
+            contender
         },
     );
 
