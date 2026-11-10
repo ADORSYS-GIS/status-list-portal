@@ -235,7 +235,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Readiness probe: the server can reach its database. */
+        /** Readiness probe: a recent background check reached the database. */
         get: operations["ready"];
         put?: never;
         post?: never;
@@ -983,7 +983,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description The database cannot be reached. */
+            /** @description No recent successful database check is available. */
             503: {
                 headers: {
                     [name: string]: unknown;
