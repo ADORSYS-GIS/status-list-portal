@@ -36,7 +36,7 @@ Each request is a trace of its own, named after its method and route, such as `P
 
 Each operator command, such as `portal approve-registration`, is a trace of its own, whose root span is `operator.command`.
 
-Some traces do not depend on `OTEL_TRACES_SAMPLER`. Sign-ins (`GET /api/v1/session/github/callback`), registrations (`POST /api/v1/issuers`) and operator commands are always kept: they are rare, and the first thing to look at when a developer reports a problem. Health checks (`/health/*`) are never kept: a probe sends one every few seconds.
+Some traces do not depend on `OTEL_TRACES_SAMPLER`. Sign-ins (`GET /api/v1/session/github/callback`), registrations (`POST /api/v1/issuers`) and operator commands are always kept: they are rare, and the first thing to look at when a developer reports a problem. Health checks (`/health/*`) are never traced: a probe sends one every few seconds, so their spans are `DEBUG`, below what is exported.
 
 Anyone can call the sign-in callback, so a flood of such requests is kept in full, whatever the sampler says. The exporter's queue is bounded: when it is full, spans are dropped rather than slow the portal down.
 
@@ -59,7 +59,7 @@ Operator commands export no metrics: a process that lasts a second would only ad
 
 ## Logs
 
-Log lines go to stdout, or stderr for operator commands, as `APP_LOG_FORMAT` says, `text` or `json`, and `RUST_LOG` filters them. A JSON line written during a request carries the request's trace and span ids under `openTelemetry`, so a log collector can link it to the trace.
+Log lines go to stdout, or stderr for operator commands, as `APP_LOG_FORMAT` says, `text` or `json`, and `RUST_LOG` filters them. A JSON line written during a request carries the request's trace and span ids under `openTelemetry`, so a log collector can link it to the trace. Health checks log their response at `DEBUG`, so the default `RUST_LOG=info` leaves them out.
 
 When logs are exported, the lines `RUST_LOG` lets through go to the OTLP endpoint too, with their trace and span ids. The exporters' own HTTP clients and the OpenTelemetry SDK are left out, so exports do not report on themselves.
 
