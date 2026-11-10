@@ -4,7 +4,7 @@ mod cross_origin;
 mod headers;
 
 use std::any::Any;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Request};
@@ -12,7 +12,8 @@ use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::Response;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
-use tracing::{Instrument, debug, debug_span, info, info_span, warn};
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
+use tracing::{Level, Span, info_span, warn};
 
 use crate::config::PublicOrigin;
 use crate::util::errors;
@@ -29,7 +30,11 @@ pub fn apply_middleware(router: Router, origin: &PublicOrigin) -> Router {
     // Security headers sit outside the other layers, so the responses those layers produce
     // carry them too.
     let middleware = ServiceBuilder::new()
-        .layer(from_fn(log_request))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(make_span)
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
         .layer(from_fn(headers::add_common_headers))
         .layer(from_fn_with_state(
             origin.clone(),
@@ -43,27 +48,10 @@ pub fn apply_middleware(router: Router, origin: &PublicOrigin) -> Router {
         .layer(middleware)
 }
 
-/// Query strings can carry OAuth codes, so only the path is recorded.
-async fn log_request(request: Request, next: Next) -> Response {
-    let method = request.method().clone();
-    let path = request.uri().path().to_owned();
-    let health = matches!(path.as_str(), "/health/live" | "/health/ready");
-    let start = Instant::now();
-    let response = if health {
-        next.run(request)
-            .instrument(debug_span!("health_request", %method, %path))
-            .await
-    } else {
-        next.run(request)
-            .instrument(info_span!("request", %method, %path))
-            .await
-    };
-    if health {
-        debug!(status = %response.status(), latency = ?start.elapsed(), "response");
-    } else {
-        info!(status = %response.status(), latency = ?start.elapsed(), "response");
-    }
-    response
+/// Records the method and path only. Query strings can carry OAuth codes, which must not
+/// reach the logs.
+fn make_span(request: &Request) -> Span {
+    info_span!("request", method = %request.method(), path = %request.uri().path())
 }
 
 fn handle_panic(_payload: Box<dyn Any + Send + 'static>) -> Response {

@@ -14,7 +14,7 @@ use std::sync::Arc;
 pub struct ServerContextInner {
     pub config: Config,
     pub db: db::Pool,
-    pub readiness: DatabaseReadiness,
+    pub readiness: Option<DatabaseReadiness>,
     pub github: GitHub,
     pub admin_api: AdminApi,
 }
@@ -32,16 +32,28 @@ impl ServerContext {
     /// Builds the shared components from the configuration. Opens no connection yet.
     pub fn from_config(config: Config) -> anyhow::Result<Self> {
         let db = db::pool(&config.database)?;
-        let readiness = DatabaseReadiness::start(db::readiness_pool(&config.database)?);
         let github = GitHub::new(&config.github, &config.server.origin)?;
         let admin_api = AdminApi::new(&config.admin_api)?;
         Ok(Self::new(ServerContextInner {
             config,
             db,
-            readiness,
+            readiness: None,
             github,
             admin_api,
         }))
+    }
+
+    /// Starts database checks for an HTTP server before sharing its context.
+    pub fn start_readiness(&mut self) -> anyhow::Result<()> {
+        let inner = Arc::get_mut(&mut self.0).ok_or_else(|| {
+            anyhow::anyhow!("cannot start readiness after cloning the server context")
+        })?;
+        if inner.readiness.is_some() {
+            anyhow::bail!("database readiness is already running");
+        }
+        let pool = db::readiness_pool(&inner.config.database)?;
+        inner.readiness = Some(DatabaseReadiness::start(pool));
+        Ok(())
     }
 }
 
