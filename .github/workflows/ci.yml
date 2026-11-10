@@ -99,6 +99,51 @@ jobs:
         with:
           rust-version: "stable"
 
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Chromium for the component tests
+        run: bun run playwright install --with-deps chromium
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Check types
+        run: bun run check
+
+      - name: Run tests
+        run: bun run test
+
+      # Developers run the key scripts with Node.js, so they are checked on it too.
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+
+      - name: Run the key scripts on Node.js
+        run: bun run --cwd frontend vitest --run src/lib/keys.test.ts
+
+      - name: Build
+        run: bun run build
+
+      # The backend reads the policy from this tag; keep it in the form the backend expects.
+      - name: Check the page's content security policy
+        run: grep -q '<meta http-equiv="content-security-policy" content="' frontend/build/200.html
+
   markdown:
     name: Markdown
     runs-on: ubuntu-latest

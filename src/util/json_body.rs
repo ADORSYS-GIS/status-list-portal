@@ -43,7 +43,7 @@ mod tests {
 
     async fn send(content_type: &str, body: impl Into<Body>) -> Response {
         let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
-        let router = apply_middleware(Router::new().route("/greet", post(greet)), &origin);
+        let router = apply_middleware(Router::new().route("/greet", post(greet)), &origin, None);
         let request = Request::post("/greet")
             .header(CONTENT_TYPE, content_type)
             .body(body.into())
