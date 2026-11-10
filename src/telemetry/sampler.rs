@@ -14,13 +14,9 @@ const ALWAYS_SAMPLED_ROUTES: [(&str, &str); 2] = [
     ("POST", "/api/v1/issuers"),
 ];
 
-/// Routes whose traces are never kept: health checks, which a probe sends every few seconds.
-/// The request metrics still count them.
-const HEALTH_CHECK_ROUTES: &str = "/health/";
-
-/// Keeps every trace of an operator command, a sign-in or a registration, none of a health
-/// check, and leaves other traces to `baseline`. A span with a parent follows its parent, so
-/// a kept trace keeps all its spans.
+/// Keeps every trace of an operator command, a sign-in or a registration, and leaves other
+/// traces to `baseline`. A span with a parent follows its parent, so a kept trace keeps all
+/// its spans. Health checks never get here: their spans are `DEBUG`, below what is exported.
 pub fn sampler(baseline: Box<dyn ShouldSample>) -> Sampler {
     Sampler::ParentBased(Box::new(PortalSampler { baseline }))
 }
@@ -50,7 +46,6 @@ impl ShouldSample for PortalSampler {
         let route = attribute("http.route");
 
         let sampler: &dyn ShouldSample = match (method.as_deref(), route.as_deref()) {
-            (_, Some(route)) if route.starts_with(HEALTH_CHECK_ROUTES) => &Sampler::AlwaysOff,
             (Some(method), Some(route)) if ALWAYS_SAMPLED_ROUTES.contains(&(method, route)) => {
                 &Sampler::AlwaysOn
             }
@@ -122,15 +117,5 @@ mod tests {
             SamplingDecision::Drop
         );
         assert_eq!(decision("request", &[]), SamplingDecision::Drop);
-    }
-
-    #[test]
-    fn health_checks_are_never_kept() {
-        for route in ["/health/live", "/health/ready"] {
-            assert_eq!(
-                decision_with(Sampler::AlwaysOn, "request", &request("GET", route)),
-                SamplingDecision::Drop
-            );
-        }
     }
 }

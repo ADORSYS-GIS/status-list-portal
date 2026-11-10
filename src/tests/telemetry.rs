@@ -112,6 +112,17 @@ async fn registrations_are_always_traced_into_the_admin_api() {
 }
 
 #[tokio::test]
+async fn health_checks_are_never_traced() {
+    let recorder = SpanRecorder::start(Sampler::AlwaysOn);
+    let (_app, anon) = TestApp::init().empty().await;
+
+    let response = anon.get("/health/live").await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(recorder.spans(), []);
+}
+
+#[tokio::test]
 async fn other_requests_follow_the_configured_sampler() {
     let recorder = SpanRecorder::start(Sampler::AlwaysOff);
     let (_app, anon) = TestApp::init().empty().await;
