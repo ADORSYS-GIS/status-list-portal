@@ -2,6 +2,7 @@
 
 use crate::admin_api::AdminApi;
 use crate::config::Config;
+use crate::controllers::health::DatabaseReadiness;
 use crate::db;
 use crate::github::GitHub;
 use axum::extract::{FromRef, FromRequestParts, State};
@@ -13,6 +14,7 @@ use std::sync::Arc;
 pub struct ServerContextInner {
     pub config: Config,
     pub db: db::Pool,
+    pub readiness: Option<DatabaseReadiness>,
     pub github: GitHub,
     pub admin_api: AdminApi,
 }
@@ -35,9 +37,23 @@ impl ServerContext {
         Ok(Self::new(ServerContextInner {
             config,
             db,
+            readiness: None,
             github,
             admin_api,
         }))
+    }
+
+    /// Starts database checks for an HTTP server before sharing its context.
+    pub fn start_readiness(&mut self) -> anyhow::Result<()> {
+        let inner = Arc::get_mut(&mut self.0).ok_or_else(|| {
+            anyhow::anyhow!("cannot start readiness after cloning the server context")
+        })?;
+        if inner.readiness.is_some() {
+            anyhow::bail!("database readiness is already running");
+        }
+        let pool = db::readiness_pool(&inner.config.database)?;
+        inner.readiness = Some(DatabaseReadiness::start(pool));
+        Ok(())
     }
 }
 

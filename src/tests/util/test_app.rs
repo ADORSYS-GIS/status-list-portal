@@ -191,7 +191,10 @@ impl TestAppBuilder {
                 session_key.clone(),
             )
         };
-        let ctx = ServerContext::from_config(config).expect("failed to build the server context");
+        let mut ctx =
+            ServerContext::from_config(config).expect("failed to build the server context");
+        ctx.start_readiness()
+            .expect("failed to start database readiness for the test server");
         let app = TestApp(Arc::new(TestAppInner {
             router: build_handler(ctx.clone()),
             github,

@@ -12,12 +12,13 @@ use tracing::{info, warn};
 pub async fn run(config: Config) -> anyhow::Result<()> {
     db::run_migrations(config.database.url.expose_secret()).await?;
     let bind_address = config.server.bind_address;
-    let ctx = ServerContext::from_config(config)?;
+    let mut ctx = ServerContext::from_config(config)?;
 
     let terminate = terminate_signal()?;
     let listener = TcpListener::bind(bind_address)
         .await
         .with_context(|| format!("failed to bind {bind_address}"))?;
+    ctx.start_readiness()?;
 
     info!(%bind_address, "listening");
     axum::serve(listener, build_handler(ctx))
