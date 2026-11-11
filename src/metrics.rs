@@ -33,9 +33,13 @@ pub struct Metrics {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignInOutcome {
     Succeeded,
-    /// The developer declined, the sign-in expired or started elsewhere, or the account has
-    /// no verified primary email.
-    Refused,
+    /// The developer did not approve the portal on GitHub.
+    Denied,
+    /// The sign-in expired, was already used, or did not start in this browser. Anyone can
+    /// call the callback, so this also counts calls that never were sign-ins.
+    Expired,
+    /// The GitHub account has no verified primary email.
+    NoVerifiedEmail,
     /// GitHub or the database could not be reached, or GitHub refused the OAuth app.
     Failed,
 }
@@ -163,7 +167,9 @@ impl Metrics {
     pub fn sign_in(&self, outcome: SignInOutcome) {
         let outcome = match outcome {
             SignInOutcome::Succeeded => "succeeded",
-            SignInOutcome::Refused => "refused",
+            SignInOutcome::Denied => "denied",
+            SignInOutcome::Expired => "expired",
+            SignInOutcome::NoVerifiedEmail => "no_verified_email",
             SignInOutcome::Failed => "failed",
         };
         self.sign_ins.add(1, &[KeyValue::new("outcome", outcome)]);
