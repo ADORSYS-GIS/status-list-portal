@@ -1,5 +1,8 @@
 //! Which traces are kept.
 
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
+
 use opentelemetry::trace::{Link, SpanKind, TraceId};
 use opentelemetry::{Context, KeyValue};
 use opentelemetry_sdk::trace::{Sampler, SamplingResult, ShouldSample};
@@ -7,23 +10,38 @@ use opentelemetry_sdk::trace::{Sampler, SamplingResult, ShouldSample};
 /// The name of an operator command's root span.
 pub const OPERATOR_COMMAND_SPAN: &str = "operator.command";
 
-/// Requests whose traces are always kept: sign-ins and registrations. They are rare, and the
-/// first thing to look at when a developer reports a problem.
-const ALWAYS_SAMPLED_ROUTES: [(&str, &str); 2] = [
-    ("GET", "/api/v1/session/github/callback"),
-    ("POST", "/api/v1/issuers"),
-];
+/// Sign-ins and registrations, whose traces are kept whatever the baseline says. They are
+/// rare, and the first thing to look at when a developer reports a problem.
+const SIGN_IN: (&str, &str) = ("GET", "/api/v1/session/github/callback");
+const REGISTRATION: (&str, &str) = ("POST", "/api/v1/issuers");
 
-/// Keeps every trace of an operator command, a sign-in or a registration, and leaves other
-/// traces to `baseline`. A span with a parent follows its parent, so a kept trace keeps all
-/// its spans. Health checks never get here: their spans are `DEBUG`, below what is exported.
+/// How many sign-in traces are kept each second whatever the baseline says. Anyone can call
+/// the callback, so a flood of calls would otherwise be kept in full and crowd out the
+/// other traces; beyond this, the baseline decides.
+const SIGN_INS_KEPT_PER_SECOND: u32 = 10;
+
+/// Keeps every trace of an operator command or a registration, and of a sign-in up to
+/// [`SIGN_INS_KEPT_PER_SECOND`], and leaves other traces to `baseline`. A span with a parent
+/// follows its parent, so a kept trace keeps all its spans. Health checks never get here:
+/// their spans are `DEBUG`, below what is exported.
 pub fn sampler(baseline: Box<dyn ShouldSample>) -> Sampler {
-    Sampler::ParentBased(Box::new(PortalSampler { baseline }))
+    Sampler::ParentBased(Box::new(PortalSampler::new(baseline)))
 }
 
 #[derive(Debug, Clone)]
 struct PortalSampler {
     baseline: Box<dyn ShouldSample>,
+    /// Shared by the sampler's clones, which the SDK may make.
+    sign_ins: Arc<RateLimit>,
+}
+
+impl PortalSampler {
+    fn new(baseline: Box<dyn ShouldSample>) -> Self {
+        Self {
+            baseline,
+            sign_ins: Arc::new(RateLimit::per_second(SIGN_INS_KEPT_PER_SECOND)),
+        }
+    }
 }
 
 impl ShouldSample for PortalSampler {
@@ -45,14 +63,59 @@ impl ShouldSample for PortalSampler {
         let method = attribute("http.request.method");
         let route = attribute("http.route");
 
-        let sampler: &dyn ShouldSample = match (method.as_deref(), route.as_deref()) {
-            (Some(method), Some(route)) if ALWAYS_SAMPLED_ROUTES.contains(&(method, route)) => {
-                &Sampler::AlwaysOn
-            }
-            _ if name == OPERATOR_COMMAND_SPAN => &Sampler::AlwaysOn,
-            _ => self.baseline.as_ref(),
+        let request = method.as_deref().zip(route.as_deref());
+        let always = name == OPERATOR_COMMAND_SPAN
+            || request == Some(REGISTRATION)
+            || (request == Some(SIGN_IN) && self.sign_ins.try_take(Instant::now()));
+        let sampler: &dyn ShouldSample = if always {
+            &Sampler::AlwaysOn
+        } else {
+            self.baseline.as_ref()
         };
         sampler.should_sample(parent, trace_id, name, kind, attributes, links)
+    }
+}
+
+/// Lets through up to a number of takes in each second, counted from the second's first take.
+#[derive(Debug)]
+struct RateLimit {
+    per_second: u32,
+    window: Mutex<Window>,
+}
+
+#[derive(Debug, Default)]
+struct Window {
+    /// When the current second began, if anything was taken yet.
+    start: Option<Instant>,
+    taken: u32,
+}
+
+impl RateLimit {
+    fn per_second(per_second: u32) -> Self {
+        Self {
+            per_second,
+            window: Mutex::default(),
+        }
+    }
+
+    /// Whether a take at `now` is within the limit, counting it if it is.
+    fn try_take(&self, now: Instant) -> bool {
+        // Two plain numbers, consistent even if a holder panicked.
+        let mut window = self.window.lock().unwrap_or_else(PoisonError::into_inner);
+        let second_is_over = window
+            .start
+            .is_none_or(|start| now.saturating_duration_since(start) >= Duration::from_secs(1));
+        if second_is_over {
+            *window = Window {
+                start: Some(now),
+                taken: 0,
+            };
+        }
+        if window.taken >= self.per_second {
+            return false;
+        }
+        window.taken += 1;
+        true
     }
 }
 
@@ -67,9 +130,10 @@ mod tests {
     }
 
     fn decision_with(baseline: Sampler, name: &str, attributes: &[KeyValue]) -> SamplingDecision {
-        let sampler = PortalSampler {
-            baseline: Box::new(baseline),
-        };
+        decide(&PortalSampler::new(Box::new(baseline)), name, attributes)
+    }
+
+    fn decide(sampler: &PortalSampler, name: &str, attributes: &[KeyValue]) -> SamplingDecision {
         let result = sampler.should_sample(
             None,
             TraceId::from(1),
@@ -108,6 +172,43 @@ mod tests {
             decision("request", &registration),
             SamplingDecision::RecordAndSample
         );
+    }
+
+    #[test]
+    fn sign_ins_beyond_the_limit_follow_the_baseline() {
+        let sampler = PortalSampler::new(Box::new(Sampler::AlwaysOff));
+        let sign_in = request("GET", "/api/v1/session/github/callback");
+        for _ in 0..SIGN_INS_KEPT_PER_SECOND {
+            assert_eq!(
+                decide(&sampler, "request", &sign_in),
+                SamplingDecision::RecordAndSample
+            );
+        }
+        assert_eq!(
+            decide(&sampler, "request", &sign_in),
+            SamplingDecision::Drop
+        );
+
+        // Registrations have no such limit.
+        let registration = request("POST", "/api/v1/issuers");
+        assert_eq!(
+            decide(&sampler, "request", &registration),
+            SamplingDecision::RecordAndSample
+        );
+    }
+
+    #[test]
+    fn the_rate_limit_starts_over_each_second() {
+        let limit = RateLimit::per_second(2);
+        let start = Instant::now();
+        let later = |millis| start + Duration::from_millis(millis);
+
+        assert!(limit.try_take(start));
+        assert!(limit.try_take(later(500)));
+        assert!(!limit.try_take(later(999)));
+        assert!(limit.try_take(later(1000)));
+        assert!(limit.try_take(later(1200)));
+        assert!(!limit.try_take(later(1999)));
     }
 
     #[test]
