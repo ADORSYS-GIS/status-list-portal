@@ -59,7 +59,7 @@ Operator commands export no metrics: a process that lasts a second would only ad
 
 ## Logs
 
-Log lines go to stdout, or stderr for operator commands, as `APP_LOG_FORMAT` says, `text` or `json`, and `RUST_LOG` filters them. A JSON line written during a request carries the request's trace and span ids under `openTelemetry`, so a log collector can link it to the trace. Health checks log their response at `DEBUG`, so the default `RUST_LOG=info` leaves them out.
+Log lines go to stdout, or stderr for operator commands, as `APP_LOG_FORMAT` says, `text` or `json`, and `RUST_LOG` filters them. A JSON line holds the event's fields at the top level, and the fields of the spans it was written in under `spans`: when two spans share a field, such as a request and its call to the admin API, the innermost one's value is kept. A line written during a request carries the request's trace and span ids under `openTelemetry`, so a log collector can link it to the trace. Health checks log their response at `DEBUG`, a failing one too, so the default `RUST_LOG=info` leaves them out.
 
 When logs are exported, the lines `RUST_LOG` lets through go to the OTLP endpoint too, with their trace and span ids. The exporters' own HTTP clients and the OpenTelemetry SDK are left out, so exports do not report on themselves.
 

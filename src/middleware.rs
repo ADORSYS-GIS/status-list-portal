@@ -47,7 +47,8 @@ pub fn apply_middleware(
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(trace_request::make_span)
-                .on_response(trace_request::on_response),
+                .on_response(trace_request::on_response)
+                .on_failure(trace_request::on_failure),
         )
         // Measured outside the layers below, so their timeouts and errors count too.
         .layer(from_fn_with_state(metrics, update_metrics::update_metrics))

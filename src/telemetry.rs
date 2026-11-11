@@ -30,6 +30,7 @@ use opentelemetry_sdk::trace::{self, SdkTracerProvider};
 use tracing::{Subscriber, warn};
 use tracing_subscriber::Layer;
 use tracing_subscriber::filter::{FilterExt, LevelFilter, Targets};
+use tracing_subscriber::layer::Filter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -118,7 +119,7 @@ impl Telemetry {
     /// command, and spans and log records to their exporters.
     pub fn init_subscriber(&self, format: LogFormat) -> anyhow::Result<()> {
         let logs = match &self.logger_provider {
-            Some(provider) => Some(log_layer(provider)?),
+            Some(provider) => Some(log_layer(provider, logging::filter()?)),
             None => None,
         };
         tracing_subscriber::registry()
@@ -166,13 +167,15 @@ where
         .with_filter(exported_targets(LevelFilter::INFO))
 }
 
-/// The layer that exports log records: those `RUST_LOG` lets through to stdout.
-fn log_layer<S>(provider: &SdkLoggerProvider) -> anyhow::Result<impl Layer<S>>
+/// The layer that exports log records to `provider`: those `filter` lets through, which
+/// for the server is what `RUST_LOG` lets through to stdout.
+pub fn log_layer<S, F>(provider: &SdkLoggerProvider, filter: F) -> impl Layer<S>
 where
     S: Subscriber + for<'span> LookupSpan<'span>,
+    F: Filter<S> + 'static,
 {
-    let filter = logging::filter()?.and(exported_targets(LevelFilter::TRACE));
-    Ok(OpenTelemetryTracingBridge::new(provider).with_filter(filter))
+    OpenTelemetryTracingBridge::new(provider)
+        .with_filter(filter.and(exported_targets(LevelFilter::TRACE)))
 }
 
 /// Every target at `level` and above, but the [`UNEXPORTED_TARGETS`].
