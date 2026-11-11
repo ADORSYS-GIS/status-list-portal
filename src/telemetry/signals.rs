@@ -1,12 +1,16 @@
 //! Which signals the standard `OTEL_*` variables send to an OTLP endpoint.
 
+use std::time::Duration;
+
 use anyhow::bail;
 use opentelemetry_otlp::{
     OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
-    OTEL_EXPORTER_OTLP_LOGS_PROTOCOL, OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
-    OTEL_EXPORTER_OTLP_METRICS_PROTOCOL, OTEL_EXPORTER_OTLP_PROTOCOL,
-    OTEL_EXPORTER_OTLP_PROTOCOL_HTTP_PROTOBUF, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
-    OTEL_EXPORTER_OTLP_TRACES_PROTOCOL,
+    OTEL_EXPORTER_OTLP_LOGS_PROTOCOL, OTEL_EXPORTER_OTLP_LOGS_TIMEOUT,
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, OTEL_EXPORTER_OTLP_METRICS_PROTOCOL,
+    OTEL_EXPORTER_OTLP_METRICS_TIMEOUT, OTEL_EXPORTER_OTLP_PROTOCOL,
+    OTEL_EXPORTER_OTLP_PROTOCOL_HTTP_PROTOBUF, OTEL_EXPORTER_OTLP_TIMEOUT,
+    OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+    OTEL_EXPORTER_OTLP_TRACES_PROTOCOL, OTEL_EXPORTER_OTLP_TRACES_TIMEOUT,
 };
 
 /// The variables that configure one signal.
@@ -15,24 +19,28 @@ struct Signal {
     exporter: &'static str,
     endpoint: &'static str,
     protocol: &'static str,
+    timeout: &'static str,
 }
 
 const TRACES: Signal = Signal {
     exporter: "OTEL_TRACES_EXPORTER",
     endpoint: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
     protocol: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL,
+    timeout: OTEL_EXPORTER_OTLP_TRACES_TIMEOUT,
 };
 
 const METRICS: Signal = Signal {
     exporter: "OTEL_METRICS_EXPORTER",
     endpoint: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
     protocol: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL,
+    timeout: OTEL_EXPORTER_OTLP_METRICS_TIMEOUT,
 };
 
 const LOGS: Signal = Signal {
     exporter: "OTEL_LOGS_EXPORTER",
     endpoint: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
     protocol: OTEL_EXPORTER_OTLP_LOGS_PROTOCOL,
+    timeout: OTEL_EXPORTER_OTLP_LOGS_TIMEOUT,
 };
 
 /// The signals to export. A signal is exported when an endpoint is set for it, or for all
@@ -88,6 +96,31 @@ impl Signals {
             logs: enabled(&LOGS)?,
         })
     }
+
+    /// How long the last exports may take when the exporters shut down: the longest export
+    /// timeout of the exported signals, read through `var`.
+    pub(super) fn shutdown_timeout(&self, var: impl Fn(&str) -> Option<String>) -> Duration {
+        [
+            (self.traces, &TRACES),
+            (self.metrics, &METRICS),
+            (self.logs, &LOGS),
+        ]
+        .into_iter()
+        .filter(|(exported, _)| *exported)
+        .map(|(_, signal)| export_timeout(signal, &var))
+        .max()
+        .unwrap_or(OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT)
+    }
+}
+
+/// How long one of `signal`'s exports may take, as the OTLP exporters read it: its
+/// `OTEL_EXPORTER_OTLP_*_TIMEOUT`, else `OTEL_EXPORTER_OTLP_TIMEOUT`, in milliseconds, else
+/// 10 seconds. A value that is not a number is skipped, as the exporters skip it.
+fn export_timeout(signal: &Signal, var: impl Fn(&str) -> Option<String>) -> Duration {
+    [signal.timeout, OTEL_EXPORTER_OTLP_TIMEOUT]
+        .into_iter()
+        .find_map(|name| var(name)?.parse().ok())
+        .map_or(OTEL_EXPORTER_OTLP_TIMEOUT_DEFAULT, Duration::from_millis)
 }
 
 #[cfg(test)]
@@ -96,8 +129,16 @@ mod tests {
     use std::collections::HashMap;
 
     fn signals(vars: &[(&str, &str)]) -> anyhow::Result<Signals> {
+        Signals::from_lookup(lookup(vars))
+    }
+
+    fn lookup<'a>(vars: &'a [(&str, &str)]) -> impl Fn(&str) -> Option<String> + 'a {
         let vars: HashMap<_, _> = vars.iter().copied().collect();
-        Signals::from_lookup(|name| vars.get(name).map(|value| value.to_string()))
+        move |name| vars.get(name).map(|value| value.to_string())
+    }
+
+    fn shutdown_timeout(vars: &[(&str, &str)]) -> Duration {
+        signals(vars).unwrap().shutdown_timeout(lookup(vars))
     }
 
     const ALL: Signals = Signals {
@@ -195,5 +236,42 @@ mod tests {
         // A signal that is not exported may name any protocol.
         let vars = [(OTEL_EXPORTER_OTLP_PROTOCOL, "grpc")];
         assert_eq!(signals(&vars).unwrap(), Signals::default());
+    }
+
+    #[test]
+    fn the_shutdown_waits_as_long_as_the_slowest_export() {
+        let endpoint = (OTEL_EXPORTER_OTLP_ENDPOINT, "http://collector:4318");
+        assert_eq!(shutdown_timeout(&[endpoint]), Duration::from_secs(10));
+
+        let vars = [
+            endpoint,
+            (OTEL_EXPORTER_OTLP_TIMEOUT, "2000"),
+            (OTEL_EXPORTER_OTLP_LOGS_TIMEOUT, "7000"),
+        ];
+        assert_eq!(shutdown_timeout(&vars), Duration::from_secs(7));
+    }
+
+    #[test]
+    fn only_exported_signals_set_the_shutdown_timeout() {
+        let vars = [
+            (OTEL_EXPORTER_OTLP_ENDPOINT, "http://collector:4318"),
+            (OTEL_EXPORTER_OTLP_TIMEOUT, "2000"),
+            (OTEL_EXPORTER_OTLP_METRICS_TIMEOUT, "30000"),
+            ("OTEL_METRICS_EXPORTER", "none"),
+        ];
+        assert_eq!(shutdown_timeout(&vars), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn timeouts_that_are_not_numbers_are_skipped() {
+        let vars = [
+            (
+                OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+                "http://tempo:4318/v1/traces",
+            ),
+            (OTEL_EXPORTER_OTLP_TRACES_TIMEOUT, "soon"),
+            (OTEL_EXPORTER_OTLP_TIMEOUT, "3000"),
+        ];
+        assert_eq!(shutdown_timeout(&vars), Duration::from_secs(3));
     }
 }

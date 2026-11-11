@@ -13,7 +13,7 @@ The portal reads the standard [OpenTelemetry variables](https://opentelemetry.io
 | `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER` | none | `none` stops a signal. `otlp` exports it even without an endpoint, to `http://localhost:4318`. Unset, a signal is exported when an endpoint is set for it. |
 | `OTEL_EXPORTER_OTLP_HEADERS` | none | Headers sent with every export, as `key=value` pairs separated by commas, such as an API key for a hosted backend. Keep it as secret as the portal's other secrets. |
 | `OTEL_EXPORTER_OTLP_COMPRESSION` | none | `gzip` compresses exports. |
-| `OTEL_EXPORTER_OTLP_TIMEOUT` | `10000` | Milliseconds an export may take. |
+| `OTEL_EXPORTER_OTLP_TIMEOUT` | `10000` | Milliseconds an export may take. `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT`, `_METRICS_TIMEOUT` and `_LOGS_TIMEOUT` set it for one signal. |
 | `OTEL_SERVICE_NAME` | `status-list-portal` | The service's name in the backend. |
 | `OTEL_RESOURCE_ATTRIBUTES` | none | More attributes for everything the portal sends, such as `k8s.namespace.name=portal`. |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | keep every trace | Which traces to keep, such as `traceidratio` with `0.1` for one in ten. See [Traces](#traces) for the exceptions. |
@@ -22,7 +22,7 @@ The portal reads the standard [OpenTelemetry variables](https://opentelemetry.io
 
 The portal speaks `http/protobuf` only. It refuses to start when `OTEL_EXPORTER_OTLP_PROTOCOL`, or a signal's own protocol variable, names another protocol for an exported signal, and when an `OTEL_*_EXPORTER` variable is neither `otlp` nor `none`. As with the portal's own settings, an empty variable counts as unset.
 
-Use `https` for an endpoint outside the portal's private network: exports carry request paths, user agents and the portal's user ids. On shutdown, the portal waits for its last exports, up to `OTEL_EXPORTER_OTLP_TIMEOUT`, so give it at least that long to stop.
+Use `https` for an endpoint outside the portal's private network: exports carry request paths, user agents and the portal's user ids. On shutdown, the portal waits for its last traces and logs up to the longest export timeout, and for its last metrics up to 5 seconds, a limit of the OpenTelemetry SDK. Give it at least that long to stop.
 
 Everything the portal sends names the service with `service.name`, `service.version` and a `service.instance.id` that is new for each process, and the environment with `deployment.environment.name` (from `APP_ENV`).
 

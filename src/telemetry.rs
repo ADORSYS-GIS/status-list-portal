@@ -10,6 +10,8 @@ mod signals;
 
 pub use sampler::{OPERATOR_COMMAND_SPAN, sampler};
 
+use std::time::Duration;
+
 use anyhow::{Context, anyhow};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::noop::NoopMeterProvider;
@@ -71,26 +73,36 @@ pub struct Telemetry {
     tracer_provider: Option<SdkTracerProvider>,
     meter_provider: Option<SdkMeterProvider>,
     logger_provider: Option<SdkLoggerProvider>,
+    /// How long the last exports may take on shutdown.
+    shutdown_timeout: Duration,
 }
 
 impl Telemetry {
     /// Builds an exporter for each signal the `OTEL_*` variables configure. Fails when they
     /// ask for something the portal does not support, such as gRPC.
     pub fn from_env(env: Env, process: Process) -> anyhow::Result<Self> {
-        let signals = Signals::from_lookup(|name| std::env::var(name).ok())?;
-        let resource = resource(env, std::env::var("OTEL_SERVICE_NAME").ok());
-        let metrics = signals.metrics && process == Process::Server;
+        let var = |name: &str| std::env::var(name).ok();
+        let signals = Signals::from_lookup(var)?;
+        let signals = Signals {
+            metrics: signals.metrics && process == Process::Server,
+            ..signals
+        };
+        let resource = resource(env, var("OTEL_SERVICE_NAME"));
         Ok(Self {
             process,
             tracer_provider: signals
                 .traces
                 .then(|| tracer_provider(&resource))
                 .transpose()?,
-            meter_provider: metrics.then(|| meter_provider(&resource)).transpose()?,
+            meter_provider: signals
+                .metrics
+                .then(|| meter_provider(&resource))
+                .transpose()?,
             logger_provider: signals
                 .logs
                 .then(|| logger_provider(&resource))
                 .transpose()?,
+            shutdown_timeout: signals.shutdown_timeout(var),
         })
     }
 
@@ -117,19 +129,21 @@ impl Telemetry {
             .map_err(|error| anyhow!("failed to install the log subscriber: {error}"))
     }
 
-    /// Exports what the exporters still hold, then stops them. Each may wait as long as
-    /// `OTEL_EXPORTER_OTLP_TIMEOUT` allows, so they stop side by side: one after the other,
-    /// they could outlast the time a container gets to stop.
+    /// Exports what the exporters still hold, then stops them. Each waits up to the longest
+    /// export timeout of the exported signals, and they stop side by side: one after the
+    /// other, they could outlast the time a container gets to stop.
     pub fn shutdown(self) {
+        let timeout = self.shutdown_timeout;
         std::thread::scope(|scope| {
             if let Some(provider) = &self.tracer_provider {
-                scope.spawn(|| report_shutdown("trace", provider.shutdown()));
+                scope.spawn(|| report_shutdown("trace", provider.shutdown_with_timeout(timeout)));
             }
             if let Some(provider) = &self.meter_provider {
-                scope.spawn(|| report_shutdown("metric", provider.shutdown()));
+                // The SDK's metric reader waits 5 seconds at most, whatever the timeout.
+                scope.spawn(|| report_shutdown("metric", provider.shutdown_with_timeout(timeout)));
             }
             if let Some(provider) = &self.logger_provider {
-                scope.spawn(|| report_shutdown("log", provider.shutdown()));
+                scope.spawn(|| report_shutdown("log", provider.shutdown_with_timeout(timeout)));
             }
         });
     }
