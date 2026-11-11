@@ -71,7 +71,9 @@ impl Failure {
 
     fn outcome(self) -> SignInOutcome {
         match self {
-            Self::Denied | Self::Expired | Self::NoVerifiedEmail => SignInOutcome::Refused,
+            Self::Denied => SignInOutcome::Denied,
+            Self::Expired => SignInOutcome::Expired,
+            Self::NoVerifiedEmail => SignInOutcome::NoVerifiedEmail,
             Self::Unavailable => SignInOutcome::Failed,
         }
     }

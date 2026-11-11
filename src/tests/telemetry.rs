@@ -202,7 +202,7 @@ async fn sign_ins_are_counted_by_outcome() {
     anon.get(CALLBACK_WITH_SECRETS).await;
 
     let metrics = app.metrics();
-    assert_eq!(metrics.sum("portal.sign_ins", &[("outcome", "refused")]), 1);
+    assert_eq!(metrics.sum("portal.sign_ins", &[("outcome", "expired")]), 1);
     assert_eq!(metrics.sum("portal.sign_ins", &[]), 1);
 }
 
