@@ -36,9 +36,9 @@ Each request is a trace of its own, named after its method and route, such as `P
 
 Each operator command, such as `portal approve-registration`, is a trace of its own, whose root span is `operator.command`.
 
-Some traces do not depend on `OTEL_TRACES_SAMPLER`. Sign-ins (`GET /api/v1/session/github/callback`), registrations (`POST /api/v1/issuers`) and operator commands are always kept: they are rare, and the first thing to look at when a developer reports a problem. Health checks (`/health/*`) are never traced: a probe sends one every few seconds, so their spans are `DEBUG`, below what is exported.
+Some traces do not depend on `OTEL_TRACES_SAMPLER`. Registrations (`POST /api/v1/issuers`) and operator commands are always kept, and sign-ins (`GET /api/v1/session/github/callback`) up to 10 a second: they are rare, and the first thing to look at when a developer reports a problem. Anyone can call the sign-in callback, so beyond that limit the sampler decides, and a flood of calls does not crowd out other traces. Health checks (`/health/*`) are never traced: a probe sends one every few seconds, so their spans are `DEBUG`, below what is exported.
 
-Anyone can call the sign-in callback, so a flood of such requests is kept in full, whatever the sampler says. The exporter's queue is bounded: when it is full, spans are dropped rather than slow the portal down.
+The exporter's queue is bounded: when it is full, spans are dropped rather than slow the portal down.
 
 ## Metrics
 
