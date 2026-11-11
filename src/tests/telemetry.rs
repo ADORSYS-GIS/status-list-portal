@@ -1,4 +1,5 @@
-//! What the portal records about the requests it answers: spans and metrics.
+//! What the portal records about the requests it answers: spans, log records, log lines and
+//! metrics.
 
 use axum::body::Body;
 use http::header::USER_AGENT;
@@ -11,7 +12,7 @@ use wiremock::{Mock, ResponseTemplate};
 use crate::util::admin_api::{
     Counts, issuer_json, issuer_response, new_issuer_body, sandbox_counts,
 };
-use crate::util::telemetry::{SpanRecorder, attribute, span};
+use crate::util::telemetry::{TelemetryRecorder, attribute, span};
 use crate::util::{MockCookieUser, RequestHelper, TestApp};
 
 const CALLBACK_WITH_SECRETS: &str =
@@ -33,7 +34,7 @@ async fn admin_api_accepts_a_registration(app: &TestApp, user: &MockCookieUser) 
 
 #[tokio::test]
 async fn requests_are_traced_by_route_without_their_query() {
-    let recorder = SpanRecorder::start(Sampler::AlwaysOn);
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOn);
     let (_app, anon) = TestApp::init().empty().await;
 
     let response = anon.get(CALLBACK_WITH_SECRETS).await;
@@ -55,7 +56,7 @@ async fn requests_are_traced_by_route_without_their_query() {
 
 #[tokio::test]
 async fn values_clients_choose_are_cut_short() {
-    let recorder = SpanRecorder::start(Sampler::AlwaysOn);
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOn);
     let (_app, anon) = TestApp::init().empty().await;
     let long = "a".repeat(1000);
     let request = anon
@@ -79,7 +80,7 @@ async fn values_clients_choose_are_cut_short() {
 
 #[tokio::test]
 async fn registrations_are_always_traced_into_the_admin_api() {
-    let recorder = SpanRecorder::start(Sampler::AlwaysOff);
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOff);
     let (app, _anon) = TestApp::init().empty().await;
     let user = app.db_new_registrant("octocat").await;
     admin_api_accepts_a_registration(&app, &user).await;
@@ -113,7 +114,7 @@ async fn registrations_are_always_traced_into_the_admin_api() {
 
 #[tokio::test]
 async fn health_checks_are_never_traced() {
-    let recorder = SpanRecorder::start(Sampler::AlwaysOn);
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOn);
     let (_app, anon) = TestApp::init().empty().await;
 
     let response = anon.get("/health/live").await;
@@ -123,8 +124,60 @@ async fn health_checks_are_never_traced() {
 }
 
 #[tokio::test]
+async fn health_checks_are_not_logged_at_info() {
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOn);
+    let (_app, anon) = TestApp::init().empty().await;
+
+    let response = anon.get("/health/live").await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_no_request_logged(&recorder);
+}
+
+#[tokio::test]
+async fn failing_health_checks_are_not_logged_at_info() {
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOn);
+    let (_app, anon) = TestApp::init().with_unreachable_database().empty().await;
+
+    let response = anon.get("/health/ready").await;
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_no_request_logged(&recorder);
+}
+
+/// Asserts that no response or failure was logged, as a line or as an exported record.
+#[track_caller]
+fn assert_no_request_logged(recorder: &TelemetryRecorder) {
+    let lines = recorder.lines();
+    assert!(!lines.contains("tower_http::trace"), "{lines}");
+    let logs = recorder.logs();
+    assert!(
+        !logs.iter().any(|log| log
+            .target()
+            .is_some_and(|target| target.starts_with("tower_http::trace"))),
+        "{logs:?}"
+    );
+}
+
+#[tokio::test]
+async fn other_responses_are_logged_at_info() {
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOn);
+    let (_app, anon) = TestApp::init().empty().await;
+
+    anon.get("/api/v1/terms").await;
+
+    let lines = recorder.lines();
+    let response = lines
+        .lines()
+        .find(|line| line.contains("tower_http::trace::on_response"))
+        .unwrap_or_else(|| panic!("the response was not logged: {lines}"));
+    assert!(response.contains("INFO"), "{response}");
+    assert!(response.contains("GET /api/v1/terms"), "{response}");
+}
+
+#[tokio::test]
 async fn other_requests_follow_the_configured_sampler() {
-    let recorder = SpanRecorder::start(Sampler::AlwaysOff);
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOff);
     let (_app, anon) = TestApp::init().empty().await;
 
     let response = anon.get("/api/v1/terms").await;
@@ -225,7 +278,7 @@ async fn the_database_pool_is_reported() {
 
 #[tokio::test]
 async fn admin_api_failures_are_recorded_as_errors() {
-    let recorder = SpanRecorder::start(Sampler::AlwaysOn);
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOn);
     let (app, _anon) = TestApp::init().empty().await;
     let user = app.db_new_registrant("octocat").await;
     Mock::given(method("GET"))
@@ -253,4 +306,11 @@ async fn admin_api_failures_are_recorded_as_errors() {
     let call = span(&spans, "GET /admin/v1/issuers");
     assert!(matches!(call.status, Status::Error { .. }));
     assert_eq!(attribute(call, "error.type").as_deref(), Some("503"));
+
+    let lines = recorder.lines();
+    let failure = lines
+        .lines()
+        .find(|line| line.contains("tower_http::trace::on_failure"))
+        .unwrap_or_else(|| panic!("the failure was not logged: {lines}"));
+    assert!(failure.contains("ERROR"), "{failure}");
 }

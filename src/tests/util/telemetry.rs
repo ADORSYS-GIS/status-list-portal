@@ -1,17 +1,22 @@
-//! What the app records: its metrics, and the spans of a test.
+//! What the app records: its metrics, and the spans, log records and log lines of a test.
+
+use std::io::Write;
+use std::sync::{Arc, Mutex, Once, PoisonError};
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Meter, MeterProvider};
+use opentelemetry_sdk::logs::{InMemoryLogExporter, SdkLogRecord, SdkLoggerProvider};
 use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData, ResourceMetrics};
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::trace::{InMemorySpanExporter, Sampler, SdkTracerProvider, SpanData};
 use status_list_portal::telemetry;
-use std::sync::Once;
-
+use status_list_portal::util::logging::{self, LogFormat};
 use tracing::level_filters::LevelFilter;
 use tracing::span::{Attributes, Id, Record};
 use tracing::subscriber::{DefaultGuard, Interest};
 use tracing::{Event, Metadata, Subscriber};
+use tracing_subscriber::Layer;
+use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 
 /// Keeps the metrics an app records, for the test to read.
@@ -111,39 +116,99 @@ fn carries<'a>(attributes: impl Iterator<Item = &'a KeyValue>, wanted: &[(&str, 
     })
 }
 
-/// Exports the spans this thread records while it lives, as the server would, kept or
-/// dropped by the portal's sampler with `baseline`.
-pub struct SpanRecorder {
-    provider: SdkTracerProvider,
-    exporter: InMemorySpanExporter,
+/// Records what this thread exports and logs while it lives, as the server would: spans,
+/// kept or dropped by the portal's sampler with `baseline`, log records, and log lines at
+/// `INFO` and above, the default `RUST_LOG`.
+pub struct TelemetryRecorder {
+    tracer_provider: SdkTracerProvider,
+    spans: InMemorySpanExporter,
+    logs: InMemoryLogExporter,
+    lines: Lines,
     _guard: DefaultGuard,
 }
 
-impl SpanRecorder {
+impl TelemetryRecorder {
+    /// Records log lines as text.
     pub fn start(baseline: Sampler) -> Self {
+        Self::with_format(baseline, LogFormat::Text)
+    }
+
+    fn with_format(baseline: Sampler, format: LogFormat) -> Self {
         keep_callsites_undecided();
-        let exporter = InMemorySpanExporter::default();
-        let provider = SdkTracerProvider::builder()
+        let spans = InMemorySpanExporter::default();
+        let tracer_provider = SdkTracerProvider::builder()
             .with_sampler(telemetry::sampler(Box::new(baseline)))
-            .with_simple_exporter(exporter.clone())
+            .with_simple_exporter(spans.clone())
             .build();
-        let subscriber = tracing_subscriber::registry().with(telemetry::trace_layer(&provider));
+        let logs = InMemoryLogExporter::default();
+        let logger_provider = SdkLoggerProvider::builder()
+            .with_simple_exporter(logs.clone())
+            .build();
+        let lines = Lines::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(logging::lines_layer(format, lines.clone()).with_filter(LevelFilter::INFO))
+            .with(telemetry::trace_layer(&tracer_provider))
+            .with(telemetry::log_layer(&logger_provider, LevelFilter::INFO));
         let guard = tracing::subscriber::set_default(subscriber);
         Self {
-            provider,
-            exporter,
+            tracer_provider,
+            spans,
+            logs,
+            lines,
             _guard: guard,
         }
     }
 
     /// The spans that ended so far.
     pub fn spans(&self) -> Vec<SpanData> {
-        self.provider
+        self.tracer_provider
             .force_flush()
             .expect("failed to export the spans");
-        self.exporter
+        self.spans
             .get_finished_spans()
             .expect("failed to read the spans")
+    }
+
+    /// The log records exported so far.
+    pub fn logs(&self) -> Vec<SdkLogRecord> {
+        self.logs
+            .get_emitted_logs()
+            .expect("failed to read the log records")
+            .into_iter()
+            .map(|log| log.record)
+            .collect()
+    }
+
+    /// The log lines written so far.
+    pub fn lines(&self) -> String {
+        let lines = self.lines.0.lock().unwrap_or_else(PoisonError::into_inner);
+        String::from_utf8(lines.clone()).expect("log lines are UTF-8")
+    }
+}
+
+/// Keeps the log lines written to it.
+#[derive(Clone, Default)]
+struct Lines(Arc<Mutex<Vec<u8>>>);
+
+impl Write for Lines {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> MakeWriter<'a> for Lines {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self {
+        self.clone()
     }
 }
 
@@ -165,9 +230,9 @@ pub fn attribute(span: &SpanData, key: &str) -> Option<String> {
 }
 
 /// Installs, once, a global subscriber that records nothing and leaves every callsite
-/// undecided. Without it, a callsite first reached on a thread with no [`SpanRecorder`] can
-/// keep "never" as its interest while another thread starts one, and that recorder then
-/// misses the callsite's spans.
+/// undecided. Without it, a callsite first reached on a thread with no
+/// [`TelemetryRecorder`] can keep "never" as its interest while another thread starts one,
+/// and that recorder then misses the callsite's events and spans.
 pub fn keep_callsites_undecided() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| {

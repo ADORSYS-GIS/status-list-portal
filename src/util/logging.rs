@@ -5,6 +5,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use tracing::Subscriber;
 use tracing::level_filters::LevelFilter;
+use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{EnvFilter, Layer};
@@ -48,21 +49,29 @@ pub(crate) fn console_layer<S>(
 where
     S: Subscriber + for<'span> LookupSpan<'span>,
 {
-    let layer = match format {
-        LogFormat::Text => tracing_subscriber::fmt::layer()
-            .with_writer(output.writer())
-            .boxed(),
+    Ok(lines_layer(format, output.writer())
+        .with_filter(filter()?)
+        .boxed())
+}
+
+/// The layer that writes every event to `writer` as a line, as `format` says.
+pub fn lines_layer<S, W>(format: LogFormat, writer: W) -> Box<dyn Layer<S> + Send + Sync + 'static>
+where
+    S: Subscriber + for<'span> LookupSpan<'span>,
+    W: for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
+{
+    match format {
+        LogFormat::Text => tracing_subscriber::fmt::layer().with_writer(writer).boxed(),
         // The span list holds the fields of every span the event is in, the current one's
         // included, so the current span is not written again on its own.
         LogFormat::Json => json_subscriber::fmt::layer()
-            .with_writer(output.writer())
+            .with_writer(writer)
             .flatten_event(true)
             .with_current_span(false)
             .with_flat_span_list(true)
             .with_opentelemetry_ids(true)
             .boxed(),
-    };
-    Ok(layer.with_filter(filter()?).boxed())
+    }
 }
 
 /// `RUST_LOG`, in tracing `EnvFilter` syntax (default `info`).
