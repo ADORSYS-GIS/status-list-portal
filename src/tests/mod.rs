@@ -11,6 +11,7 @@ mod me;
 mod method_not_allowed;
 mod migrations;
 mod not_found;
+mod otlp;
 mod pool;
 mod registrations;
 mod session;

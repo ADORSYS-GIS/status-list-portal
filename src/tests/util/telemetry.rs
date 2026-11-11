@@ -133,6 +133,11 @@ impl TelemetryRecorder {
         Self::with_format(baseline, LogFormat::Text)
     }
 
+    /// Records log lines as JSON.
+    pub fn json(baseline: Sampler) -> Self {
+        Self::with_format(baseline, LogFormat::Json)
+    }
+
     fn with_format(baseline: Sampler, format: LogFormat) -> Self {
         keep_callsites_undecided();
         let spans = InMemorySpanExporter::default();

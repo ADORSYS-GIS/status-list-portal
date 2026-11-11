@@ -4,8 +4,9 @@
 use axum::body::Body;
 use http::header::USER_AGENT;
 use http::{Method, StatusCode};
-use opentelemetry::trace::{SpanKind, Status};
+use opentelemetry::trace::{SpanId, SpanKind, Status};
 use opentelemetry_sdk::trace::Sampler;
+use serde_json::Value;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
 
@@ -124,6 +125,29 @@ async fn health_checks_are_never_traced() {
 }
 
 #[tokio::test]
+async fn requests_ignore_the_trace_context_they_carry() {
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOn);
+    let (_app, anon) = TestApp::init().empty().await;
+    let sent_trace = "0af7651916cd43dd8448eb211c80319c";
+    let request = anon
+        .request_builder(Method::GET, "/api/v1/terms")
+        .header(
+            "traceparent",
+            format!("00-{sent_trace}-b7ad6b7169203331-01"),
+        )
+        .body(Body::empty())
+        .unwrap();
+
+    let response = anon.run(request).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let spans = recorder.spans();
+    let request = span(&spans, "GET /api/v1/terms");
+    assert_ne!(request.span_context.trace_id().to_string(), sent_trace);
+    assert_eq!(request.parent_span_id, SpanId::INVALID);
+}
+
+#[tokio::test]
 async fn health_checks_are_not_logged_at_info() {
     let recorder = TelemetryRecorder::start(Sampler::AlwaysOn);
     let (_app, anon) = TestApp::init().empty().await;
@@ -173,6 +197,64 @@ async fn other_responses_are_logged_at_info() {
         .unwrap_or_else(|| panic!("the response was not logged: {lines}"));
     assert!(response.contains("INFO"), "{response}");
     assert!(response.contains("GET /api/v1/terms"), "{response}");
+}
+
+#[tokio::test]
+async fn log_records_carry_the_request_trace() {
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOn);
+    let (_app, anon) = TestApp::init().empty().await;
+
+    anon.get("/api/v1/terms").await;
+
+    let spans = recorder.spans();
+    let request = span(&spans, "GET /api/v1/terms");
+    let logs = recorder.logs();
+    let response = logs
+        .iter()
+        .find(|log| {
+            log.target()
+                .is_some_and(|target| target == "tower_http::trace::on_response")
+        })
+        .unwrap_or_else(|| panic!("the response was not exported: {logs:?}"));
+    let context = response
+        .trace_context()
+        .expect("the record has no trace context");
+    assert_eq!(context.trace_id, request.span_context.trace_id());
+    assert_eq!(context.span_id, request.span_context.span_id());
+}
+
+#[tokio::test]
+async fn json_lines_carry_the_request_trace() {
+    let recorder = TelemetryRecorder::json(Sampler::AlwaysOn);
+    let (_app, anon) = TestApp::init().empty().await;
+
+    anon.get("/api/v1/terms").await;
+
+    let spans = recorder.spans();
+    let request = span(&spans, "GET /api/v1/terms");
+    let line = json_line(&recorder, "finished processing request");
+    assert_eq!(line["level"], "INFO");
+    // The fields of the spans the line is in share one object, the innermost span's winning.
+    assert_eq!(line["spans"]["http.route"], "/api/v1/terms");
+    assert_eq!(
+        line["openTelemetry"]["traceId"],
+        request.span_context.trace_id().to_string()
+    );
+    assert_eq!(
+        line["openTelemetry"]["spanId"],
+        request.span_context.span_id().to_string()
+    );
+}
+
+/// The JSON line whose message is `message`.
+#[track_caller]
+fn json_line(recorder: &TelemetryRecorder, message: &str) -> Value {
+    let lines = recorder.lines();
+    lines
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("a line is not JSON"))
+        .find(|line| line["message"] == message)
+        .unwrap_or_else(|| panic!("no line says {message:?}: {lines}"))
 }
 
 #[tokio::test]
