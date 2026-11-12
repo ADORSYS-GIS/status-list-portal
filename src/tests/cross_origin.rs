@@ -28,7 +28,7 @@ async fn changes_requested_by_other_sites_are_rejected() {
     assert_snapshot!(response.status(), @"403 Forbidden");
     assert_eq!(
         response.json(),
-        json!({ "errors": [{ "detail": "Requests from other sites are not allowed" }] })
+        json!({ "errors": [{ "code": "cross_origin_forbidden", "detail": "Requests from other sites are not allowed" }] })
     );
     assert_snapshot!(user.get("/api/v1/me").await.status(), @"200 OK");
 }

@@ -21,7 +21,12 @@ pub(super) async fn reject_cross_origin(
     if request.method().is_safe() || is_same_origin(&request, &origin) {
         next.run(request).await
     } else {
-        errors::forbidden("Requests from other sites are not allowed").response()
+        errors::custom(
+            http::StatusCode::FORBIDDEN,
+            "cross_origin_forbidden",
+            "Requests from other sites are not allowed",
+        )
+        .response()
     }
 }
 

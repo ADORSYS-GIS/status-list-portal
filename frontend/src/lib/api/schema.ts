@@ -257,6 +257,8 @@ export interface components {
             version: string;
         };
         ApiErrorDetail: {
+            /** @description Stable machine-readable reason. Clients may branch on this value. */
+            code: string;
             /** @description Human-readable description, safe to show to the user. */
             detail: string;
         };

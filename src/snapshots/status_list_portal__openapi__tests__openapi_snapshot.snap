@@ -750,9 +750,14 @@ expression: openapi
       "ApiErrorDetail": {
         "type": "object",
         "required": [
+          "code",
           "detail"
         ],
         "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable machine-readable reason. Clients may branch on this value."
+          },
           "detail": {
             "type": "string",
             "description": "Human-readable description, safe to show to the user."

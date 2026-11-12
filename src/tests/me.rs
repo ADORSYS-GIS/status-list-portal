@@ -17,7 +17,7 @@ async fn anonymous_users_are_asked_to_sign_in() {
     assert_snapshot!(response.status(), @"401 Unauthorized");
     assert_eq!(
         response.json(),
-        json!({ "errors": [{ "detail": "This action requires signing in" }] })
+        json!({ "errors": [{ "code": "unauthorized", "detail": "This action requires signing in" }] })
     );
 }
 

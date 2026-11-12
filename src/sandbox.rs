@@ -41,7 +41,11 @@ pub async fn ensure_terms_accepted(
     terms: &config::Terms,
 ) -> AppResult<()> {
     if !TermsAcceptance::exists(conn, user.id, &terms.version).await? {
-        return Err(errors::forbidden("Accept the current terms of use first."));
+        return Err(errors::custom(
+            StatusCode::FORBIDDEN,
+            "terms_not_accepted",
+            "Accept the current terms of use first.",
+        ));
     }
     Ok(())
 }
@@ -101,7 +105,9 @@ pub async fn approve(
         let registration = lock_pending(conn, id, None).await?;
         let user = User::find(conn, registration.user_id).await?;
         if !TermsAcceptance::exists(conn, user.id, &ctx.config.terms.version).await? {
-            return Err(errors::forbidden(
+            return Err(errors::custom(
+                StatusCode::FORBIDDEN,
+                "terms_not_accepted",
                 "The developer has not accepted the current terms of use.",
             ));
         }
@@ -151,9 +157,11 @@ pub async fn reject(conn: &mut AsyncPgConnection, id: i64, reason: &str) -> AppR
         || reason.chars().count() > REASON_MAX_CHARS
         || reason.contains(char::is_control)
     {
-        return Err(errors::unprocessable(format!(
-            "The reason must be 1 to {REASON_MAX_CHARS} characters, on one line."
-        )));
+        return Err(errors::custom(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_rejection_reason",
+            format!("The reason must be 1 to {REASON_MAX_CHARS} characters, on one line."),
+        ));
     }
     in_transaction(conn, async |conn| {
         lock_pending(conn, id, None).await?;
@@ -183,11 +191,18 @@ async fn lock_pending(
 ) -> AppResult<Registration> {
     let found =
         |registration: &Registration| user_id.is_none_or(|user_id| registration.user_id == user_id);
-    let not_found = || errors::custom(StatusCode::NOT_FOUND, "No registration has this id.");
+    let not_found = || {
+        errors::custom(
+            StatusCode::NOT_FOUND,
+            "registration_not_found",
+            "No registration has this id.",
+        )
+    };
     let Some(registration) = Registration::try_lock(conn, id, user_id).await? else {
         return match Registration::find(conn, id).await.optional()? {
             Some(held) if found(&held) => Err(errors::custom(
                 StatusCode::CONFLICT,
+                "registration_being_decided",
                 "This registration is being decided. Please try again in a moment.",
             )),
             _ => Err(not_found()),
@@ -196,6 +211,7 @@ async fn lock_pending(
     if registration.state() != RegistrationState::Pending {
         return Err(errors::custom(
             StatusCode::CONFLICT,
+            "registration_already_decided",
             "This registration was decided already.",
         ));
     }
@@ -226,6 +242,7 @@ pub(crate) async fn with_limits_lock<T>(
         if !db::try_lock_issuer_limits(conn).await? {
             return Err(errors::custom(
                 StatusCode::SERVICE_UNAVAILABLE,
+                "issuer_registration_in_progress",
                 "Another issuer is being registered. Please try again in a moment.",
             ));
         }
@@ -354,10 +371,14 @@ fn sandbox_issuers(owner: Option<&Owner>, state: Option<IssuerState>) -> IssuerQ
 fn ensure_registrations_left(sandbox: &config::Sandbox, registered: usize) -> AppResult<()> {
     let most = sandbox.max_registrations_per_account;
     if registered >= most {
-        return Err(errors::forbidden(format!(
-            "This account cannot register more sandbox issuers: it has registered {most}, \
+        return Err(errors::custom(
+            StatusCode::FORBIDDEN,
+            "registration_limit_reached",
+            format!(
+                "This account cannot register more sandbox issuers: it has registered {most}, \
              deleted, rejected and waiting ones included."
-        )));
+            ),
+        ));
     }
     Ok(())
 }
@@ -371,6 +392,7 @@ async fn ensure_room(ctx: &ServerContext, active: usize) -> AppResult<()> {
     if active >= per_account {
         return Err(errors::custom(
             StatusCode::CONFLICT,
+            "active_issuer_limit_reached",
             format!(
                 "An account can have {per_account} active sandbox issuers, registrations \
                  waiting for approval included. Delete one, or withdraw a registration, first."
@@ -382,6 +404,7 @@ async fn ensure_room(ctx: &ServerContext, active: usize) -> AppResult<()> {
     if ctx.admin_api.count_issuers(&in_sandbox, in_total).await? >= in_total {
         return Err(errors::custom(
             StatusCode::SERVICE_UNAVAILABLE,
+            "sandbox_issuer_limit_reached",
             "The sandbox has no room for another issuer right now. Please try again later.",
         ));
     }

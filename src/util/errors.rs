@@ -78,15 +78,19 @@ impl From<AdminApiError> for BoxedAppError {
             Some(ErrorCode::IssuerNotFound) => not_found(),
             Some(ErrorCode::KeyMaterialInUse) => custom(
                 StatusCode::CONFLICT,
+                "key_material_in_use",
                 "This public key is already registered, maybe for an issuer you deleted, since \
                  a deleted issuer keeps its key. Make a new key pair, or, if you just \
                  registered this one, check your issuers.",
             ),
-            Some(ErrorCode::InvalidPublicJwk | ErrorCode::UnsupportedAlgorithm) => {
-                unprocessable("The Status List Server does not accept this public key.")
-            }
+            Some(ErrorCode::InvalidPublicJwk | ErrorCode::UnsupportedAlgorithm) => custom(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_public_key",
+                "The Status List Server does not accept this public key.",
+            ),
             Some(ErrorCode::PreconditionFailed) => custom(
                 StatusCode::CONFLICT,
+                "issuer_changed",
                 "The issuer changed while this request ran. Please try again.",
             ),
             Some(ErrorCode::ServiceUnavailable) => {
@@ -112,36 +116,52 @@ pub fn describe(error: &(dyn Error + 'static)) -> String {
 }
 
 pub fn bad_request(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
-    custom(StatusCode::BAD_REQUEST, detail)
+    custom(StatusCode::BAD_REQUEST, "bad_request", detail)
 }
 
 pub fn unauthorized() -> BoxedAppError {
-    custom(StatusCode::UNAUTHORIZED, "This action requires signing in")
+    custom(
+        StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        "This action requires signing in",
+    )
 }
 
 pub fn bad_gateway(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
-    custom(StatusCode::BAD_GATEWAY, detail)
+    custom(StatusCode::BAD_GATEWAY, "bad_gateway", detail)
 }
 
 pub fn forbidden(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
-    custom(StatusCode::FORBIDDEN, detail)
+    custom(StatusCode::FORBIDDEN, "forbidden", detail)
 }
 
 /// The request is well-formed but its content cannot be accepted.
 pub fn unprocessable(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
-    custom(StatusCode::UNPROCESSABLE_ENTITY, detail)
+    custom(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "unprocessable_entity",
+        detail,
+    )
 }
 
 pub fn not_found() -> BoxedAppError {
-    custom(StatusCode::NOT_FOUND, "Not Found")
+    custom(StatusCode::NOT_FOUND, "not_found", "Not Found")
 }
 
 pub fn method_not_allowed() -> BoxedAppError {
-    custom(StatusCode::METHOD_NOT_ALLOWED, "Method Not Allowed")
+    custom(
+        StatusCode::METHOD_NOT_ALLOWED,
+        "method_not_allowed",
+        "Method Not Allowed",
+    )
 }
 
 pub fn service_unavailable() -> BoxedAppError {
-    custom(StatusCode::SERVICE_UNAVAILABLE, "Service Unavailable")
+    custom(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "service_unavailable",
+        "Service Unavailable",
+    )
 }
 
 /// An internal error described by a message that is logged and never shown to the user.
@@ -183,7 +203,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             body_json(response).await,
-            json!({ "errors": [{ "detail": "display name is too long" }] })
+            json!({ "errors": [{ "code": "bad_request", "detail": "display name is too long" }] })
         );
     }
 
@@ -208,7 +228,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(
             body_json(response).await,
-            json!({ "errors": [{ "detail": "Internal Server Error" }] })
+            json!({ "errors": [{ "code": "internal_error", "detail": "Internal Server Error" }] })
         );
     }
 
@@ -235,7 +255,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(
             body_json(response).await,
-            json!({ "errors": [{ "detail": "Service Unavailable" }] })
+            json!({ "errors": [{ "code": "service_unavailable", "detail": "Service Unavailable" }] })
         );
     }
 
@@ -248,30 +268,54 @@ mod tests {
         }
     }
 
-    #[test]
-    fn admin_api_codes_map_to_statuses() {
-        for (code, status) in [
-            (ErrorCode::IssuerNotFound, StatusCode::NOT_FOUND),
-            (ErrorCode::KeyMaterialInUse, StatusCode::CONFLICT),
+    #[tokio::test]
+    async fn admin_api_codes_map_to_portal_errors() {
+        for (code, status, portal_code) in [
+            (
+                ErrorCode::IssuerNotFound,
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                ErrorCode::KeyMaterialInUse,
+                StatusCode::CONFLICT,
+                "key_material_in_use",
+            ),
             (
                 ErrorCode::InvalidPublicJwk,
                 StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_public_key",
             ),
             (
                 ErrorCode::UnsupportedAlgorithm,
                 StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_public_key",
             ),
-            (ErrorCode::PreconditionFailed, StatusCode::CONFLICT),
+            (
+                ErrorCode::PreconditionFailed,
+                StatusCode::CONFLICT,
+                "issuer_changed",
+            ),
             (
                 ErrorCode::ServiceUnavailable,
                 StatusCode::SERVICE_UNAVAILABLE,
+                "service_unavailable",
             ),
-            (ErrorCode::InvalidToken, StatusCode::BAD_GATEWAY),
-            (ErrorCode::Unknown, StatusCode::BAD_GATEWAY),
+            (
+                ErrorCode::InvalidToken,
+                StatusCode::BAD_GATEWAY,
+                "bad_gateway",
+            ),
+            (ErrorCode::Unknown, StatusCode::BAD_GATEWAY, "bad_gateway"),
         ] {
             let response = BoxedAppError::from(refused(code)).response();
 
             assert_eq!(response.status(), status, "{code}");
+            assert_eq!(
+                body_json(response).await["errors"][0]["code"],
+                portal_code,
+                "{code}"
+            );
         }
     }
 
@@ -292,7 +336,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(
             body_json(response).await,
-            json!({ "errors": [{ "detail": "Internal Server Error" }] })
+            json!({ "errors": [{ "code": "internal_error", "detail": "Internal Server Error" }] })
         );
     }
 }

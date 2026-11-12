@@ -18,32 +18,44 @@ pub struct ApiErrorResponse {
 
 #[derive(Debug, Serialize, ToSchema)]
 struct ApiErrorDetail {
+    /// Stable machine-readable reason. Clients may branch on this value.
+    code: &'static str,
     /// Human-readable description, safe to show to the user.
     detail: String,
 }
 
 impl ApiErrorResponse {
-    fn new(detail: impl Into<String>) -> Self {
+    fn new(code: &'static str, detail: impl Into<String>) -> Self {
         Self {
             errors: vec![ApiErrorDetail {
+                code,
                 detail: detail.into(),
             }],
         }
     }
 }
 
-fn json_error(status: StatusCode, detail: &str) -> Response {
-    (status, Json(ApiErrorResponse::new(detail))).into_response()
+fn json_error(status: StatusCode, code: &'static str, detail: &str) -> Response {
+    (status, Json(ApiErrorResponse::new(code, detail))).into_response()
 }
 
 pub(super) fn internal_server_error() -> Response {
-    json_error(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+    json_error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_error",
+        "Internal Server Error",
+    )
 }
 
-/// An error with this status and detail, both shown to the user.
-pub fn custom(status: StatusCode, detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
+/// An error with a stable code and a human-readable detail.
+pub fn custom(
+    status: StatusCode,
+    code: &'static str,
+    detail: impl Into<Cow<'static, str>>,
+) -> BoxedAppError {
     Box::new(CustomApiError {
         status,
+        code,
         detail: detail.into(),
     })
 }
@@ -52,11 +64,12 @@ pub fn custom(status: StatusCode, detail: impl Into<Cow<'static, str>>) -> Boxed
 #[display("{detail}")]
 struct CustomApiError {
     status: StatusCode,
+    code: &'static str,
     detail: Cow<'static, str>,
 }
 
 impl AppError for CustomApiError {
     fn response(&self) -> Response {
-        json_error(self.status, &self.detail)
+        json_error(self.status, self.code, &self.detail)
     }
 }

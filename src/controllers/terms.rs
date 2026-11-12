@@ -68,6 +68,7 @@ pub async fn accept_terms(
     if request.version != current {
         return Err(errors::custom(
             StatusCode::CONFLICT,
+            "terms_changed",
             "These terms are no longer current. Please read the current terms first.",
         ));
     }

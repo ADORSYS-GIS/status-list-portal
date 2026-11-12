@@ -160,9 +160,13 @@ impl NewIssuerRequest {
         let length = display_name.chars().count();
         if length == 0 || length > DISPLAY_NAME_MAX_CHARS || display_name.contains(char::is_control)
         {
-            return Err(errors::unprocessable(format!(
-                "The display name must be 1 to {DISPLAY_NAME_MAX_CHARS} printable characters."
-            )));
+            return Err(errors::custom(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid_display_name",
+                format!(
+                    "The display name must be 1 to {DISPLAY_NAME_MAX_CHARS} printable characters."
+                ),
+            ));
         }
         Ok(NewIssuer {
             display_name: display_name.to_owned(),
@@ -300,6 +304,7 @@ pub async fn renew_issuer(
         IssuerState::Suspended => {
             return Err(errors::custom(
                 StatusCode::CONFLICT,
+                "issuer_not_renewable",
                 "This issuer is deleted or suspended, so it cannot be renewed.",
             ));
         }

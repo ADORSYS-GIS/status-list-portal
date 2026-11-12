@@ -259,6 +259,7 @@ async fn a_key_for_another_algorithm_is_refused() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
+            "code": "invalid_public_key",
             "detail": "For ES384, the public key must be an EC key on the P-384 curve, with \"x\" and \"y\"."
         }] })
     );
@@ -300,6 +301,7 @@ async fn an_account_at_its_limit_registers_no_more() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
+            "code": "active_issuer_limit_reached",
             "detail": "An account can have 2 active sandbox issuers, registrations waiting for approval included. Delete one, or withdraw a registration, first."
         }] })
     );
@@ -367,6 +369,7 @@ async fn an_account_that_used_its_registrations_registers_no_more() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
+            "code": "registration_limit_reached",
             "detail": "This account cannot register more sandbox issuers: it has registered 10, \
                        deleted, rejected and waiting ones included."
         }] })
@@ -422,6 +425,7 @@ async fn a_key_registered_already_is_a_conflict() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
+            "code": "key_material_in_use",
             "detail": "This public key is already registered, maybe for an issuer you \
                        deleted, since a deleted issuer keeps its key. Make a new key pair, or, \
                        if you just registered this one, check your issuers."
@@ -589,6 +593,7 @@ async fn a_change_made_in_between_is_a_conflict() {
         assert_eq!(
             response.json(),
             json!({ "errors": [{
+                "code": "issuer_changed",
                 "detail": "The issuer changed while this request ran. Please try again."
             }] })
         );
@@ -626,6 +631,7 @@ async fn an_unreachable_status_list_server_is_a_bad_gateway() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
+            "code": "bad_gateway",
             "detail": "The Status List Server did not complete the request. Please try again later."
         }] })
     );

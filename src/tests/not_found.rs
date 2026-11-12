@@ -11,6 +11,6 @@ async fn unknown_api_routes_return_a_json_404() {
     assert_snapshot!(response.status(), @"404 Not Found");
     assert_eq!(
         response.json(),
-        json!({ "errors": [{ "detail": "Not Found" }] })
+        json!({ "errors": [{ "code": "not_found", "detail": "Not Found" }] })
     );
 }

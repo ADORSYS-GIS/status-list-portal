@@ -124,7 +124,7 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             body,
-            json!({ "errors": [{ "detail": "Service Unavailable" }] })
+            json!({ "errors": [{ "code": "service_unavailable", "detail": "Service Unavailable" }] })
         );
     }
 
@@ -148,7 +148,7 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             body,
-            json!({ "errors": [{ "detail": "Internal Server Error" }] })
+            json!({ "errors": [{ "code": "internal_error", "detail": "Internal Server Error" }] })
         );
     }
 }
