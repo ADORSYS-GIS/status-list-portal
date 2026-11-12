@@ -74,7 +74,3 @@ docker compose --profile observability up -d
 ```
 
 This starts [`grafana/otel-lgtm`](https://github.com/grafana/docker-otel-lgtm), Grafana with a collector, Tempo, Loki and Prometheus behind it. Set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` in `.env`, run the portal, and open Grafana at <http://localhost:3000>. Set `GRAFANA_PORT` to use another port. Lower `OTEL_METRIC_EXPORT_INTERVAL`, to `5000` for example, to see metrics sooner.
-
-## Next to the Status List Server
-
-The Status List Server's Helm chart runs an OpenTelemetry Collector that takes OTLP/HTTP on port 4318. Point the portal at it, such as `OTEL_EXPORTER_OTLP_ENDPOINT=http://<release>-opentelemetry-collector.<namespace>.svc.cluster.local:4318`. The chart's collector sends traces to Tempo and logs to Loki, but OTLP metrics only to its `debug` exporter: add a metrics exporter to its pipeline, such as `otlphttp` to Mimir or `prometheusremotewrite`, to keep the portal's metrics.
