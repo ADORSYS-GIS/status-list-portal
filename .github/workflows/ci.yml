@@ -7,6 +7,8 @@ on:
       - main
   merge_group:
   workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -18,6 +20,7 @@ concurrency:
 jobs:
   rustfmt:
     name: Rustfmt
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Repository
@@ -36,6 +39,7 @@ jobs:
 
   clippy:
     name: Clippy
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -55,6 +59,7 @@ jobs:
 
   test:
     name: Tests
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -79,6 +84,20 @@ jobs:
         with:
           cache-shared-key: workspace
 
+      - name: Install Diesel CLI for schema check
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev
+          cargo install diesel_cli --version 2.3.5 --no-default-features --features postgres --locked
+
+      - name: Check schema against migrations
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: |
+          diesel migration run
+          diesel print-schema > "$RUNNER_TEMP/schema.rs"
+          diff -u src/schema.rs "$RUNNER_TEMP/schema.rs"
+
       - name: Run tests
         run: cargo test --all-targets --locked
 
@@ -101,6 +120,7 @@ jobs:
 
   frontend:
     name: Frontend
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Repository
@@ -146,6 +166,7 @@ jobs:
 
   markdown:
     name: Markdown
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Repository
@@ -160,6 +181,7 @@ jobs:
 
   toml:
     name: TOML
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Repository
@@ -180,6 +202,7 @@ jobs:
 
   yaml:
     name: YAML
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Repository
@@ -201,6 +224,7 @@ jobs:
 
   typos:
     name: Typos
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Repository
