@@ -63,8 +63,9 @@ database connection limit for one extra connection per portal replica.
 Put a reverse proxy in front of the portal and configure a header read timeout there.
 `axum::serve` does not impose one, so a client can otherwise hold a connection open while
 sending request headers slowly. For example, set `client_header_timeout 10s;` in an NGINX
-server block. The portal's 30-second request timeout applies after the request has been
-received and does not replace the proxy's header read timeout.
+server block. The portal's 30-second request timeout starts once the request headers
+have arrived and also covers reading the body. It does not replace the proxy's header
+read timeout.
 
 ## Test
 
@@ -98,8 +99,9 @@ database, then apply the migrations:
 diesel migration run
 ```
 
-Use `diesel print-schema` to inspect the result, update the checked-in Diesel schema,
-and run the tests. CI checks the committed schema against a fresh migrated database.
+Run `diesel print-schema` and replace the checked-in Diesel schema with its exact output,
+including the generated header and declaration order. Then run the tests. CI compares
+that schema byte for byte against a fresh migrated database.
 
 ## License
 
