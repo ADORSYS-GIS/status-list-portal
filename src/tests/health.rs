@@ -69,6 +69,6 @@ async fn readiness_fails_when_the_database_is_unreachable() {
     assert_snapshot!(response.status(), @"503 Service Unavailable");
     assert_eq!(
         response.json(),
-        json!({ "errors": [{ "detail": "Service Unavailable" }] })
+        json!({ "errors": [{ "code": "service_unavailable", "detail": "Service Unavailable" }] })
     );
 }

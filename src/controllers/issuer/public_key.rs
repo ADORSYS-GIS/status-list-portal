@@ -7,7 +7,7 @@
 use serde_json::{Map, Value};
 
 use crate::admin_api::{KeyType, PublicJwk, SigningAlgorithm};
-use crate::util::errors::{self, BoxedAppError};
+use crate::util::errors::{self, ApiErrorCode, BoxedAppError};
 
 /// Members that only private and symmetric keys have (RFC 7518 §6).
 const PRIVATE_MEMBERS: [&str; 8] = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
@@ -56,21 +56,31 @@ fn shape(alg: SigningAlgorithm) -> KeyShape {
 /// Reads the public JSON Web Key of an `alg` key pair.
 pub(super) fn parse(value: &Value, alg: SigningAlgorithm) -> Result<PublicJwk, BoxedAppError> {
     if holds_private_key(value) {
-        return Err(errors::unprocessable(PRIVATE_KEY));
+        return Err(errors::custom(
+            ApiErrorCode::PrivateKeySubmitted,
+            PRIVATE_KEY,
+        ));
     }
     let jwk = value.as_object().ok_or_else(|| {
-        errors::unprocessable("The public key must be a JSON Web Key: a JSON object.")
+        errors::custom(
+            ApiErrorCode::InvalidPublicKey,
+            "The public key must be a JSON Web Key: a JSON object.",
+        )
     })?;
     if jwk.get("use").is_some_and(|key_use| key_use != "sig") {
-        return Err(errors::unprocessable("The key's \"use\" must be \"sig\"."));
+        return Err(errors::custom(
+            ApiErrorCode::InvalidPublicKey,
+            "The key's \"use\" must be \"sig\".",
+        ));
     }
     if jwk
         .get("alg")
         .is_some_and(|key_alg| *key_alg != alg.to_string())
     {
-        return Err(errors::unprocessable(format!(
-            "The key's \"alg\" must be {alg}, the algorithm chosen for the issuer."
-        )));
+        return Err(errors::custom(
+            ApiErrorCode::InvalidPublicKey,
+            format!("The key's \"alg\" must be {alg}, the algorithm chosen for the issuer."),
+        ));
     }
 
     let shape = shape(alg);
@@ -81,10 +91,10 @@ pub(super) fn parse(value: &Value, alg: SigningAlgorithm) -> Result<PublicJwk, B
             .iter()
             .all(|name| member(jwk, name).is_some_and(is_base64url));
     if !fits {
-        return Err(errors::unprocessable(format!(
-            "For {alg}, the public key must be {}.",
-            shape.description
-        )));
+        return Err(errors::custom(
+            ApiErrorCode::InvalidPublicKey,
+            format!("For {alg}, the public key must be {}.", shape.description),
+        ));
     }
 
     let kept = |name: &str| {

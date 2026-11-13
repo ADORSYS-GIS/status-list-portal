@@ -1,7 +1,8 @@
 use axum::extract::FromRequest;
 use axum::extract::rejection::JsonRejection;
+use http::StatusCode;
 
-use super::errors::{BoxedAppError, custom};
+use super::errors::{ApiErrorCode, BoxedAppError, custom};
 
 /// A JSON request body. Unlike `axum::Json`, a body it cannot read gets the API's error
 /// format.
@@ -11,7 +12,19 @@ pub struct JsonBody<T>(pub T);
 
 impl From<JsonRejection> for BoxedAppError {
     fn from(rejection: JsonRejection) -> Self {
-        custom(rejection.status(), rejection.body_text())
+        let code = match &rejection {
+            JsonRejection::JsonSyntaxError(_) => ApiErrorCode::InvalidJson,
+            JsonRejection::JsonDataError(_) => ApiErrorCode::InvalidRequestBody,
+            JsonRejection::MissingJsonContentType(_) => ApiErrorCode::UnsupportedMediaType,
+            JsonRejection::BytesRejection(error)
+                if error.status() == StatusCode::PAYLOAD_TOO_LARGE =>
+            {
+                ApiErrorCode::PayloadTooLarge
+            }
+            JsonRejection::BytesRejection(_) => ApiErrorCode::BodyReadFailed,
+            _ => ApiErrorCode::InvalidRequestBody,
+        };
+        custom(code, rejection.body_text())
     }
 }
 
@@ -52,13 +65,14 @@ mod tests {
     }
 
     /// Asserts the response is a JSON error with this status, and returns its detail.
-    async fn error_detail(response: Response, status: StatusCode) -> String {
+    async fn error_detail(response: Response, status: StatusCode, code: &str) -> String {
         assert_eq!(response.status(), status);
         assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["errors"][0]["code"], code);
         body["errors"][0]["detail"].as_str().unwrap().to_string()
     }
 
@@ -73,7 +87,12 @@ mod tests {
     async fn bodies_of_the_wrong_shape_get_a_json_422() {
         let response = send("application/json", r#"{"name":1}"#).await;
 
-        let detail = error_detail(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+        let detail = error_detail(
+            response,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_request_body",
+        )
+        .await;
         assert!(detail.contains("name"), "{detail}");
     }
 
@@ -81,14 +100,19 @@ mod tests {
     async fn malformed_bodies_get_a_json_400() {
         let response = send("application/json", "{").await;
 
-        error_detail(response, StatusCode::BAD_REQUEST).await;
+        error_detail(response, StatusCode::BAD_REQUEST, "invalid_json").await;
     }
 
     #[tokio::test]
     async fn other_content_types_get_a_json_415() {
         let response = send("text/plain", r#"{"name":"Ada"}"#).await;
 
-        error_detail(response, StatusCode::UNSUPPORTED_MEDIA_TYPE).await;
+        error_detail(
+            response,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -96,6 +120,6 @@ mod tests {
         let name = "a".repeat(20 * 1024);
         let response = send("application/json", format!(r#"{{"name":"{name}"}}"#)).await;
 
-        error_detail(response, StatusCode::PAYLOAD_TOO_LARGE).await;
+        error_detail(response, StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large").await;
     }
 }

@@ -18,6 +18,6 @@ async fn unsupported_methods_return_a_json_405_with_allow() {
     assert_eq!(response.header("allow"), Some("GET,HEAD"));
     assert_eq!(
         response.json(),
-        json!({ "errors": [{ "detail": "Method Not Allowed" }] })
+        json!({ "errors": [{ "code": "method_not_allowed", "detail": "Method Not Allowed" }] })
     );
 }

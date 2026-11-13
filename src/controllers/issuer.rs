@@ -27,7 +27,7 @@ use crate::controllers::registration::RegistrationResponse;
 use crate::sandbox;
 use crate::server::ServerContext;
 use crate::util::JsonBody;
-use crate::util::errors::{self, ApiErrorResponse, AppResult};
+use crate::util::errors::{self, ApiErrorCode, ApiErrorResponse, AppResult};
 
 const DISPLAY_NAME_MAX_CHARS: usize = 100;
 
@@ -160,9 +160,12 @@ impl NewIssuerRequest {
         let length = display_name.chars().count();
         if length == 0 || length > DISPLAY_NAME_MAX_CHARS || display_name.contains(char::is_control)
         {
-            return Err(errors::unprocessable(format!(
-                "The display name must be 1 to {DISPLAY_NAME_MAX_CHARS} printable characters."
-            )));
+            return Err(errors::custom(
+                ApiErrorCode::InvalidDisplayName,
+                format!(
+                    "The display name must be 1 to {DISPLAY_NAME_MAX_CHARS} printable characters."
+                ),
+            ));
         }
         Ok(NewIssuer {
             display_name: display_name.to_owned(),
@@ -299,7 +302,7 @@ pub async fn renew_issuer(
         }
         IssuerState::Suspended => {
             return Err(errors::custom(
-                StatusCode::CONFLICT,
+                ApiErrorCode::IssuerNotRenewable,
                 "This issuer is deleted or suspended, so it cannot be renewed.",
             ));
         }

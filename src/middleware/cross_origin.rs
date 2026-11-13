@@ -11,7 +11,7 @@ use axum::response::Response;
 use http::header::ORIGIN;
 
 use crate::config::PublicOrigin;
-use crate::util::errors;
+use crate::util::errors::{self, ApiErrorCode};
 
 pub(super) async fn reject_cross_origin(
     State(origin): State<PublicOrigin>,
@@ -21,7 +21,11 @@ pub(super) async fn reject_cross_origin(
     if request.method().is_safe() || is_same_origin(&request, &origin) {
         next.run(request).await
     } else {
-        errors::forbidden("Requests from other sites are not allowed").response()
+        errors::custom(
+            ApiErrorCode::CrossOriginForbidden,
+            "Requests from other sites are not allowed",
+        )
+        .response()
     }
 }
 
