@@ -47,7 +47,7 @@ mod tests {
 
     async fn send(content_type: &str, body: impl Into<Body>) -> Response {
         let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
-        let metrics = Metrics::new(&NoopMeterProvider::new().meter("test"));
+        let metrics = Metrics::new(&NoopMeterProvider::new().meter("test"), &origin);
         let router = apply_middleware(
             Router::new().route("/greet", post(greet)),
             &origin,

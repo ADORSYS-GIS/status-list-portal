@@ -112,7 +112,7 @@ mod tests {
         let request = Request::get("/slow").body(Body::empty()).unwrap();
 
         let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
-        let metrics = Metrics::new(&NoopMeterProvider::new().meter("test"));
+        let metrics = Metrics::new(&NoopMeterProvider::new().meter("test"), &origin);
 
         let response = apply_middleware(router, &origin, metrics, None)
             .oneshot(request)
@@ -138,7 +138,7 @@ mod tests {
         let request = Request::get("/boom").body(Body::empty()).unwrap();
 
         let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
-        let metrics = Metrics::new(&NoopMeterProvider::new().meter("test"));
+        let metrics = Metrics::new(&NoopMeterProvider::new().meter("test"), &origin);
 
         let response = apply_middleware(router, &origin, metrics, None)
             .oneshot(request)
