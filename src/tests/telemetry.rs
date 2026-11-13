@@ -338,10 +338,12 @@ async fn registrations_and_admin_api_calls_are_measured() {
         metrics.sum("portal.registrations", &[("outcome", "created")]),
         1
     );
+    let port = app.admin_api().address().port().to_string();
     let create = [
         ("http.request.method", "POST"),
         ("url.template", "/admin/v1/issuers"),
         ("server.address", "127.0.0.1"),
+        ("server.port", port.as_str()),
         ("http.response.status_code", "201"),
     ];
     assert_eq!(metrics.count("http.client.request.duration", &create), 1);
@@ -412,6 +414,7 @@ async fn admin_api_failures_are_recorded_as_errors() {
         ("http.request.method", "GET"),
         ("url.template", "/admin/v1/issuers"),
         ("http.response.status_code", "503"),
+        ("error.type", "503"),
     ];
     let metrics = app.metrics();
     assert_eq!(metrics.count("http.client.request.duration", &failed), 1);
