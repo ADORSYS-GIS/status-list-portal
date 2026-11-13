@@ -59,6 +59,9 @@ utoipa = { version = "6.0", features = ["time"] }
 utoipa-axum = "0.3"
 
 [dev-dependencies]
+# Generates the issuer keys of the tests against a real Status List Server.
+aws-lc-rs = "1.18"
+base64 = "0.22"
 insta = { version = "1.49", features = ["json"] }
 tokio = { version = "1.54", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }

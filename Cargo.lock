@@ -2277,8 +2277,10 @@ name = "status-list-portal"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aws-lc-rs",
  "axum",
  "axum-extra",
+ "base64 0.22.1",
  "clap",
  "config",
  "deadpool 0.13.1",

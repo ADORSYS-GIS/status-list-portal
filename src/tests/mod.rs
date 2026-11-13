@@ -7,6 +7,7 @@ mod frontend;
 mod headers;
 mod health;
 mod issuers;
+mod live_admin_api;
 mod me;
 mod method_not_allowed;
 mod migrations;

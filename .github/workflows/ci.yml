@@ -85,6 +85,75 @@ jobs:
       - name: Run doc tests
         run: cargo test --doc --locked
 
+  live-admin-api:
+    name: Tests against the Status List Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: status_list
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # No release has the admin API yet: a commit of develop, which holds what the next
+      # release ships. Pin that release's tag once it is out.
+      STATUS_LIST_SERVER_REF: 6f53ece6e7eb5eb60b6a2776d93d8ff38f70092e
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/portal_test
+      LIVE_ADMIN_API_URL: http://127.0.0.1:8002
+    steps:
+      - name: Fetch Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the Status List Server
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: adorsys/status-list-server
+          ref: ${{ env.STATUS_LIST_SERVER_REF }}
+          path: status-list-server
+          persist-credentials: false
+
+      - name: Install stable toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-shared-key: live-admin-api
+          cache-workspaces: |
+            . -> target
+            status-list-server -> target
+
+      - name: Install the server's build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake golang-go
+
+      - name: Build the Status List Server
+        working-directory: status-list-server
+        run: cargo build --locked --features postgres
+
+      - name: Start the Status List Server
+        run: |
+          scripts/live-status-list-server.sh status-list-server \
+            postgres://postgres:postgres@localhost:5432/status_list > status-list-server.log 2>&1 &
+          for _ in $(seq 60); do
+            if curl -fs -o /dev/null http://127.0.0.1:8002/health/ready; then exit 0; fi
+            sleep 1
+          done
+          cat status-list-server.log
+          exit 1
+
+      - name: Run the tests against it
+        run: cargo test --test integration --locked live_admin_api
+
+      - name: Show the server's log
+        if: failure()
+        run: cat status-list-server.log
+
   cargo-deny:
     name: cargo-deny
     runs-on: ubuntu-latest

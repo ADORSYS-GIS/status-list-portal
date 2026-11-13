@@ -1,0 +1,16 @@
+# Registry of the Status List Server that the live admin API tests run against
+# (src/tests/live_admin_api.rs). It lists the portal as an admin with the public
+# half of admin-keys/es256.pem, the key the tests sign admin tokens with.
+version: 1
+issuers: []
+admins:
+  - id: portal
+    scopes: [issuers:read, issuers:write]
+    keys:
+      - kid: test-admin-key
+        alg: ES256
+        jwk:
+          kty: EC
+          crv: P-256
+          x: GtkCNIXEFHQ8j_gwyoS0H9eZQGCI_Iaqm2wUymJvOfQ
+          y: D9yk2oGE-yZjX50UqD1j68vpRbEhM-WyuhAWrEPAcyI

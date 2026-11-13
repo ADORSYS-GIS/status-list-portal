@@ -63,6 +63,7 @@ impl TestApp {
             unreachable_database: false,
             sandbox: config::Sandbox::default(),
             frontend: false,
+            admin_api_url: None,
         }
     }
 
@@ -94,9 +95,15 @@ impl TestApp {
 
     /// Creates a user and returns them signed in.
     pub async fn db_new_user(&self, login: &str) -> MockCookieUser {
+        self.db_new_user_with_gh_id(login, NEXT_GH_ID.fetch_add(1, Ordering::Relaxed))
+            .await
+    }
+
+    /// Creates a user with the GitHub account `gh_id` and returns them signed in.
+    pub async fn db_new_user_with_gh_id(&self, login: &str, gh_id: i64) -> MockCookieUser {
         let email = format!("{login}@example.com");
         let new_user = NewUser {
-            gh_id: NEXT_GH_ID.fetch_add(1, Ordering::Relaxed),
+            gh_id,
             gh_login: login,
             name: None,
             email: &email,
@@ -154,6 +161,7 @@ pub struct TestAppBuilder {
     unreachable_database: bool,
     sandbox: config::Sandbox,
     frontend: bool,
+    admin_api_url: Option<Url>,
 }
 
 impl TestAppBuilder {
@@ -169,6 +177,15 @@ impl TestAppBuilder {
     pub fn with_frontend(self) -> Self {
         Self {
             frontend: true,
+            ..self
+        }
+    }
+
+    /// Sends the app's admin API calls to `url`, a real Status List Server, instead of to
+    /// [`TestApp::admin_api`].
+    pub fn with_admin_api_url(self, url: Url) -> Self {
+        Self {
+            admin_api_url: Some(url),
             ..self
         }
     }
@@ -190,7 +207,9 @@ impl TestAppBuilder {
         let github = MockServer::start().await;
         let github_url = Url::parse(&github.uri()).expect("the mock server has a valid URL");
         let admin_api = MockServer::start().await;
-        let admin_api_url = Url::parse(&admin_api.uri()).expect("the mock server has a valid URL");
+        let admin_api_url = self.admin_api_url.unwrap_or_else(|| {
+            Url::parse(&admin_api.uri()).expect("the mock server has a valid URL")
+        });
         let session_key = SessionKey::generate();
 
         let mut config = Config {

@@ -66,6 +66,17 @@ cargo test
 
 Tests use the Postgres from `docker compose`, with a fresh database per test. `bun run test` runs the frontend's tests, some of them in Chromium (`bun run playwright install chromium`). `bun test` would run Bun's own test runner instead.
 
+### Against a real Status List Server
+
+The tests above talk to a stand-in for the server's admin API. The `live_admin_api` tests talk to a real server instead, so they catch changes to its contract. They are skipped unless `LIVE_ADMIN_API_URL` is set. To run them, build the server from a checkout (`cargo build --features postgres`), create an empty database for it, and start it with this repository's registry:
+
+```sh
+scripts/live-status-list-server.sh ../status-list-server postgres://postgres:postgres@localhost:5432/status_list
+LIVE_ADMIN_API_URL=http://127.0.0.1:8002 cargo test --test integration live_admin_api
+```
+
+[docs/live-testing.md](docs/live-testing.md) walks through running the portal against the server by hand.
+
 ## License
 
 [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
