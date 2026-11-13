@@ -1,16 +1,14 @@
 //! The HTTP server.
 
 use anyhow::Context;
-use secrecy::ExposeSecret;
 use status_list_portal::config::Config;
-use status_list_portal::{ServerContext, build_handler, db};
+use status_list_portal::{ServerContext, build_handler};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tracing::{info, warn};
 
-/// Runs migrations, then serves requests until SIGTERM or Ctrl+C.
+/// Serves requests until SIGTERM or Ctrl+C. Migrations run in a separate job.
 pub async fn run(config: Config) -> anyhow::Result<()> {
-    db::run_migrations(config.database.url.expose_secret()).await?;
     let bind_address = config.server.bind_address;
     let mut ctx = ServerContext::from_config(config)?;
 

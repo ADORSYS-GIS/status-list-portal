@@ -5,18 +5,21 @@ mod server;
 
 use anyhow::Context;
 use clap::Parser;
-use status_list_portal::config::Config;
+use status_list_portal::config::{Config, MigrationConfig};
+use status_list_portal::db;
 use status_list_portal::util;
 use status_list_portal::util::logging::LogOutput;
 
 /// Developer portal for the Status List Server. Every command reads the `APP_*` settings
 /// that `.env.template` lists, and the operators' commands expect the database that
-/// `portal server` migrated.
+/// `portal migrate` migrated.
 #[derive(Debug, Parser)]
 #[command(name = "portal")]
 enum Command {
-    /// Runs the HTTP server, after migrating the database.
+    /// Runs the HTTP server against an already migrated database.
     Server,
+    /// Applies pending database migrations with the migration role.
+    Migrate,
     #[command(flatten)]
     Admin(admin::Command),
 }
@@ -25,17 +28,30 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     let command = Command::parse();
     load_dotenv()?;
-    let config = Config::from_environment()
-        .context("invalid configuration (.env.template lists every APP_* setting)")?;
-    let log_output = match command {
-        Command::Server => LogOutput::Stdout,
-        Command::Admin(_) => LogOutput::Stderr,
-    };
-    util::logging::init(config.log_format, log_output)?;
-
     match command {
-        Command::Server => server::run(config).await,
-        Command::Admin(command) => admin::run(config, command).await,
+        Command::Migrate => {
+            let config = MigrationConfig::from_environment().context(
+                "invalid migration configuration (.env.template lists the APP_DATABASE settings)",
+            )?;
+            util::logging::init(Default::default(), LogOutput::Stderr)?;
+            db::run_migrations(&config.database, config.env).await?;
+            Ok(())
+        }
+        command => {
+            let config = Config::from_environment()
+                .context("invalid configuration (.env.template lists every APP_* setting)")?;
+            let log_output = match command {
+                Command::Server => LogOutput::Stdout,
+                Command::Admin(_) => LogOutput::Stderr,
+                Command::Migrate => unreachable!(),
+            };
+            util::logging::init(config.log_format, log_output)?;
+            match command {
+                Command::Server => server::run(config).await,
+                Command::Admin(command) => admin::run(config, command).await,
+                Command::Migrate => unreachable!(),
+            }
+        }
     }
 }
 

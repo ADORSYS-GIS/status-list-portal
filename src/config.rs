@@ -68,9 +68,29 @@ pub struct Database {
     /// Connection URL (`APP_DATABASE__URL`), for example
     /// `postgres://portal:password@localhost:5432/portal`.
     pub url: SecretString,
+    /// Optional PEM bundle of additional trusted Postgres CAs (`APP_DATABASE__TLS_CA_FILE`).
+    pub tls_ca_file: Option<PathBuf>,
     /// Most connections the pool keeps open (`APP_DATABASE__POOL_SIZE`).
     #[serde(default = "default_database_pool_size")]
     pub pool_size: NonZeroUsize,
+}
+
+/// Settings needed by the standalone migration job. Other application secrets are not needed.
+#[derive(Debug, Deserialize)]
+pub struct MigrationConfig {
+    #[serde(default)]
+    pub env: Env,
+    pub database: Database,
+}
+
+impl MigrationConfig {
+    pub fn from_environment() -> Result<Self, ConfigError> {
+        ::config::Config::builder()
+            .add_source(environment())
+            .build()?
+            .try_deserialize()
+            .map_err(without_value)
+    }
 }
 
 #[derive(Debug, Deserialize)]

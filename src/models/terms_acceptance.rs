@@ -5,7 +5,7 @@ use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use crate::schema::terms_acceptances;
 
 /// A developer's acceptance of one version of the terms of use.
-#[derive(Debug, Insertable)]
+#[derive(Insertable)]
 #[diesel(table_name = terms_acceptances)]
 pub struct TermsAcceptance<'a> {
     pub user_id: i64,

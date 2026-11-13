@@ -5,15 +5,19 @@ use diesel::dsl::sql;
 use diesel::sql_types::Text;
 use diesel_async::RunQueryDsl;
 use secrecy::SecretString;
-use status_list_portal::{config, db};
+use status_list_portal::{Env, config, db};
 
 #[tokio::test]
 async fn pool_connections_time_out_long_queries_and_open_transactions() {
     let test_db = TestDatabase::new().await;
-    let pool = db::pool(&config::Database {
-        url: SecretString::from(test_db.url()),
-        pool_size: NonZeroUsize::MIN,
-    })
+    let pool = db::pool(
+        &config::Database {
+            url: SecretString::from(test_db.url()),
+            tls_ca_file: None,
+            pool_size: NonZeroUsize::MIN,
+        },
+        Env::Test,
+    )
     .unwrap();
     let mut conn = pool.get().await.unwrap();
 

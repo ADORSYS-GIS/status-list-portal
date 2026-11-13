@@ -6,7 +6,7 @@ use time::OffsetDateTime;
 use crate::schema::users;
 
 /// A developer who signed in with GitHub.
-#[derive(Debug, Clone, PartialEq, Eq, Queryable, Selectable)]
+#[derive(Clone, PartialEq, Eq, Queryable, Selectable)]
 #[diesel(table_name = users, check_for_backend(Pg))]
 pub struct User {
     pub id: i64,
@@ -19,6 +19,20 @@ pub struct User {
     pub created_at: OffsetDateTime,
     /// Copied into every session cookie; a cookie with another value is void.
     pub session_epoch: i32,
+}
+
+impl std::fmt::Debug for User {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("User")
+            .field("id", &self.id)
+            .field("gh_id", &self.gh_id)
+            .field("gh_login", &self.gh_login)
+            .field("name", &self.name)
+            .field("email", &"[REDACTED]")
+            .field("created_at", &self.created_at)
+            .field("session_epoch", &self.session_epoch)
+            .finish()
+    }
 }
 
 impl User {
@@ -45,7 +59,7 @@ impl User {
 }
 
 /// Account details GitHub reports at sign-in.
-#[derive(Debug, Insertable, AsChangeset)]
+#[derive(Insertable, AsChangeset)]
 #[diesel(table_name = users, check_for_backend(Pg), treat_none_as_null = true)]
 pub struct NewUser<'a> {
     pub gh_id: i64,

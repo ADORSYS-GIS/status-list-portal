@@ -79,11 +79,18 @@ jobs:
         with:
           cache-shared-key: workspace
 
+      - name: Start TLS Postgres
+        run: bash test_data/start_tls_postgres.sh >> "$GITHUB_ENV"
+
       - name: Run tests
         run: cargo test --all-targets --locked
 
       - name: Run doc tests
         run: cargo test --doc --locked
+
+      - name: Stop TLS Postgres
+        if: always() && env.TEST_TLS_CONTAINER != ''
+        run: docker rm -f "$TEST_TLS_CONTAINER"
 
   cargo-deny:
     name: cargo-deny
