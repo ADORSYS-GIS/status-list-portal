@@ -34,7 +34,7 @@ impl ServerContext {
 
     /// Builds the shared components from the configuration. Opens no connection yet.
     pub fn from_config(config: Config) -> anyhow::Result<Self> {
-        let db = db::pool(&config.database)?;
+        let db = db::pool(&config.database, config.env)?;
         let github = GitHub::new(&config.github, &config.server.origin)?;
         let admin_api = AdminApi::new(&config.admin_api)?;
         let frontend = match &config.server.frontend_dir {
@@ -59,7 +59,7 @@ impl ServerContext {
         if inner.readiness.is_some() {
             anyhow::bail!("database readiness is already running");
         }
-        let pool = db::readiness_pool(&inner.config.database)?;
+        let pool = db::readiness_pool(&inner.config.database, inner.config.env)?;
         inner.readiness = Some(DatabaseReadiness::start(pool));
         Ok(())
     }

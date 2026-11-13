@@ -9,7 +9,7 @@ use crate::models::TermsAcceptance;
 use crate::server::ServerContext;
 use crate::util::errors::{ApiErrorResponse, AppResult};
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Serialize, ToSchema)]
 pub struct MeResponse {
     /// GitHub login.
     #[schema(example = "octocat")]

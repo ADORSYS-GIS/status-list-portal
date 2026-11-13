@@ -8,7 +8,10 @@ use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use diesel_async::{AsyncConnection, AsyncPgConnection, RunQueryDsl};
+use secrecy::SecretString;
 use status_list_portal::db;
+use status_list_portal::{Env, config};
+use std::num::NonZeroUsize;
 use url::Url;
 
 const URL_VARIABLE: &str = "TEST_DATABASE_URL";
@@ -30,7 +33,7 @@ pub struct TestDatabase {
 impl TestDatabase {
     pub async fn new() -> Self {
         let test_db = Self::unmigrated().await;
-        db::run_migrations(test_db.url())
+        db::run_migrations(&test_db.config(), Env::Test)
             .await
             .expect("failed to migrate the test database");
         test_db
@@ -53,6 +56,18 @@ impl TestDatabase {
 
     pub fn url(&self) -> &str {
         self.url.as_str()
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn config(&self) -> config::Database {
+        config::Database {
+            url: SecretString::from(self.url()),
+            tls_ca_file: None,
+            pool_size: NonZeroUsize::MIN,
+        }
     }
 
     pub async fn connect(&self) -> AsyncPgConnection {

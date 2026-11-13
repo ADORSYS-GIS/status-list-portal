@@ -15,5 +15,6 @@ mod pool;
 mod registrations;
 mod session;
 mod terms;
+mod tls;
 mod users;
 mod util;

@@ -1,9 +1,10 @@
 //! The portal's Postgres database: its connection pool and its migrations.
 //!
-//! Connections are not encrypted yet, so the database must sit on a private network.
+//! Production connections use TLS with certificate and hostname verification.
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -11,11 +12,16 @@ use deadpool::Runtime;
 use diesel::sql_types::{BigInt, Bool};
 use diesel::{ConnectionError, ConnectionResult, QueryResult};
 use diesel_async::pooled_connection::{AsyncDieselConnectionManager, ManagerConfig};
-use diesel_async::{AsyncConnection, AsyncMigrationHarness, AsyncPgConnection, RunQueryDsl};
+use diesel_async::{AsyncMigrationHarness, AsyncPgConnection, RunQueryDsl};
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
+use rustls::pki_types::{CertificateDer, pem::PemObject};
+use rustls::{ClientConfig, RootCertStore};
 use secrecy::ExposeSecret;
+use tokio_postgres::config::SslMode;
+use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::info;
 
+use crate::Env;
 use crate::config;
 
 /// Pool of connections to the portal's database.
@@ -67,18 +73,19 @@ pub async fn try_lock_issuer_limits(conn: &mut AsyncPgConnection) -> QueryResult
 }
 
 /// Builds the pool. Connections are opened on first use, not here.
-pub fn pool(config: &config::Database) -> anyhow::Result<Pool> {
-    build_pool(config, config.pool_size.get())
+pub fn pool(config: &config::Database, env: Env) -> anyhow::Result<Pool> {
+    build_pool(config, env, config.pool_size.get())
 }
 
 /// Keeps health checks independent of application pool contention.
-pub fn readiness_pool(config: &config::Database) -> anyhow::Result<Pool> {
-    build_pool(config, 1)
+pub fn readiness_pool(config: &config::Database, env: Env) -> anyhow::Result<Pool> {
+    build_pool(config, env, 1)
 }
 
-fn build_pool(config: &config::Database, max_size: usize) -> anyhow::Result<Pool> {
+fn build_pool(config: &config::Database, env: Env, max_size: usize) -> anyhow::Result<Pool> {
+    let options = Arc::new(ConnectionOptions::new(config, env)?);
     let mut manager_config = ManagerConfig::default();
-    manager_config.custom_setup = Box::new(establish);
+    manager_config.custom_setup = Box::new(move |_| establish(options.clone()));
     let manager =
         AsyncDieselConnectionManager::new_with_config(config.url.expose_secret(), manager_config);
     Pool::builder(manager)
@@ -93,9 +100,11 @@ fn build_pool(config: &config::Database, max_size: usize) -> anyhow::Result<Pool
 
 /// Opens a pool connection, with [`STATEMENT_TIMEOUT`] and [`IDLE_IN_TRANSACTION_TIMEOUT`]
 /// set.
-fn establish(url: &str) -> BoxFuture<'_, ConnectionResult<AsyncPgConnection>> {
+fn establish(
+    options: Arc<ConnectionOptions>,
+) -> BoxFuture<'static, ConnectionResult<AsyncPgConnection>> {
     Box::pin(async move {
-        let mut conn = AsyncPgConnection::establish(url).await?;
+        let mut conn = options.connect().await?;
         for (setting, timeout) in [
             ("statement_timeout", STATEMENT_TIMEOUT),
             (
@@ -109,6 +118,96 @@ fn establish(url: &str) -> BoxFuture<'_, ConnectionResult<AsyncPgConnection>> {
         }
         Ok(conn)
     })
+}
+
+struct ConnectionOptions {
+    url: String,
+    tls: ClientConfig,
+    production: bool,
+}
+
+impl ConnectionOptions {
+    fn new(database: &config::Database, env: Env) -> anyhow::Result<Self> {
+        let url = database.url.expose_secret();
+        let mut parsed =
+            url::Url::parse(url).context("APP_DATABASE__URL must be a Postgres URL")?;
+        if !matches!(parsed.scheme(), "postgres" | "postgresql") {
+            anyhow::bail!("APP_DATABASE__URL must use postgres:// or postgresql://");
+        }
+        let production = env == Env::Production;
+        let modes = parsed
+            .query_pairs()
+            .filter(|(key, _)| key == "sslmode")
+            .map(|(_, value)| value.into_owned())
+            .collect::<Vec<_>>();
+        if modes.len() > 1 {
+            anyhow::bail!("APP_DATABASE__URL must specify sslmode at most once");
+        }
+        let mode = modes.as_slice().first().map(String::as_str);
+        if production && mode.is_some_and(|mode| !matches!(mode, "require" | "verify-full")) {
+            anyhow::bail!("production APP_DATABASE__URL must not weaken Postgres TLS");
+        }
+        if mode == Some("verify-full") {
+            let pairs = parsed
+                .query_pairs()
+                .map(|(key, value)| {
+                    let replacement = key == "sslmode";
+                    (
+                        key.into_owned(),
+                        if replacement {
+                            "require".to_string()
+                        } else {
+                            value.into_owned()
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            parsed.query_pairs_mut().clear().extend_pairs(pairs);
+        }
+        let mut roots = RootCertStore::empty();
+        let native = rustls_native_certs::load_native_certs();
+        roots.add_parsable_certificates(native.certs);
+        if let Some(path) = &database.tls_ca_file {
+            let certs = CertificateDer::pem_file_iter(path)
+                .with_context(|| format!("failed to open Postgres CA bundle {}", path.display()))?
+                .collect::<Result<Vec<_>, _>>()
+                .context("failed to parse Postgres CA bundle")?;
+            let (added, _) = roots.add_parsable_certificates(certs);
+            if added == 0 {
+                anyhow::bail!("Postgres CA bundle has no valid certificates");
+            }
+        }
+        if production && roots.is_empty() {
+            anyhow::bail!("production Postgres TLS needs trusted CA certificates");
+        }
+        let tls = ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .context("failed to configure Postgres TLS versions")?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        Ok(Self {
+            url: parsed.to_string(),
+            tls,
+            production,
+        })
+    }
+
+    async fn connect(&self) -> ConnectionResult<AsyncPgConnection> {
+        let mut url: tokio_postgres::Config =
+            self.url.parse().map_err(|error: tokio_postgres::Error| {
+                ConnectionError::BadConnection(format!("invalid Postgres URL: {error}"))
+            })?;
+        if self.production {
+            url.ssl_mode(SslMode::Require);
+        }
+        let (client, conn) = url
+            .connect(MakeRustlsConnect::new(self.tls.clone()))
+            .await
+            .map_err(|error| ConnectionError::BadConnection(error.to_string()))?;
+        AsyncPgConnection::try_from_client_and_connection(client, conn).await
+    }
 }
 
 /// Sets a Postgres timeout setting for the rest of the session.
@@ -127,14 +226,12 @@ async fn set_timeout(
 ///
 /// An advisory lock is held while they run, so replicas that start together apply each
 /// migration once.
-pub async fn run_migrations(database_url: &str) -> anyhow::Result<Vec<String>> {
-    let mut conn = tokio::time::timeout(
-        CONNECTION_TIMEOUT,
-        AsyncPgConnection::establish(database_url),
-    )
-    .await
-    .context("timed out connecting to the database")?
-    .context("failed to connect to the database")?;
+pub async fn run_migrations(database: &config::Database, env: Env) -> anyhow::Result<Vec<String>> {
+    let options = ConnectionOptions::new(database, env)?;
+    let mut conn = tokio::time::timeout(CONNECTION_TIMEOUT, options.connect())
+        .await
+        .context("timed out connecting to the database")?
+        .context("failed to connect to the database")?;
 
     let locked = diesel::select(pg_try_advisory_lock(MIGRATION_LOCK_KEY))
         .get_result::<bool>(&mut conn)

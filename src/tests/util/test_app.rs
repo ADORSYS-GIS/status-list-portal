@@ -238,6 +238,7 @@ fn simple_config(
         },
         database: config::Database {
             url: SecretString::from(database_url),
+            tls_ca_file: None,
             pool_size: NonZeroUsize::new(2).unwrap(),
         },
         session: config::Session { key: session_key },

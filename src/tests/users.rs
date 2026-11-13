@@ -8,6 +8,22 @@ const OCTOCAT: NewUser<'static> = NewUser {
     email: "octocat@example.com",
 };
 
+#[test]
+fn user_debug_redacts_email() {
+    let user = User {
+        id: 1,
+        gh_id: OCTOCAT.gh_id,
+        gh_login: OCTOCAT.gh_login.into(),
+        name: OCTOCAT.name.map(str::to_string),
+        email: OCTOCAT.email.into(),
+        created_at: time::OffsetDateTime::UNIX_EPOCH,
+        session_epoch: 0,
+    };
+    let debug = format!("{user:?}");
+    assert!(debug.contains("email: \"[REDACTED]\""));
+    assert!(!debug.contains(OCTOCAT.email));
+}
+
 #[tokio::test]
 async fn first_sign_in_creates_the_account() {
     let db = TestDatabase::new().await;
