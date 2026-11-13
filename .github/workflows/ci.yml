@@ -85,6 +85,44 @@ jobs:
       - name: Run doc tests
         run: cargo test --doc --locked
 
+  schema:
+    name: Diesel schema
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - name: Fetch Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+
+      - name: Install Diesel CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev
+          cargo install diesel_cli --version 2.3.5 --no-default-features --features postgres --locked
+
+      - name: Check schema against migrations
+        run: |
+          diesel migration run
+          diesel print-schema > "$RUNNER_TEMP/schema.rs"
+          diff -u src/schema.rs "$RUNNER_TEMP/schema.rs"
+
   cargo-deny:
     name: cargo-deny
     runs-on: ubuntu-latest

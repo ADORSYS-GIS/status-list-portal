@@ -58,6 +58,15 @@ five seconds, with a two-second deadline. One failed check is tolerated; two con
 failures make the instance unready. Results older than 15 seconds are unready. Size the
 database connection limit for one extra connection per portal replica.
 
+### Reverse proxy timeouts
+
+Put a reverse proxy in front of the portal and configure a header read timeout there.
+`axum::serve` does not impose one, so a client can otherwise hold a connection open while
+sending request headers slowly. For example, set `client_header_timeout 10s;` in an NGINX
+server block. The portal's 30-second request timeout starts once the request headers
+have arrived and also covers reading the body. It does not replace the proxy's header
+read timeout.
+
 ## Test
 
 ```sh
@@ -65,6 +74,34 @@ cargo test
 ```
 
 Tests use the Postgres from `docker compose`, with a fresh database per test. `bun run test` runs the frontend's tests, some of them in Chromium (`bun run playwright install chromium`). `bun test` would run Bun's own test runner instead.
+
+### Updating snapshots
+
+When an intentional API change makes its snapshot test fail, run
+`INSTA_UPDATE=always cargo test --lib openapi_snapshot`, review the snapshot
+diff, and run `cargo test --all-targets --locked` before committing it. Other snapshot
+assertions in the integration tests are inline; update those intentionally in their
+test source when behavior changes.
+
+### Adding database migrations
+
+Install Diesel CLI with PostgreSQL support at the version pinned in CI. Then create
+the migration:
+
+```sh
+diesel migration generate <name>
+```
+
+Implement the forward and rollback SQL. Point `DATABASE_URL` at a local development
+database, then apply the migrations:
+
+```sh
+diesel migration run
+```
+
+Run `diesel print-schema` and replace the checked-in Diesel schema with its exact output,
+including the generated header and declaration order. Then run the tests. CI compares
+that schema byte for byte against a fresh migrated database.
 
 ## License
 
