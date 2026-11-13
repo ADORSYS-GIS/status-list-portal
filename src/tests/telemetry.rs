@@ -115,6 +115,16 @@ async fn registrations_are_always_traced_into_the_admin_api() {
 }
 
 #[tokio::test]
+async fn sign_ins_are_always_traced() {
+    let recorder = TelemetryRecorder::start(Sampler::AlwaysOff);
+    let (_app, anon) = TestApp::init().empty().await;
+
+    anon.get(CALLBACK_WITH_SECRETS).await;
+
+    span(&recorder.spans(), "GET /api/v1/session/github/callback");
+}
+
+#[tokio::test]
 async fn health_checks_are_never_traced() {
     let recorder = TelemetryRecorder::start(Sampler::AlwaysOn);
     let (_app, anon) = TestApp::init().empty().await;
