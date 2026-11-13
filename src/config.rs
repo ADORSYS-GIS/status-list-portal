@@ -218,6 +218,15 @@ impl PublicOrigin {
         &self.0
     }
 
+    /// The scheme browsers use: `https`, or `http` on loopback.
+    pub fn scheme(&self) -> &'static str {
+        if self.0.starts_with("https:") {
+            "https"
+        } else {
+            "http"
+        }
+    }
+
     /// The absolute URL of `path`, which starts with `/`, on the portal.
     pub fn url_for(&self, path: &str) -> String {
         format!("{}{path}", self.0)

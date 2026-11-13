@@ -16,6 +16,8 @@ use oauth2::{
 use secrecy::ExposeSecret;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use tracing::field::Empty;
+use tracing::{Instrument, info_span};
 use url::Url;
 
 use crate::config::{self, PublicOrigin};
@@ -148,10 +150,20 @@ impl GitHub {
         code: &str,
         pending: &PendingSignIn,
     ) -> Result<Account, SignInError> {
-        let token = self.exchange_code(code, pending).await?;
+        let token = traced(
+            "POST /login/oauth/access_token",
+            self.exchange_code(code, pending),
+        )
+        .await?;
         let (user, emails) = tokio::try_join!(
-            self.get::<UserResponse>(&self.user_url, &token),
-            self.get::<Vec<EmailResponse>>(&self.emails_url, &token),
+            traced(
+                "GET /user",
+                self.get::<UserResponse>(&self.user_url, &token)
+            ),
+            traced(
+                "GET /user/emails",
+                self.get::<Vec<EmailResponse>>(&self.emails_url, &token),
+            ),
         )?;
         let email = emails
             .into_iter()
@@ -216,4 +228,23 @@ fn refusal(response: &BasicErrorResponse) -> SignInError {
     } else {
         SignInError::Refused(error)
     }
+}
+
+/// Makes a call to GitHub in a span of its own, named `name`. No trace context goes with
+/// the call: GitHub would have no use for it.
+async fn traced<T, E>(
+    name: &'static str,
+    call: impl Future<Output = Result<T, E>>,
+) -> Result<T, E> {
+    let span = info_span!(
+        "github",
+        otel.name = name,
+        otel.kind = "client",
+        otel.status_code = Empty,
+    );
+    let result = call.instrument(span.clone()).await;
+    if result.is_err() {
+        span.record("otel.status_code", "ERROR");
+    }
+    result
 }

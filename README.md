@@ -58,6 +58,10 @@ five seconds, with a two-second deadline. One failed check is tolerated; two con
 failures make the instance unready. Results older than 15 seconds are unready. Size the
 database connection limit for one extra connection per portal replica.
 
+## Telemetry
+
+The server's log lines go to stdout. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to also send traces, metrics and logs to an OpenTelemetry Collector, or any backend that takes OTLP over HTTP. [docs/telemetry.md](docs/telemetry.md) lists the settings and what the portal records, and shows how to try it with `docker compose --profile observability up -d`.
+
 ## Test
 
 ```sh

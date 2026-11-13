@@ -24,6 +24,7 @@ use crate::admin_api::{
 use crate::auth::AuthenticatedUser;
 use crate::config::{self, PublicOrigin};
 use crate::controllers::registration::RegistrationResponse;
+use crate::metrics::RegistrationOutcome;
 use crate::sandbox;
 use crate::server::ServerContext;
 use crate::util::JsonBody;
@@ -208,12 +209,14 @@ pub async fn create_issuer(
     if ctx.config.sandbox.manual_approval {
         let registration = sandbox::request(&ctx, &mut conn, &user, &new_issuer).await?;
         info!(user.id, registration.id, "asked for an issuer");
+        ctx.metrics.registration(RegistrationOutcome::Requested);
         let body = RegistrationResponse::new(registration)?;
         return Ok((StatusCode::ACCEPTED, Json(body)).into_response());
     }
 
     let issuer = sandbox::register(&ctx, &mut conn, &user, &new_issuer).await?;
     info!(user.id, issuer.id = %issuer.id, "registered an issuer");
+    ctx.metrics.registration(RegistrationOutcome::Created);
 
     let location = issuer_location(&ctx.config.server.origin, &issuer.id);
     let body = IssuerResponse::new(issuer, &ctx.config.management_api);

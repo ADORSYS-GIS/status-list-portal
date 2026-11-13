@@ -4,6 +4,8 @@ mod cross_origin;
 mod frontend_html;
 mod headers;
 mod static_or_continue;
+mod trace_request;
+mod update_metrics;
 
 pub use frontend_html::Frontend;
 
@@ -17,10 +19,11 @@ use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::Response;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
-use tower_http::trace::{DefaultOnResponse, TraceLayer};
-use tracing::{Level, Span, info_span, warn};
+use tower_http::trace::TraceLayer;
+use tracing::warn;
 
 use crate::config::PublicOrigin;
+use crate::metrics::Metrics;
 use crate::util::errors;
 
 /// Requests that take longer are answered with `503 Service Unavailable`.
@@ -35,6 +38,7 @@ const MAX_BODY_SIZE: usize = 16 * 1024;
 pub fn apply_middleware(
     router: Router,
     origin: &PublicOrigin,
+    metrics: Metrics,
     frontend: Option<Arc<Frontend>>,
 ) -> Router {
     // Security headers sit outside the other layers, so the responses those layers produce
@@ -42,9 +46,12 @@ pub fn apply_middleware(
     let middleware = ServiceBuilder::new()
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(make_span)
-                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+                .make_span_with(trace_request::make_span)
+                .on_response(trace_request::on_response)
+                .on_failure(trace_request::on_failure),
         )
+        // Measured outside the layers below, so their timeouts and errors count too.
+        .layer(from_fn_with_state(metrics, update_metrics::update_metrics))
         .layer(from_fn(headers::add_common_headers))
         .layer(from_fn_with_state(
             origin.clone(),
@@ -62,12 +69,6 @@ pub fn apply_middleware(
         None => router,
     };
     router.layer(middleware)
-}
-
-/// Records the method and path only. Query strings can carry OAuth codes, which must not
-/// reach the logs.
-fn make_span(request: &Request) -> Span {
-    info_span!("request", method = %request.method(), path = %request.uri().path())
 }
 
 fn handle_panic(_payload: Box<dyn Any + Send + 'static>) -> Response {
@@ -91,6 +92,8 @@ mod tests {
     use axum::body::Body;
     use axum::routing::get;
     use http::StatusCode;
+    use opentelemetry::metrics::MeterProvider;
+    use opentelemetry::metrics::noop::NoopMeterProvider;
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
@@ -109,8 +112,9 @@ mod tests {
         let request = Request::get("/slow").body(Body::empty()).unwrap();
 
         let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
+        let metrics = Metrics::new(&NoopMeterProvider::new().meter("test"), &origin);
 
-        let response = apply_middleware(router, &origin, None)
+        let response = apply_middleware(router, &origin, metrics, None)
             .oneshot(request)
             .await
             .unwrap();
@@ -134,8 +138,9 @@ mod tests {
         let request = Request::get("/boom").body(Body::empty()).unwrap();
 
         let origin = PublicOrigin::parse("http://localhost:8080").unwrap();
+        let metrics = Metrics::new(&NoopMeterProvider::new().meter("test"), &origin);
 
-        let response = apply_middleware(router, &origin, None)
+        let response = apply_middleware(router, &origin, metrics, None)
             .oneshot(request)
             .await
             .unwrap();
