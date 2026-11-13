@@ -182,7 +182,8 @@ impl Metrics {
             SignInOutcome::NoVerifiedEmail => "no_verified_email",
             SignInOutcome::Failed => "failed",
         };
-        self.sign_ins.add(1, &[KeyValue::new("outcome", outcome)]);
+        self.sign_ins
+            .add(1, &[KeyValue::new("portal.sign_in.outcome", outcome)]);
     }
 
     pub fn registration(&self, outcome: RegistrationOutcome) {
@@ -191,7 +192,7 @@ impl Metrics {
             RegistrationOutcome::Requested => "requested",
         };
         self.registrations
-            .add(1, &[KeyValue::new("outcome", outcome)]);
+            .add(1, &[KeyValue::new("portal.registration.outcome", outcome)]);
     }
 
     pub fn sandbox_refusal(&self, limit: SandboxLimit) {
@@ -201,7 +202,7 @@ impl Metrics {
             SandboxLimit::ActiveIssuers => "active_issuers",
         };
         self.sandbox_refusals
-            .add(1, &[KeyValue::new("limit", limit)]);
+            .add(1, &[KeyValue::new("portal.sandbox.limit", limit)]);
     }
 }
 

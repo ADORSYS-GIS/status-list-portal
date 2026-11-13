@@ -336,7 +336,10 @@ async fn registrations_and_admin_api_calls_are_measured() {
     assert_eq!(response.status(), StatusCode::CREATED);
     let metrics = app.metrics();
     assert_eq!(
-        metrics.sum("portal.registrations", &[("outcome", "created")]),
+        metrics.sum(
+            "portal.registrations",
+            &[("portal.registration.outcome", "created")]
+        ),
         1
     );
     let port = app.admin_api().address().port().to_string();
@@ -365,7 +368,7 @@ async fn refusals_are_counted_by_limit() {
 
     assert_eq!(response.status(), StatusCode::CONFLICT);
     let metrics = app.metrics();
-    let limit = [("limit", "issuers_per_account")];
+    let limit = [("portal.sandbox.limit", "issuers_per_account")];
     assert_eq!(metrics.sum("portal.sandbox.refusals", &limit), 1);
     assert_eq!(metrics.sum("portal.registrations", &[]), 0);
 }
@@ -377,7 +380,10 @@ async fn sign_ins_are_counted_by_outcome() {
     anon.get(CALLBACK_WITH_SECRETS).await;
 
     let metrics = app.metrics();
-    assert_eq!(metrics.sum("portal.sign_ins", &[("outcome", "expired")]), 1);
+    assert_eq!(
+        metrics.sum("portal.sign_ins", &[("portal.sign_in.outcome", "expired")]),
+        1
+    );
     assert_eq!(metrics.sum("portal.sign_ins", &[]), 1);
 }
 
