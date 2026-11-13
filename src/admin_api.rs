@@ -59,8 +59,9 @@ pub struct AdminApi {
     http: reqwest::Client,
     issuers_url: Url,
     tokens: TokenSigner,
-    /// The admin API's host, as telemetry names the server.
+    /// The admin API's host and port, as telemetry names the server.
     host: String,
+    port: Option<u16>,
     request_duration: Histogram<f64>,
 }
 
@@ -194,6 +195,7 @@ impl AdminApi {
             issuers_url: issuers_url(&config.url)?,
             tokens: TokenSigner::new(config)?,
             host: config.url.host_str().unwrap_or_default().to_owned(),
+            port: config.url.port_or_known_default(),
             request_duration,
         })
     }
@@ -330,6 +332,7 @@ impl AdminApi {
             http.response.status_code = Empty,
             error.type = Empty,
             server.address = self.host.as_str(),
+            server.port = self.port,
             url.template = route,
         );
         TraceContextPropagator::new()
@@ -356,29 +359,34 @@ impl AdminApi {
         result: &Result<Response, reqwest::Error>,
         duration: Duration,
     ) {
-        let outcome = match result {
+        let (status, error_type) = match result {
             Ok(response) => {
                 let status = response.status();
                 span.record("http.response.status_code", i64::from(status.as_u16()));
-                if status.is_server_error() {
-                    span.record("otel.status_code", "ERROR");
-                    span.record("error.type", status.as_str());
-                }
-                KeyValue::new("http.response.status_code", i64::from(status.as_u16()))
+                // As for the server's requests, only a server error is one: the admin API
+                // answers 404 and 409 in the normal course of things.
+                let error_type = status.is_server_error().then(|| status.as_str().to_owned());
+                (Some(i64::from(status.as_u16())), error_type)
             }
-            Err(error) => {
-                let error_type = error_type(error);
-                span.record("otel.status_code", "ERROR");
-                span.record("error.type", error_type);
-                KeyValue::new("error.type", error_type)
-            }
+            Err(error) => (None, Some(error_type(error).to_owned())),
         };
-        let attributes = [
+        if let Some(error_type) = &error_type {
+            span.record("otel.status_code", "ERROR");
+            span.record("error.type", error_type.as_str());
+        }
+        let attributes: Vec<_> = [
             KeyValue::new("http.request.method", method),
             KeyValue::new("url.template", route),
             KeyValue::new("server.address", self.host.clone()),
-            outcome,
-        ];
+        ]
+        .into_iter()
+        .chain(
+            self.port
+                .map(|port| KeyValue::new("server.port", i64::from(port))),
+        )
+        .chain(status.map(|status| KeyValue::new("http.response.status_code", status)))
+        .chain(error_type.map(|error_type| KeyValue::new("error.type", error_type)))
+        .collect();
         self.request_duration
             .record(duration.as_secs_f64(), &attributes);
     }
