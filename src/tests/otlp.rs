@@ -7,6 +7,7 @@
 use std::process::{Command, Output};
 
 use status_list_portal::Env;
+use status_list_portal::config::PublicOrigin;
 use status_list_portal::metrics::{Metrics, SignInOutcome};
 use status_list_portal::telemetry::{Process, Telemetry};
 use status_list_portal::util::logging::LogFormat;
@@ -72,7 +73,8 @@ fn export_every_signal() {
     let telemetry = Telemetry::from_env(Env::Test, Process::Server).unwrap();
     telemetry.init_subscriber(LogFormat::Text).unwrap();
 
-    Metrics::new(&telemetry.meter()).sign_in(SignInOutcome::Succeeded);
+    let origin = PublicOrigin::parse("https://portal.example.com").unwrap();
+    Metrics::new(&telemetry.meter(), &origin).sign_in(SignInOutcome::Succeeded);
     tracing::info_span!("request").in_scope(|| tracing::info!("answered"));
 
     telemetry.shutdown();

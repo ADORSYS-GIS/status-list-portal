@@ -8,6 +8,7 @@ use http::{Method, StatusCode};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Histogram, Meter, UpDownCounter};
 
+use crate::config::PublicOrigin;
 use crate::db;
 
 /// Bucket boundaries, in seconds, that the semantic conventions advise for HTTP durations.
@@ -27,6 +28,9 @@ pub struct Metrics {
     sign_ins: Counter<u64>,
     registrations: Counter<u64>,
     sandbox_refusals: Counter<u64>,
+    /// The scheme browsers reach the portal with. A proxy may forward requests over plain
+    /// HTTP, so the request itself cannot tell.
+    url_scheme: &'static str,
 }
 
 /// How a sign-in with GitHub ended.
@@ -62,9 +66,11 @@ pub enum SandboxLimit {
 }
 
 impl Metrics {
-    pub fn new(meter: &Meter) -> Self {
+    /// Instruments that record with `meter`, for a portal that browsers reach at `origin`.
+    pub fn new(meter: &Meter, origin: &PublicOrigin) -> Self {
         Self {
             meter: meter.clone(),
+            url_scheme: origin.scheme(),
             request_duration: meter
                 .f64_histogram("http.server.request.duration")
                 .with_description("How long the server took to answer requests.")
@@ -130,7 +136,10 @@ impl Metrics {
     /// Counts a request as active until the returned guard is dropped.
     #[must_use]
     pub(crate) fn active_request(&self, method: &Method) -> ActiveRequest<'_> {
-        let attributes = [KeyValue::new("http.request.method", method_name(method))];
+        let attributes = [
+            KeyValue::new("http.request.method", method_name(method)),
+            KeyValue::new("url.scheme", self.url_scheme),
+        ];
         self.active_requests.add(1, &attributes);
         ActiveRequest {
             counter: &self.active_requests,
@@ -151,6 +160,7 @@ impl Metrics {
         let attributes: Vec<_> = [
             KeyValue::new("http.request.method", method_name(method)),
             KeyValue::new("http.response.status_code", i64::from(status.as_u16())),
+            KeyValue::new("url.scheme", self.url_scheme),
         ]
         .into_iter()
         .chain(route.map(|route| KeyValue::new("http.route", route.to_owned())))
@@ -198,7 +208,7 @@ impl Metrics {
 /// Keeps a request counted as active while it lives.
 pub(crate) struct ActiveRequest<'a> {
     counter: &'a UpDownCounter<i64>,
-    attributes: [KeyValue; 1],
+    attributes: [KeyValue; 2],
 }
 
 impl Drop for ActiveRequest<'_> {

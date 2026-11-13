@@ -39,7 +39,7 @@ impl ServerContext {
     /// Opens no connection yet.
     pub fn from_config(config: Config, meter: &Meter) -> anyhow::Result<Self> {
         let db = db::pool(&config.database)?;
-        let metrics = Metrics::new(meter);
+        let metrics = Metrics::new(meter, &config.server.origin);
         metrics.track_db_pool(&db);
         let github = GitHub::new(&config.github, &config.server.origin)?;
         let admin_api = AdminApi::new(&config.admin_api, meter)?;

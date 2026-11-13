@@ -44,8 +44,8 @@ The exporter's queue is bounded: when it is full, spans are dropped rather than 
 
 | Metric | Type | Attributes | What it answers |
 | --- | --- | --- | --- |
-| `http.server.request.duration` (s) | histogram | `http.request.method`, `http.route`, `http.response.status_code`, and `error.type` for a server error | How many requests each route answers, how many fail, and how fast. |
-| `http.server.active_requests` | up-down counter | `http.request.method` | How many requests are in progress. |
+| `http.server.request.duration` (s) | histogram | `http.request.method`, `http.route`, `http.response.status_code`, `url.scheme`, and `error.type` for a server error | How many requests each route answers, how many fail, and how fast. |
+| `http.server.active_requests` | up-down counter | `http.request.method`, `url.scheme` | How many requests are in progress. |
 | `http.client.request.duration` (s) | histogram | `http.request.method`, `url.template`, `server.address`, `server.port`, `http.response.status_code` when the admin API answered, and `error.type` for a server error or no answer | How the admin API answers the portal, and how long it takes until its response headers arrive. |
 | `db.client.connection.count` | up-down counter | `db.client.connection.pool.name`, `db.client.connection.state` (`idle`, `used`) | How full the database pool is. |
 | `db.client.connection.pending_requests` | up-down counter | `db.client.connection.pool.name` | How many requests wait for a database connection: above zero, the pool is too small. |
@@ -53,7 +53,7 @@ The exporter's queue is bounded: when it is full, spans are dropped rather than 
 | `portal.registrations` | counter | `outcome`: `created`, `requested` | How many sandbox issuers developers register, at once or for approval. |
 | `portal.sandbox.refusals` | counter | `limit`: `registrations_per_account`, `issuers_per_account`, `active_issuers` | Which limit turns developers away. `active_issuers` means the sandbox is full. |
 
-The names follow the [semantic conventions](https://opentelemetry.io/docs/specs/semconv/) where one applies. Prometheus's default translation writes them with underscores and a unit or `_total` suffix, such as `http_server_request_duration_seconds` and `portal_sign_ins_total`. A request that matches no route has no `http.route`, and a method HTTP does not define is recorded as `_OTHER`, so no client can add series by making up paths or methods.
+The names follow the [semantic conventions](https://opentelemetry.io/docs/specs/semconv/) where one applies. Prometheus's default translation writes them with underscores and a unit or `_total` suffix, such as `http_server_request_duration_seconds` and `portal_sign_ins_total`. `url.scheme` is the scheme of `APP_SERVER__ORIGIN`, which browsers use, even when a proxy forwards requests over plain HTTP. A request that matches no route has no `http.route`, and a method HTTP does not define is recorded as `_OTHER`, so no client can add series by making up paths or methods.
 
 Operator commands export no metrics: a process that lasts a second would only add series that end at once.
 

@@ -317,6 +317,7 @@ async fn requests_are_measured_by_route() {
         ("http.request.method", "GET"),
         ("http.route", "/api/v1/terms"),
         ("http.response.status_code", "200"),
+        ("url.scheme", "https"),
     ];
     assert_eq!(metrics.count("http.server.request.duration", &terms), 1);
     assert_eq!(metrics.count("http.server.request.duration", &[]), 2);
