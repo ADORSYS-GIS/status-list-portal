@@ -53,7 +53,7 @@ async fn come_back(anon: &MockAnonymousUser, cookie: &str, query: &str) -> Respo
     anon.run(request).await
 }
 
-async fn sign_in(anon: &MockAnonymousUser) -> Response {
+pub(crate) async fn sign_in(anon: &MockAnonymousUser) -> Response {
     let sign_in = start_sign_in(anon).await;
     let query = format!("code={CODE}&state={}", sign_in.state);
     come_back(anon, &sign_in.cookie, &query).await
@@ -76,7 +76,7 @@ fn query_param(url: &Url, name: &str) -> String {
 }
 
 /// GitHub trades the code for a token and reports octocat, with these email addresses.
-async fn github_approves(github: &MockServer, emails: Value) {
+pub(crate) async fn github_approves(github: &MockServer, emails: Value) {
     let bearer = format!("Bearer {TOKEN}");
     Mock::given(method("POST"))
         .and(path("/login/oauth/access_token"))
@@ -123,7 +123,7 @@ fn assert_failed(response: &Response, reason: &str) {
     assert!(response.cookie(SESSION_COOKIE).is_none());
 }
 
-fn verified_primary_email() -> Value {
+pub(crate) fn verified_primary_email() -> Value {
     json!([
         { "email": "octo@example.org", "primary": false, "verified": true },
         { "email": "octocat@example.com", "primary": true, "verified": true },

@@ -10,6 +10,7 @@ use serde_json::Value;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, ResponseTemplate};
 
+use crate::session::{github_approves, sign_in, verified_primary_email};
 use crate::util::admin_api::{
     Counts, issuer_json, issuer_response, new_issuer_body, sandbox_counts,
 };
@@ -255,6 +256,32 @@ fn json_line(recorder: &TelemetryRecorder, message: &str) -> Value {
         .map(|line| serde_json::from_str::<Value>(line).expect("a line is not JSON"))
         .find(|line| line["message"] == message)
         .unwrap_or_else(|| panic!("no line says {message:?}: {lines}"))
+}
+
+#[tokio::test]
+async fn sign_ins_export_no_personal_data_at_debug() {
+    let recorder = TelemetryRecorder::debug(Sampler::AlwaysOn);
+    let (app, anon) = TestApp::init().empty().await;
+    github_approves(app.github(), verified_primary_email()).await;
+
+    let response = sign_in(&anon).await;
+
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let exported = format!("{:?}\n{:?}", recorder.spans(), recorder.logs());
+    // The login is in the name and the email address. A database client that logs a query's
+    // parameters writes text as a list of bytes.
+    for value in ["octocat", "Octocat"] {
+        let bytes = format!("{:?}", value.as_bytes());
+        let bytes = bytes.trim_matches(['[', ']']);
+        assert!(
+            !exported.contains(value),
+            "{value} was exported: {exported}"
+        );
+        assert!(
+            !exported.contains(bytes),
+            "{value} was exported: {exported}"
+        );
+    }
 }
 
 #[tokio::test]
