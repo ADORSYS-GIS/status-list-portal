@@ -5,7 +5,7 @@ version: 1
 issuers: []
 admins:
   - id: portal
-    scopes: [issuers:read, issuers:write]
+    scopes: ['issuers:read', 'issuers:write']
     keys:
       - kid: test-admin-key
         alg: ES256
