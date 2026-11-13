@@ -10,7 +10,7 @@ use crate::auth::AuthenticatedUser;
 use crate::models::TermsAcceptance;
 use crate::server::ServerContext;
 use crate::util::JsonBody;
-use crate::util::errors::{self, ApiErrorResponse, AppResult};
+use crate::util::errors::{self, ApiErrorCode, ApiErrorResponse, AppResult};
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct TermsResponse {
@@ -67,8 +67,7 @@ pub async fn accept_terms(
     let current = ctx.config.terms.version.as_str();
     if request.version != current {
         return Err(errors::custom(
-            StatusCode::CONFLICT,
-            "terms_changed",
+            ApiErrorCode::TermsChanged,
             "These terms are no longer current. Please read the current terms first.",
         ));
     }

@@ -1,7 +1,8 @@
 use axum::extract::FromRequest;
 use axum::extract::rejection::JsonRejection;
+use http::StatusCode;
 
-use super::errors::{BoxedAppError, custom};
+use super::errors::{ApiErrorCode, BoxedAppError, custom};
 
 /// A JSON request body. Unlike `axum::Json`, a body it cannot read gets the API's error
 /// format.
@@ -11,14 +12,19 @@ pub struct JsonBody<T>(pub T);
 
 impl From<JsonRejection> for BoxedAppError {
     fn from(rejection: JsonRejection) -> Self {
-        let code = match rejection.status() {
-            http::StatusCode::BAD_REQUEST => "invalid_json",
-            http::StatusCode::UNPROCESSABLE_ENTITY => "invalid_request_body",
-            http::StatusCode::UNSUPPORTED_MEDIA_TYPE => "unsupported_media_type",
-            http::StatusCode::PAYLOAD_TOO_LARGE => "payload_too_large",
-            _ => "invalid_request_body",
+        let code = match &rejection {
+            JsonRejection::JsonSyntaxError(_) => ApiErrorCode::InvalidJson,
+            JsonRejection::JsonDataError(_) => ApiErrorCode::InvalidRequestBody,
+            JsonRejection::MissingJsonContentType(_) => ApiErrorCode::UnsupportedMediaType,
+            JsonRejection::BytesRejection(error)
+                if error.status() == StatusCode::PAYLOAD_TOO_LARGE =>
+            {
+                ApiErrorCode::PayloadTooLarge
+            }
+            JsonRejection::BytesRejection(_) => ApiErrorCode::BodyReadFailed,
+            _ => ApiErrorCode::InvalidRequestBody,
         };
-        custom(rejection.status(), code, rejection.body_text())
+        custom(code, rejection.body_text())
     }
 }
 

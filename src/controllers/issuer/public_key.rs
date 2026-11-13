@@ -4,11 +4,10 @@
 //! the common mistakes early, refuse private keys, and drop every member the admin API does
 //! not read.
 
-use http::StatusCode;
 use serde_json::{Map, Value};
 
 use crate::admin_api::{KeyType, PublicJwk, SigningAlgorithm};
-use crate::util::errors::{self, BoxedAppError};
+use crate::util::errors::{self, ApiErrorCode, BoxedAppError};
 
 /// Members that only private and symmetric keys have (RFC 7518 §6).
 const PRIVATE_MEMBERS: [&str; 8] = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
@@ -58,22 +57,19 @@ fn shape(alg: SigningAlgorithm) -> KeyShape {
 pub(super) fn parse(value: &Value, alg: SigningAlgorithm) -> Result<PublicJwk, BoxedAppError> {
     if holds_private_key(value) {
         return Err(errors::custom(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "private_key_submitted",
+            ApiErrorCode::PrivateKeySubmitted,
             PRIVATE_KEY,
         ));
     }
     let jwk = value.as_object().ok_or_else(|| {
         errors::custom(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_public_key",
+            ApiErrorCode::InvalidPublicKey,
             "The public key must be a JSON Web Key: a JSON object.",
         )
     })?;
     if jwk.get("use").is_some_and(|key_use| key_use != "sig") {
         return Err(errors::custom(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_public_key",
+            ApiErrorCode::InvalidPublicKey,
             "The key's \"use\" must be \"sig\".",
         ));
     }
@@ -82,8 +78,7 @@ pub(super) fn parse(value: &Value, alg: SigningAlgorithm) -> Result<PublicJwk, B
         .is_some_and(|key_alg| *key_alg != alg.to_string())
     {
         return Err(errors::custom(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_public_key",
+            ApiErrorCode::InvalidPublicKey,
             format!("The key's \"alg\" must be {alg}, the algorithm chosen for the issuer."),
         ));
     }
@@ -97,8 +92,7 @@ pub(super) fn parse(value: &Value, alg: SigningAlgorithm) -> Result<PublicJwk, B
             .all(|name| member(jwk, name).is_some_and(is_base64url));
     if !fits {
         return Err(errors::custom(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid_public_key",
+            ApiErrorCode::InvalidPublicKey,
             format!("For {alg}, the public key must be {}.", shape.description),
         ));
     }

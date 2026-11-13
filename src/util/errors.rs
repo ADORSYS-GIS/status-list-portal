@@ -1,8 +1,8 @@
 //! Errors returned by request handlers.
 //!
 //! Handlers return [`AppResult`]. An error built with [`custom`] or one of its shorthands
-//! ([`bad_request`], [`forbidden`], [`not_found`], ...) reaches the user with its status and
-//! message. `?` converts the errors of the database and of the admin API with the `From`
+//! ([`unauthorized`], [`not_found`], ...) reaches the user with its code and message.
+//! `?` converts the errors of the database and of the admin API with the `From`
 //! impls below. Every other error becomes a `500 Internal Server Error`: its details are
 //! logged and never sent to the client.
 
@@ -16,12 +16,11 @@ use std::fmt;
 use axum::response::{IntoResponse, Response};
 use derive_more::Display;
 use diesel_async::pooled_connection::deadpool::PoolError;
-use http::StatusCode;
 use tracing::{error, warn};
 
 use crate::admin_api::{AdminApiError, ErrorCode};
 
-pub use json::{ApiErrorResponse, custom};
+pub use json::{ApiErrorCode, ApiErrorResponse, custom};
 
 pub type BoxedAppError = Box<dyn AppError>;
 pub type AppResult<T> = Result<T, BoxedAppError>;
@@ -77,20 +76,17 @@ impl From<AdminApiError> for BoxedAppError {
         match error.code() {
             Some(ErrorCode::IssuerNotFound) => not_found(),
             Some(ErrorCode::KeyMaterialInUse) => custom(
-                StatusCode::CONFLICT,
-                "key_material_in_use",
+                ApiErrorCode::KeyMaterialInUse,
                 "This public key is already registered, maybe for an issuer you deleted, since \
                  a deleted issuer keeps its key. Make a new key pair, or, if you just \
                  registered this one, check your issuers.",
             ),
             Some(ErrorCode::InvalidPublicJwk | ErrorCode::UnsupportedAlgorithm) => custom(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "invalid_public_key",
+                ApiErrorCode::InvalidPublicKey,
                 "The Status List Server does not accept this public key.",
             ),
             Some(ErrorCode::PreconditionFailed) => custom(
-                StatusCode::CONFLICT,
-                "issuer_changed",
+                ApiErrorCode::IssuerChanged,
                 "The issuer changed while this request ran. Please try again.",
             ),
             Some(ErrorCode::ServiceUnavailable) => {
@@ -115,53 +111,27 @@ pub fn describe(error: &(dyn Error + 'static)) -> String {
         .join(": ")
 }
 
-pub fn bad_request(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
-    custom(StatusCode::BAD_REQUEST, "bad_request", detail)
-}
-
 pub fn unauthorized() -> BoxedAppError {
     custom(
-        StatusCode::UNAUTHORIZED,
-        "unauthorized",
+        ApiErrorCode::Unauthorized,
         "This action requires signing in",
     )
 }
 
 pub fn bad_gateway(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
-    custom(StatusCode::BAD_GATEWAY, "bad_gateway", detail)
-}
-
-pub fn forbidden(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
-    custom(StatusCode::FORBIDDEN, "forbidden", detail)
-}
-
-/// The request is well-formed but its content cannot be accepted.
-pub fn unprocessable(detail: impl Into<Cow<'static, str>>) -> BoxedAppError {
-    custom(
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "unprocessable_entity",
-        detail,
-    )
+    custom(ApiErrorCode::BadGateway, detail)
 }
 
 pub fn not_found() -> BoxedAppError {
-    custom(StatusCode::NOT_FOUND, "not_found", "Not Found")
+    custom(ApiErrorCode::NotFound, "Not Found")
 }
 
 pub fn method_not_allowed() -> BoxedAppError {
-    custom(
-        StatusCode::METHOD_NOT_ALLOWED,
-        "method_not_allowed",
-        "Method Not Allowed",
-    )
+    custom(ApiErrorCode::MethodNotAllowed, "Method Not Allowed")
 }
 
 pub fn service_unavailable() -> BoxedAppError {
-    custom(
-        StatusCode::SERVICE_UNAVAILABLE,
-        "service_unavailable",
-        "Service Unavailable",
-    )
+    custom(ApiErrorCode::ServiceUnavailable, "Service Unavailable")
 }
 
 /// An internal error described by a message that is logged and never shown to the user.
@@ -187,6 +157,7 @@ impl AppError for InternalAppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http::StatusCode;
     use serde_json::{Value, json};
 
     async fn body_json(response: Response) -> Value {
@@ -197,19 +168,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn user_errors_carry_their_status_and_detail() {
-        let response = bad_request("display name is too long").response();
+    async fn user_errors_carry_their_code_and_detail() {
+        let response =
+            custom(ApiErrorCode::InvalidDisplayName, "display name is too long").response();
 
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(
             body_json(response).await,
-            json!({ "errors": [{ "code": "bad_request", "detail": "display name is too long" }] })
+            json!({ "errors": [{ "code": "invalid_display_name", "detail": "display name is too long" }] })
         );
     }
 
     #[test]
     fn shorthands_use_their_status() {
-        assert_eq!(forbidden("").response().status(), StatusCode::FORBIDDEN);
         assert_eq!(not_found().response().status(), StatusCode::NOT_FOUND);
         assert_eq!(
             method_not_allowed().response().status(),
@@ -270,50 +241,50 @@ mod tests {
 
     #[tokio::test]
     async fn admin_api_codes_map_to_portal_errors() {
-        for (code, status, portal_code) in [
+        for (code, portal_code, serialized_code) in [
             (
                 ErrorCode::IssuerNotFound,
-                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
                 "not_found",
             ),
             (
                 ErrorCode::KeyMaterialInUse,
-                StatusCode::CONFLICT,
+                ApiErrorCode::KeyMaterialInUse,
                 "key_material_in_use",
             ),
             (
                 ErrorCode::InvalidPublicJwk,
-                StatusCode::UNPROCESSABLE_ENTITY,
+                ApiErrorCode::InvalidPublicKey,
                 "invalid_public_key",
             ),
             (
                 ErrorCode::UnsupportedAlgorithm,
-                StatusCode::UNPROCESSABLE_ENTITY,
+                ApiErrorCode::InvalidPublicKey,
                 "invalid_public_key",
             ),
             (
                 ErrorCode::PreconditionFailed,
-                StatusCode::CONFLICT,
+                ApiErrorCode::IssuerChanged,
                 "issuer_changed",
             ),
             (
                 ErrorCode::ServiceUnavailable,
-                StatusCode::SERVICE_UNAVAILABLE,
+                ApiErrorCode::ServiceUnavailable,
                 "service_unavailable",
             ),
             (
                 ErrorCode::InvalidToken,
-                StatusCode::BAD_GATEWAY,
+                ApiErrorCode::BadGateway,
                 "bad_gateway",
             ),
-            (ErrorCode::Unknown, StatusCode::BAD_GATEWAY, "bad_gateway"),
+            (ErrorCode::Unknown, ApiErrorCode::BadGateway, "bad_gateway"),
         ] {
             let response = BoxedAppError::from(refused(code)).response();
 
-            assert_eq!(response.status(), status, "{code}");
+            assert_eq!(response.status(), portal_code.status(), "{code}");
             assert_eq!(
                 body_json(response).await["errors"][0]["code"],
-                portal_code,
+                serialized_code,
                 "{code}"
             );
         }
