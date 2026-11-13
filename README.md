@@ -85,10 +85,10 @@ test source when behavior changes.
 
 ### Adding database migrations
 
-Install Diesel CLI with PostgreSQL support and create the migration:
+Install Diesel CLI with PostgreSQL support at the version pinned in CI. Then create
+the migration:
 
 ```sh
-cargo install diesel_cli --version 2.3.5 --no-default-features --features postgres --locked
 diesel migration generate <name>
 ```
 
