@@ -15,15 +15,17 @@ pub const OPERATOR_COMMAND_SPAN: &str = "operator.command";
 const SIGN_IN: (&str, &str) = ("GET", "/api/v1/session/github/callback");
 const REGISTRATION: (&str, &str) = ("POST", "/api/v1/issuers");
 
-/// How many sign-in traces are kept each second whatever the baseline says. Anyone can call
-/// the callback, so a flood of calls would otherwise be kept in full and crowd out the
-/// other traces; beyond this, the baseline decides.
-const SIGN_INS_KEPT_PER_SECOND: u32 = 10;
+/// How many sign-in traces, and how many registration traces, are kept each second
+/// whatever the baseline says. Anyone can send both, a registration without a session
+/// included, since the sampler decides before the request is authenticated. A flood would
+/// otherwise be kept in full and crowd out the other traces; beyond this, the baseline
+/// decides.
+const KEPT_PER_SECOND: u32 = 10;
 
-/// Keeps every trace of an operator command or a registration, and of a sign-in up to
-/// [`SIGN_INS_KEPT_PER_SECOND`], and leaves other traces to `baseline`. A span with a parent
-/// follows its parent, so a kept trace keeps all its spans. Health checks never get here:
-/// their spans are `DEBUG`, below what is exported.
+/// Keeps every trace of an operator command, and of a sign-in or a registration up to
+/// [`KEPT_PER_SECOND`], and leaves other traces to `baseline`. A span with a parent follows
+/// its parent, so a kept trace keeps all its spans. Health checks never get here: their
+/// spans are `DEBUG`, below what is exported.
 pub fn sampler(baseline: Box<dyn ShouldSample>) -> Sampler {
     Sampler::ParentBased(Box::new(PortalSampler::new(baseline)))
 }
@@ -31,15 +33,17 @@ pub fn sampler(baseline: Box<dyn ShouldSample>) -> Sampler {
 #[derive(Debug, Clone)]
 struct PortalSampler {
     baseline: Box<dyn ShouldSample>,
-    /// Shared by the sampler's clones, which the SDK may make.
+    /// The limits are shared by the sampler's clones, which the SDK may make.
     sign_ins: Arc<RateLimit>,
+    registrations: Arc<RateLimit>,
 }
 
 impl PortalSampler {
     fn new(baseline: Box<dyn ShouldSample>) -> Self {
         Self {
             baseline,
-            sign_ins: Arc::new(RateLimit::per_second(SIGN_INS_KEPT_PER_SECOND)),
+            sign_ins: Arc::new(RateLimit::per_second(KEPT_PER_SECOND)),
+            registrations: Arc::new(RateLimit::per_second(KEPT_PER_SECOND)),
         }
     }
 }
@@ -63,10 +67,13 @@ impl ShouldSample for PortalSampler {
         let method = attribute("http.request.method");
         let route = attribute("http.route");
 
-        let request = method.as_deref().zip(route.as_deref());
+        let limit = match method.as_deref().zip(route.as_deref()) {
+            Some(SIGN_IN) => Some(&self.sign_ins),
+            Some(REGISTRATION) => Some(&self.registrations),
+            _ => None,
+        };
         let always = name == OPERATOR_COMMAND_SPAN
-            || request == Some(REGISTRATION)
-            || (request == Some(SIGN_IN) && self.sign_ins.try_take(Instant::now()));
+            || limit.is_some_and(|limit| limit.try_take(Instant::now()));
         let sampler: &dyn ShouldSample = if always {
             &Sampler::AlwaysOn
         } else {
@@ -175,26 +182,23 @@ mod tests {
     }
 
     #[test]
-    fn sign_ins_beyond_the_limit_follow_the_baseline() {
+    fn sign_ins_and_registrations_beyond_their_limits_follow_the_baseline() {
         let sampler = PortalSampler::new(Box::new(Sampler::AlwaysOff));
         let sign_in = request("GET", "/api/v1/session/github/callback");
-        for _ in 0..SIGN_INS_KEPT_PER_SECOND {
+        let registration = request("POST", "/api/v1/issuers");
+        // Each has a limit of its own: a flood of sign-ins leaves registrations kept.
+        for request in [sign_in, registration] {
+            for _ in 0..KEPT_PER_SECOND {
+                assert_eq!(
+                    decide(&sampler, "request", &request),
+                    SamplingDecision::RecordAndSample
+                );
+            }
             assert_eq!(
-                decide(&sampler, "request", &sign_in),
-                SamplingDecision::RecordAndSample
+                decide(&sampler, "request", &request),
+                SamplingDecision::Drop
             );
         }
-        assert_eq!(
-            decide(&sampler, "request", &sign_in),
-            SamplingDecision::Drop
-        );
-
-        // Registrations have no such limit.
-        let registration = request("POST", "/api/v1/issuers");
-        assert_eq!(
-            decide(&sampler, "request", &registration),
-            SamplingDecision::RecordAndSample
-        );
     }
 
     #[test]
