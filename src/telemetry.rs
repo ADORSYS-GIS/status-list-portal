@@ -48,6 +48,12 @@ pub const SERVICE_NAME: &str = "status-list-portal";
 /// the SDK would otherwise report on their own exports.
 const UNEXPORTED_TARGETS: [&str; 4] = ["opentelemetry", "hyper", "h2", "reqwest"];
 
+/// The portal's own targets, the library's and the binary's, and the request logs: their
+/// log records are exported at any level `RUST_LOG` asks for. Other libraries' records are
+/// exported from `INFO` up only, since below that some log the values they handle, such as
+/// a database query's parameters.
+const VERBOSE_TARGETS: [&str; 3] = ["status_list_portal", "portal", "tower_http"];
+
 /// The process that sends the telemetry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Process {
@@ -168,14 +174,19 @@ where
 }
 
 /// The layer that exports log records to `provider`: those `filter` lets through, which
-/// for the server is what `RUST_LOG` lets through to stdout.
+/// for the server is what `RUST_LOG` lets through to stdout, but only `INFO` and above from
+/// targets other than the [`VERBOSE_TARGETS`].
 pub fn log_layer<S, F>(provider: &SdkLoggerProvider, filter: F) -> impl Layer<S>
 where
     S: Subscriber + for<'span> LookupSpan<'span>,
     F: Filter<S> + 'static,
 {
-    OpenTelemetryTracingBridge::new(provider)
-        .with_filter(filter.and(exported_targets(LevelFilter::TRACE)))
+    let targets = VERBOSE_TARGETS
+        .into_iter()
+        .fold(exported_targets(LevelFilter::INFO), |targets, target| {
+            targets.with_target(target, LevelFilter::TRACE)
+        });
+    OpenTelemetryTracingBridge::new(provider).with_filter(filter.and(targets))
 }
 
 /// Every target at `level` and above, but the [`UNEXPORTED_TARGETS`].

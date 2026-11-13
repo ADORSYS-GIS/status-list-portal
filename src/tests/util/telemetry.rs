@@ -18,6 +18,7 @@ use tracing::{Event, Metadata, Subscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 /// Keeps the metrics an app records, for the test to read.
 pub struct MetricsRecorder {
@@ -117,8 +118,8 @@ fn carries<'a>(attributes: impl Iterator<Item = &'a KeyValue>, wanted: &[(&str, 
 }
 
 /// Records what this thread exports and logs while it lives, as the server would: spans,
-/// kept or dropped by the portal's sampler with `baseline`, log records, and log lines at
-/// `INFO` and above, the default `RUST_LOG`.
+/// kept or dropped by the portal's sampler with `baseline`, and the log records and log
+/// lines that a `RUST_LOG` of one level lets through, `INFO` unless said otherwise.
 pub struct TelemetryRecorder {
     tracer_provider: SdkTracerProvider,
     spans: InMemorySpanExporter,
@@ -130,15 +131,20 @@ pub struct TelemetryRecorder {
 impl TelemetryRecorder {
     /// Records log lines as text.
     pub fn start(baseline: Sampler) -> Self {
-        Self::with_format(baseline, LogFormat::Text)
+        Self::with(baseline, LogFormat::Text, LevelFilter::INFO)
     }
 
     /// Records log lines as JSON.
     pub fn json(baseline: Sampler) -> Self {
-        Self::with_format(baseline, LogFormat::Json)
+        Self::with(baseline, LogFormat::Json, LevelFilter::INFO)
     }
 
-    fn with_format(baseline: Sampler, format: LogFormat) -> Self {
+    /// Records as if `RUST_LOG` were `debug`, as during an incident.
+    pub fn debug(baseline: Sampler) -> Self {
+        Self::with(baseline, LogFormat::Text, LevelFilter::DEBUG)
+    }
+
+    fn with(baseline: Sampler, format: LogFormat, level: LevelFilter) -> Self {
         keep_callsites_undecided();
         let spans = InMemorySpanExporter::default();
         let tracer_provider = SdkTracerProvider::builder()
@@ -151,9 +157,9 @@ impl TelemetryRecorder {
             .build();
         let lines = Lines::default();
         let subscriber = tracing_subscriber::registry()
-            .with(logging::lines_layer(format, lines.clone()).with_filter(LevelFilter::INFO))
+            .with(logging::lines_layer(format, lines.clone()).with_filter(level))
             .with(telemetry::trace_layer(&tracer_provider))
-            .with(telemetry::log_layer(&logger_provider, LevelFilter::INFO));
+            .with(telemetry::log_layer(&logger_provider, level));
         let guard = tracing::subscriber::set_default(subscriber);
         Self {
             tracer_provider,
@@ -237,12 +243,14 @@ pub fn attribute(span: &SpanData, key: &str) -> Option<String> {
 /// Installs, once, a global subscriber that records nothing and leaves every callsite
 /// undecided. Without it, a callsite first reached on a thread with no
 /// [`TelemetryRecorder`] can keep "never" as its interest while another thread starts one,
-/// and that recorder then misses the callsite's events and spans.
+/// and that recorder then misses the callsite's events and spans. Like the server's, it
+/// turns records of the `log` crate, which some libraries write with, into events.
 pub fn keep_callsites_undecided() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| {
-        tracing::subscriber::set_global_default(Undecided)
-            .expect("another global subscriber is installed");
+        Undecided
+            .try_init()
+            .expect("another global subscriber or logger is installed");
     });
 }
 
