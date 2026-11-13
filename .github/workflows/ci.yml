@@ -7,6 +7,10 @@ on:
       - main
   merge_group:
   workflow_dispatch:
+  # Runs the live-admin-api job against the server's develop branch as well, so a change to
+  # its admin API shows up before anyone moves the pin below.
+  schedule:
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
@@ -101,8 +105,9 @@ jobs:
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       # No release has the admin API yet: a commit of develop, which holds what the next
-      # release ships. Pin that release's tag once it is out.
-      STATUS_LIST_SERVER_REF: 6f53ece6e7eb5eb60b6a2776d93d8ff38f70092e
+      # release ships. Pin that release's tag once it is out. The nightly run takes develop's
+      # head instead, to catch changes the pin does not have yet.
+      STATUS_LIST_SERVER_REF: ${{ github.event_name == 'schedule' && 'develop' || '6f53ece6e7eb5eb60b6a2776d93d8ff38f70092e' }}
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/portal_test
       LIVE_ADMIN_API_URL: http://127.0.0.1:8002
     steps:
@@ -148,7 +153,8 @@ jobs:
           exit 1
 
       - name: Run the tests against it
-        run: cargo test --test integration --locked live_admin_api
+        # The tests are ignored by default, and fail without LIVE_ADMIN_API_URL when asked for.
+        run: cargo test --test integration --locked live_admin_api -- --ignored
 
       - name: Show the server's log
         if: failure()

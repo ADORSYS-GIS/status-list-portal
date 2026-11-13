@@ -1,9 +1,10 @@
 //! The admin API client and the issuer routes against a real Status List Server, rather than
 //! the stand-in the other tests use, so that a change in the server's contract fails here.
 //!
-//! The tests run when `LIVE_ADMIN_API_URL` names the server's admin listener; they pass
-//! without checking anything otherwise. `scripts/live-status-list-server.sh` starts a server
-//! for them. Every test registers issuers with keys and owners of its own, so the tests can
+//! The tests are ignored unless asked for with `--ignored`, and then fail unless
+//! `LIVE_ADMIN_API_URL` names the server's admin listener, so a run that was meant to check
+//! the server never passes without doing so. `scripts/live-status-list-server.sh` starts a
+//! server for them. Every test registers issuers with keys and owners of its own, so the tests can
 //! run again against the same server.
 
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -29,16 +30,14 @@ use crate::util::{
 /// GitHub account ids no earlier run used: they start from the time the tests started.
 static NEXT_GH_ID: AtomicI64 = AtomicI64::new(0);
 
-/// The real server's admin listener, or `None` when the tests are not to run.
-fn live_url() -> Option<Url> {
-    let Some(url) = std::env::var("LIVE_ADMIN_API_URL")
+/// The real server's admin listener.
+#[track_caller]
+fn live_url() -> Url {
+    let url = std::env::var("LIVE_ADMIN_API_URL")
         .ok()
         .filter(|url| !url.is_empty())
-    else {
-        eprintln!("LIVE_ADMIN_API_URL is not set: skipping the test against a real server");
-        return None;
-    };
-    Some(Url::parse(&url).expect("LIVE_ADMIN_API_URL is not a URL"))
+        .expect("set LIVE_ADMIN_API_URL to the admin listener of a Status List Server");
+    Url::parse(&url).expect("LIVE_ADMIN_API_URL is not a URL")
 }
 
 /// A client that signs in as the portal's admin principal, with tokens for `audience`.
@@ -107,8 +106,9 @@ async fn suspend(api: &AdminApi, owner: &Owner, id: &str) {
 }
 
 #[tokio::test]
+#[ignore = "needs a Status List Server: see scripts/live-status-list-server.sh"]
 async fn created_issuers_are_sandbox_issuers_of_their_owner() {
-    let Some(url) = live_url() else { return };
+    let url = live_url();
     let api = client(&url, ADMIN_AUDIENCE);
     let owner = Owner::github(new_gh_id());
     let new_issuer = new_issuer();
@@ -141,8 +141,9 @@ async fn created_issuers_are_sandbox_issuers_of_their_owner() {
 }
 
 #[tokio::test]
+#[ignore = "needs a Status List Server: see scripts/live-status-list-server.sh"]
 async fn an_issuer_is_read_by_its_owner_only() {
-    let Some(url) = live_url() else { return };
+    let url = live_url();
     let api = client(&url, ADMIN_AUDIENCE);
     let owner = Owner::github(new_gh_id());
     let someone_else = Owner::github(new_gh_id());
@@ -169,8 +170,9 @@ async fn an_issuer_is_read_by_its_owner_only() {
 }
 
 #[tokio::test]
+#[ignore = "needs a Status List Server: see scripts/live-status-list-server.sh"]
 async fn issuers_are_listed_by_owner_state_tier_and_source() {
-    let Some(url) = live_url() else { return };
+    let url = live_url();
     let api = client(&url, ADMIN_AUDIENCE);
     let owner = Owner::github(new_gh_id());
     let issuers = api.issuers_of(&owner);
@@ -221,8 +223,9 @@ async fn issuers_are_listed_by_owner_state_tier_and_source() {
 }
 
 #[tokio::test]
+#[ignore = "needs a Status List Server: see scripts/live-status-list-server.sh"]
 async fn changes_apply_to_the_version_they_were_read_at() {
-    let Some(url) = live_url() else { return };
+    let url = live_url();
     let api = client(&url, ADMIN_AUDIENCE);
     let owner = Owner::github(new_gh_id());
     let issuers = api.issuers_of(&owner);
@@ -263,8 +266,9 @@ async fn changes_apply_to_the_version_they_were_read_at() {
 }
 
 #[tokio::test]
+#[ignore = "needs a Status List Server: see scripts/live-status-list-server.sh"]
 async fn refusals_carry_the_codes_the_portal_branches_on() {
-    let Some(url) = live_url() else { return };
+    let url = live_url();
     let api = client(&url, ADMIN_AUDIENCE);
     let owner = Owner::github(new_gh_id());
     let issuers = api.issuers_of(&owner);
@@ -328,8 +332,9 @@ fn new_issuer_body() -> Value {
 }
 
 #[tokio::test]
+#[ignore = "needs a Status List Server: see scripts/live-status-list-server.sh"]
 async fn developers_register_renew_and_delete_issuers() {
-    let Some(url) = live_url() else { return };
+    let url = live_url();
     let (app, _) = TestApp::init().with_admin_api_url(url).empty().await;
     let user = app.db_new_user_with_gh_id("octocat", new_gh_id()).await;
     app.accept_terms(user.user()).await;

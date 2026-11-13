@@ -249,7 +249,7 @@ On an issuer's page:
 With the server from step 1 running, the six tests in `src/tests/live_admin_api.rs` pass in under a second. The portal does not need to run; the tests start their own.
 
 ```sh
-LIVE_ADMIN_API_URL=http://127.0.0.1:8002 cargo test --test integration live_admin_api
+LIVE_ADMIN_API_URL=http://127.0.0.1:8002 cargo test --test integration live_admin_api -- --ignored
 ```
 
 The portal's other tests talk to a stand-in for the admin API, which stays the same when the server changes. These tests run the portal's real code against the real server instead:
@@ -263,11 +263,11 @@ The portal's other tests talk to a stand-in for the admin API, which stays the s
 | `refusals_carry_the_codes_the_portal_branches_on` | `key_material_in_use`, `invalid_public_jwk`, `invalid_expiry`, `invalid_token` |
 | `developers_register_renew_and_delete_issuers` | Register, list, view, renew and delete through the portal's own routes |
 
-Each test generates its own keys and GitHub account ids, and suspends what it creates, so the tests can run again against the same server. Without `LIVE_ADMIN_API_URL`, they pass without checking anything, so `cargo test` works as before.
+Each test generates its own keys and GitHub account ids, and suspends what it creates, so the tests can run again against the same server. A test that fails stops before that, and leaves an active issuer behind: drop the server's database (see below) if failed runs pile up. `cargo test` reports the tests as ignored; `--ignored` runs them, and then they fail unless `LIVE_ADMIN_API_URL` is set, so a run meant to check the server never passes without reaching it.
 
-Sending the old `If-Match` header instead of `If-Issuer-Version` makes all six fail. That is the change from adorsys/status-list-server#739 that only a review caught.
+The portal sends the version from the `Issuer-Version` header back as `If-Issuer-Version`, the header adorsys/status-list-server#739 introduced. The server still accepts `If-Match` with the quoted `ETag` too, so these tests would not catch a portal that sent that instead; they do catch one that sends the bare version as `If-Match`, or no version at all.
 
-In CI, the `live-admin-api` job in `.github/workflows/ci.yml` builds the server at `STATUS_LIST_SERVER_REF`, starts it with the same script, and runs these tests.
+In CI, the `live-admin-api` job in `.github/workflows/ci.yml` builds the server at `STATUS_LIST_SERVER_REF`, starts it with the same script, and runs these tests. A nightly run does the same against the head of the server's `develop`, so a change to the admin API fails there before the pin moves to it.
 
 ## Stop and clean up
 

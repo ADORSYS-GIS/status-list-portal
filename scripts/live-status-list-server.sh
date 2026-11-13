@@ -4,8 +4,8 @@
 #
 # Usage: scripts/live-status-list-server.sh <server checkout> <Postgres URL>
 #
-# The checkout must be built first with
-# `cargo build --no-default-features --features postgres`. The admin API then listens on
+# The checkout must be built first with `cargo build --features postgres`; keep the default
+# `memory` feature, without which the server has no binary. The admin API then listens on
 # http://127.0.0.1:8002: pass that to the tests as LIVE_ADMIN_API_URL.
 set -euo pipefail
 

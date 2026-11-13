@@ -68,11 +68,11 @@ Tests use the Postgres from `docker compose`, with a fresh database per test. `b
 
 ### Against a real Status List Server
 
-The tests above talk to a stand-in for the server's admin API. The `live_admin_api` tests talk to a real server instead, so they catch changes to its contract. They are skipped unless `LIVE_ADMIN_API_URL` is set. To run them, build the server from a checkout (`cargo build --features postgres`), create an empty database for it, and start it with this repository's registry:
+The tests above talk to a stand-in for the server's admin API. The `live_admin_api` tests talk to a real server instead, so they catch changes to its contract. They are ignored by default, and fail without `LIVE_ADMIN_API_URL` when asked for with `--ignored`. To run them, build the server from a checkout (`cargo build --features postgres`), create an empty database for it, and start it with this repository's registry:
 
 ```sh
 scripts/live-status-list-server.sh ../status-list-server postgres://postgres:postgres@localhost:5432/status_list
-LIVE_ADMIN_API_URL=http://127.0.0.1:8002 cargo test --test integration live_admin_api
+LIVE_ADMIN_API_URL=http://127.0.0.1:8002 cargo test --test integration live_admin_api -- --ignored
 ```
 
 [docs/live-testing.md](docs/live-testing.md) walks through running the portal against the server by hand.
