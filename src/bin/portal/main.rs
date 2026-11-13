@@ -3,10 +3,13 @@
 mod admin;
 mod server;
 
+use std::process::ExitCode;
+
 use anyhow::Context;
 use clap::Parser;
 use status_list_portal::config::Config;
 use status_list_portal::telemetry::{Process, Telemetry};
+use tracing::error;
 
 /// Developer portal for the Status List Server. Every command reads the `APP_*` settings
 /// that `.env.template` lists, and the operators' commands expect the database that
@@ -20,7 +23,7 @@ enum Command {
     Admin(admin::Command),
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<ExitCode> {
     let command = Command::parse();
     load_dotenv()?;
     let config = Config::from_environment()
@@ -43,6 +46,15 @@ fn main() -> anyhow::Result<()> {
     // The exporters run on threads of their own, and shutting them down blocks until they
     // have sent what they hold, so it waits for the runtime to stop.
     drop(runtime);
+    let result = match result {
+        // The server's logs are where its operators look, so the reason it stopped goes
+        // there, in their format, and is exported before the exporters stop.
+        Err(error) if process == Process::Server => {
+            error!(error = %format!("{error:#}"), "the server stopped");
+            Ok(ExitCode::FAILURE)
+        }
+        result => result.map(|()| ExitCode::SUCCESS),
+    };
     telemetry.shutdown();
     result
 }
