@@ -21,7 +21,7 @@ use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, Span, info_span, warn};
 
 use crate::config::PublicOrigin;
-use crate::util::errors;
+use crate::util::errors::{self, ApiErrorCode};
 
 /// Requests that take longer are answered with `503 Service Unavailable`.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -81,7 +81,11 @@ async fn time_out(request: Request, next: Next) -> Response {
         .await
         .unwrap_or_else(|_elapsed| {
             warn!("request timed out");
-            errors::service_unavailable().response()
+            errors::custom(
+                ApiErrorCode::RequestTimedOut,
+                "The request timed out. Check whether it succeeded before retrying.",
+            )
+            .response()
         })
 }
 
@@ -124,7 +128,7 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             body,
-            json!({ "errors": [{ "detail": "Service Unavailable" }] })
+            json!({ "errors": [{ "code": "request_timed_out", "detail": "The request timed out. Check whether it succeeded before retrying." }] })
         );
     }
 
@@ -148,7 +152,7 @@ mod tests {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             body,
-            json!({ "errors": [{ "detail": "Internal Server Error" }] })
+            json!({ "errors": [{ "code": "internal_error", "detail": "Internal Server Error" }] })
         );
     }
 }
