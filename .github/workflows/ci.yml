@@ -120,8 +120,8 @@ jobs:
       - name: Check schema against migrations
         run: |
           diesel migration run
-          diesel print-schema > "$RUNNER_TEMP/schema.rs"
-          diff -u src/schema.rs "$RUNNER_TEMP/schema.rs"
+          diesel print-schema > src/schema.rs
+          git diff --exit-code -- src/schema.rs
 
   cargo-deny:
     name: cargo-deny

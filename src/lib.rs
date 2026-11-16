@@ -15,6 +15,7 @@ pub mod models;
 pub mod openapi;
 mod router;
 pub mod sandbox;
+/// Diesel table definitions generated from the database migrations.
 pub mod schema;
 pub mod server;
 pub mod util;
