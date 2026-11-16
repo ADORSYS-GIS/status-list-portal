@@ -63,6 +63,7 @@ async fn terms_that_changed_since_reading_are_not_accepted() {
         .await;
 
     assert_snapshot!(response.status(), @"409 Conflict");
+    assert_eq!(response.json()["errors"][0]["code"], "terms_changed");
     assert_eq!(user.get("/api/v1/me").await.json()["terms_accepted"], false);
 }
 

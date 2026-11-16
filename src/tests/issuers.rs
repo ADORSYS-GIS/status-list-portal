@@ -95,6 +95,34 @@ async fn users_list_their_own_issuers() {
 }
 
 #[tokio::test]
+async fn malformed_issuer_list_query_gets_a_coded_json_error() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_user("octocat").await;
+
+    let response = user.get("/api/v1/issuers?cursor=one&cursor=two").await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response.header(http::header::CONTENT_TYPE),
+        Some("application/json")
+    );
+    let body = response.json();
+    assert_eq!(body["errors"][0]["code"], "invalid_query");
+    assert!(
+        body["errors"][0]["detail"]
+            .as_str()
+            .is_some_and(|detail| !detail.is_empty())
+    );
+    assert!(
+        app.admin_api()
+            .received_requests()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn users_get_their_own_issuer() {
     let (app, _anon) = TestApp::init().empty().await;
     let user = app.db_new_user("octocat").await;
@@ -178,6 +206,10 @@ async fn a_registration_under_way_holds_back_others() {
         let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
 
         assert_snapshot!(response.status(), @"503 Service Unavailable");
+        assert_eq!(
+            response.json()["errors"][0]["code"],
+            "issuer_registration_in_progress"
+        );
         QueryResult::Ok(())
     })
     .await
@@ -218,6 +250,7 @@ async fn registering_needs_the_current_terms() {
     let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
 
     assert_snapshot!(response.status(), @"403 Forbidden");
+    assert_eq!(response.json()["errors"][0]["code"], "terms_not_accepted");
     assert!(
         app.admin_api()
             .received_requests()
@@ -237,6 +270,10 @@ async fn private_keys_never_leave_the_portal() {
     let response = user.post("/api/v1/issuers", &body).await;
 
     assert_snapshot!(response.status(), @"422 Unprocessable Entity");
+    assert_eq!(
+        response.json()["errors"][0]["code"],
+        "private_key_submitted"
+    );
     assert!(
         app.admin_api()
             .received_requests()
@@ -259,6 +296,7 @@ async fn a_key_for_another_algorithm_is_refused() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
+            "code": "invalid_public_key",
             "detail": "For ES384, the public key must be an EC key on the P-384 curve, with \"x\" and \"y\"."
         }] })
     );
@@ -300,6 +338,7 @@ async fn an_account_at_its_limit_registers_no_more() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
+            "code": "active_issuer_limit_reached",
             "detail": "An account can have 2 active sandbox issuers, registrations waiting for approval included. Delete one, or withdraw a registration, first."
         }] })
     );
@@ -367,6 +406,7 @@ async fn an_account_that_used_its_registrations_registers_no_more() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
+            "code": "registration_limit_reached",
             "detail": "This account cannot register more sandbox issuers: it has registered 10, \
                        deleted, rejected and waiting ones included."
         }] })
@@ -395,6 +435,10 @@ async fn a_full_sandbox_registers_no_more() {
     let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
 
     assert_snapshot!(response.status(), @"503 Service Unavailable");
+    assert_eq!(
+        response.json()["errors"][0]["code"],
+        "sandbox_issuer_limit_reached"
+    );
     assert!(
         requests_with_method(app.admin_api(), "POST")
             .await
@@ -422,6 +466,7 @@ async fn a_key_registered_already_is_a_conflict() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
+            "code": "key_material_in_use",
             "detail": "This public key is already registered, maybe for an issuer you \
                        deleted, since a deleted issuer keeps its key. Make a new key pair, or, \
                        if you just registered this one, check your issuers."
@@ -467,6 +512,10 @@ async fn renewing_an_expired_issuer_needs_room() {
     let response = user.post(&format!("{ISSUER_URL}/renew"), &json!({})).await;
 
     assert_snapshot!(response.status(), @"409 Conflict");
+    assert_eq!(
+        response.json()["errors"][0]["code"],
+        "active_issuer_limit_reached"
+    );
     assert!(
         requests_with_method(app.admin_api(), "PATCH")
             .await
@@ -515,6 +564,7 @@ async fn deleted_issuers_cannot_be_renewed() {
     let response = user.post(&format!("{ISSUER_URL}/renew"), &json!({})).await;
 
     assert_snapshot!(response.status(), @"409 Conflict");
+    assert_eq!(response.json()["errors"][0]["code"], "issuer_not_renewable");
     assert!(
         requests_with_method(app.admin_api(), "PATCH")
             .await
@@ -589,6 +639,7 @@ async fn a_change_made_in_between_is_a_conflict() {
         assert_eq!(
             response.json(),
             json!({ "errors": [{
+                "code": "issuer_changed",
                 "detail": "The issuer changed while this request ran. Please try again."
             }] })
         );
@@ -607,6 +658,7 @@ async fn a_throttled_status_list_server_is_unavailable() {
     let response = user.get("/api/v1/issuers").await;
 
     assert_snapshot!(response.status(), @"503 Service Unavailable");
+    assert_eq!(response.json()["errors"][0]["code"], "service_unavailable");
 }
 
 #[tokio::test]
@@ -626,6 +678,7 @@ async fn an_unreachable_status_list_server_is_a_bad_gateway() {
     assert_eq!(
         response.json(),
         json!({ "errors": [{
+            "code": "bad_gateway",
             "detail": "The Status List Server did not complete the request. Please try again later."
         }] })
     );
