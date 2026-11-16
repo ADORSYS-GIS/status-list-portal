@@ -195,7 +195,10 @@ async fn lock_pending(
                 ApiErrorCode::RegistrationBeingDecided,
                 "This registration is being decided. Please try again in a moment.",
             )),
-            _ => Err(errors::not_found()),
+            _ => Err(errors::custom(
+                ApiErrorCode::NotFound,
+                "No registration has this id.",
+            )),
         };
     };
     if registration.state() != RegistrationState::Pending {
