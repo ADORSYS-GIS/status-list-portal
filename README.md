@@ -66,7 +66,7 @@ database connection limit for one extra connection per portal replica.
 
 Restrict access to the container port to the ingress controller or reverse proxy,
 for example with a Kubernetes NetworkPolicy. Otherwise, other in-cluster clients
-can connect directly and bypass the proxy's connection limits.
+can connect directly and bypass the proxy's timeouts.
 
 ### Reverse proxy
 
