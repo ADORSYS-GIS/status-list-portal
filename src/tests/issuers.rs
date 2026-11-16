@@ -95,6 +95,34 @@ async fn users_list_their_own_issuers() {
 }
 
 #[tokio::test]
+async fn malformed_issuer_list_query_gets_a_coded_json_error() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_user("octocat").await;
+
+    let response = user.get("/api/v1/issuers?cursor=one&cursor=two").await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response.header(http::header::CONTENT_TYPE),
+        Some("application/json")
+    );
+    let body = response.json();
+    assert_eq!(body["errors"][0]["code"], "invalid_query");
+    assert!(
+        body["errors"][0]["detail"]
+            .as_str()
+            .is_some_and(|detail| !detail.is_empty())
+    );
+    assert!(
+        app.admin_api()
+            .received_requests()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn users_get_their_own_issuer() {
     let (app, _anon) = TestApp::init().empty().await;
     let user = app.db_new_user("octocat").await;

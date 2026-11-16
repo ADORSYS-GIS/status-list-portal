@@ -72,6 +72,8 @@ pub enum ApiErrorCode {
     InvalidJson,
     /// The JSON body does not match the expected shape.
     InvalidRequestBody,
+    /// The query string cannot be decoded into the expected parameters.
+    InvalidQuery,
     /// The request body could not be read.
     BodyReadFailed,
     /// The request has an unsupported content type.
@@ -108,7 +110,7 @@ impl ApiErrorCode {
             | InvalidDisplayName
             | InvalidRejectionReason
             | InvalidRequestBody => StatusCode::UNPROCESSABLE_ENTITY,
-            InvalidJson | BodyReadFailed => StatusCode::BAD_REQUEST,
+            InvalidJson | InvalidQuery | BodyReadFailed => StatusCode::BAD_REQUEST,
             UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             BadGateway => StatusCode::BAD_GATEWAY,

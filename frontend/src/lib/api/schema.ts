@@ -260,7 +260,7 @@ export interface components {
          * @description Stable reasons an API request can fail. The detail may change without changing the code.
          * @enum {string}
          */
-        ApiErrorCode: "unauthorized" | "not_found" | "method_not_allowed" | "cross_origin_forbidden" | "terms_not_accepted" | "terms_changed" | "registration_limit_reached" | "active_issuer_limit_reached" | "sandbox_issuer_limit_reached" | "issuer_registration_in_progress" | "key_material_in_use" | "invalid_public_key" | "private_key_submitted" | "invalid_display_name" | "issuer_changed" | "issuer_not_renewable" | "registration_not_found" | "registration_being_decided" | "registration_already_decided" | "invalid_rejection_reason" | "invalid_json" | "invalid_request_body" | "body_read_failed" | "unsupported_media_type" | "payload_too_large" | "bad_gateway" | "service_unavailable" | "internal_error";
+        ApiErrorCode: "unauthorized" | "not_found" | "method_not_allowed" | "cross_origin_forbidden" | "terms_not_accepted" | "terms_changed" | "registration_limit_reached" | "active_issuer_limit_reached" | "sandbox_issuer_limit_reached" | "issuer_registration_in_progress" | "key_material_in_use" | "invalid_public_key" | "private_key_submitted" | "invalid_display_name" | "issuer_changed" | "issuer_not_renewable" | "registration_not_found" | "registration_being_decided" | "registration_already_decided" | "invalid_rejection_reason" | "invalid_json" | "invalid_request_body" | "invalid_query" | "body_read_failed" | "unsupported_media_type" | "payload_too_large" | "bad_gateway" | "service_unavailable" | "internal_error";
         ApiErrorDetail: {
             /** @description Stable machine-readable reason. Clients may branch on this value. */
             code: components["schemas"]["ApiErrorCode"];
@@ -423,6 +423,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssuerListResponse"];
+                };
+            };
+            /** @description The query string is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
             /** @description Not signed in. */
@@ -1010,7 +1019,7 @@ type ReadonlyArray<T> = [
 ] extends [
     unknown[]
 ] ? Readonly<Exclude<T, undefined>> : Readonly<Exclude<T, undefined>[]>;
-export const apiErrorCodeValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["ApiErrorCode"]> = ["unauthorized", "not_found", "method_not_allowed", "cross_origin_forbidden", "terms_not_accepted", "terms_changed", "registration_limit_reached", "active_issuer_limit_reached", "sandbox_issuer_limit_reached", "issuer_registration_in_progress", "key_material_in_use", "invalid_public_key", "private_key_submitted", "invalid_display_name", "issuer_changed", "issuer_not_renewable", "registration_not_found", "registration_being_decided", "registration_already_decided", "invalid_rejection_reason", "invalid_json", "invalid_request_body", "body_read_failed", "unsupported_media_type", "payload_too_large", "bad_gateway", "service_unavailable", "internal_error"];
+export const apiErrorCodeValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["ApiErrorCode"]> = ["unauthorized", "not_found", "method_not_allowed", "cross_origin_forbidden", "terms_not_accepted", "terms_changed", "registration_limit_reached", "active_issuer_limit_reached", "sandbox_issuer_limit_reached", "issuer_registration_in_progress", "key_material_in_use", "invalid_public_key", "private_key_submitted", "invalid_display_name", "issuer_changed", "issuer_not_renewable", "registration_not_found", "registration_being_decided", "registration_already_decided", "invalid_rejection_reason", "invalid_json", "invalid_request_body", "invalid_query", "body_read_failed", "unsupported_media_type", "payload_too_large", "bad_gateway", "service_unavailable", "internal_error"];
 export const issuerStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["IssuerState"]> = ["active", "suspended", "expired"];
 export const keyStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["KeyState"]> = ["active", "reserved", "revoked"];
 export const registrationStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["RegistrationState"]> = ["pending", "approved", "rejected"];

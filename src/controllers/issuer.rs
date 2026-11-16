@@ -7,7 +7,7 @@
 mod public_key;
 
 use axum::Json;
-use axum::extract::{Path, Query};
+use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
 use http::header::LOCATION;
@@ -26,8 +26,8 @@ use crate::config::{self, PublicOrigin};
 use crate::controllers::registration::RegistrationResponse;
 use crate::sandbox;
 use crate::server::ServerContext;
-use crate::util::JsonBody;
 use crate::util::errors::{self, ApiErrorCode, ApiErrorResponse, AppResult};
+use crate::util::{JsonBody, QueryParams};
 
 const DISPLAY_NAME_MAX_CHARS: usize = 100;
 
@@ -113,6 +113,7 @@ pub struct IssuerListResponse {
     params(ListQuery),
     responses(
         (status = 200, description = "One page of the user's issuers.", body = IssuerListResponse),
+        (status = 400, description = "The query string is invalid.", body = ApiErrorResponse),
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
     ),
@@ -120,7 +121,7 @@ pub struct IssuerListResponse {
 pub async fn list_issuers(
     ctx: ServerContext,
     AuthenticatedUser(user): AuthenticatedUser,
-    Query(query): Query<ListQuery>,
+    QueryParams(query): QueryParams<ListQuery>,
 ) -> AppResult<Json<IssuerListResponse>> {
     let owner = Owner::github(user.gh_id);
     let page = ctx

@@ -43,6 +43,16 @@ expression: openapi
               }
             }
           },
+          "400": {
+            "description": "The query string is invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Not signed in.",
             "content": {
@@ -773,6 +783,7 @@ expression: openapi
           "invalid_rejection_reason",
           "invalid_json",
           "invalid_request_body",
+          "invalid_query",
           "body_read_failed",
           "unsupported_media_type",
           "payload_too_large",
