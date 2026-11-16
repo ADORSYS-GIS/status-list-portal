@@ -7,7 +7,7 @@
 mod public_key;
 
 use axum::Json;
-use axum::extract::{Path, Query};
+use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
 use http::header::LOCATION;
@@ -26,8 +26,8 @@ use crate::config::{self, PublicOrigin};
 use crate::controllers::registration::RegistrationResponse;
 use crate::sandbox;
 use crate::server::ServerContext;
-use crate::util::JsonBody;
-use crate::util::errors::{self, ApiErrorResponse, AppResult};
+use crate::util::errors::{self, ApiErrorCode, ApiErrorResponse, AppResult};
+use crate::util::{JsonBody, QueryParams};
 
 const DISPLAY_NAME_MAX_CHARS: usize = 100;
 
@@ -113,6 +113,7 @@ pub struct IssuerListResponse {
     params(ListQuery),
     responses(
         (status = 200, description = "One page of the user's issuers.", body = IssuerListResponse),
+        (status = 400, description = "The query string is invalid.", body = ApiErrorResponse),
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
     ),
@@ -120,7 +121,7 @@ pub struct IssuerListResponse {
 pub async fn list_issuers(
     ctx: ServerContext,
     AuthenticatedUser(user): AuthenticatedUser,
-    Query(query): Query<ListQuery>,
+    QueryParams(query): QueryParams<ListQuery>,
 ) -> AppResult<Json<IssuerListResponse>> {
     let owner = Owner::github(user.gh_id);
     let page = ctx
@@ -160,9 +161,12 @@ impl NewIssuerRequest {
         let length = display_name.chars().count();
         if length == 0 || length > DISPLAY_NAME_MAX_CHARS || display_name.contains(char::is_control)
         {
-            return Err(errors::unprocessable(format!(
-                "The display name must be 1 to {DISPLAY_NAME_MAX_CHARS} printable characters."
-            )));
+            return Err(errors::custom(
+                ApiErrorCode::InvalidDisplayName,
+                format!(
+                    "The display name must be 1 to {DISPLAY_NAME_MAX_CHARS} printable characters."
+                ),
+            ));
         }
         Ok(NewIssuer {
             display_name: display_name.to_owned(),
@@ -193,7 +197,7 @@ impl NewIssuerRequest {
         (status = 409, description = "The account has as many active issuers as allowed, or the key is registered already.", body = ApiErrorResponse),
         (status = 422, description = "The display name or the public key cannot be used.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
-        (status = 503, description = "The sandbox has no room for another issuer, or another one is being registered.", body = ApiErrorResponse),
+        (status = 503, description = "sandbox_issuer_limit_reached, issuer_registration_in_progress, or service_unavailable.", body = ApiErrorResponse),
     ),
 )]
 pub async fn create_issuer(
@@ -266,7 +270,7 @@ pub async fn get_issuer(
         (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
         (status = 409, description = "The issuer is deleted, the account has as many active issuers as allowed, or the issuer changed while this request ran.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
-        (status = 503, description = "The sandbox has no room for another issuer, or another one is being registered.", body = ApiErrorResponse),
+        (status = 503, description = "sandbox_issuer_limit_reached, issuer_registration_in_progress, or service_unavailable.", body = ApiErrorResponse),
     ),
 )]
 pub async fn renew_issuer(
@@ -299,7 +303,7 @@ pub async fn renew_issuer(
         }
         IssuerState::Suspended => {
             return Err(errors::custom(
-                StatusCode::CONFLICT,
+                ApiErrorCode::IssuerNotRenewable,
                 "This issuer is deleted or suspended, so it cannot be renewed.",
             ));
         }
