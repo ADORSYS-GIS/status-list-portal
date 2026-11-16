@@ -25,6 +25,7 @@ struct ApiErrorDetail {
 }
 
 /// Stable reasons an API request can fail. The detail may change without changing the code.
+/// New codes may be added. Clients must handle an unknown code as they would its HTTP status.
 #[derive(Clone, Copy, Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiErrorCode {
@@ -60,8 +61,6 @@ pub enum ApiErrorCode {
     IssuerChanged,
     /// The issuer cannot be renewed in its current state.
     IssuerNotRenewable,
-    /// No matching registration exists.
-    RegistrationNotFound,
     /// Another decision is in progress for the registration.
     RegistrationBeingDecided,
     /// The registration has already been decided.
@@ -84,6 +83,8 @@ pub enum ApiErrorCode {
     BadGateway,
     /// A dependency is temporarily unavailable.
     ServiceUnavailable,
+    /// The portal stopped waiting for the request. Check whether a mutation succeeded before retrying.
+    RequestTimedOut,
     /// An unexpected server error occurred.
     InternalError,
 }
@@ -93,7 +94,7 @@ impl ApiErrorCode {
         use ApiErrorCode::*;
         match self {
             Unauthorized => StatusCode::UNAUTHORIZED,
-            NotFound | RegistrationNotFound => StatusCode::NOT_FOUND,
+            NotFound => StatusCode::NOT_FOUND,
             MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             CrossOriginForbidden | TermsNotAccepted | RegistrationLimitReached => {
                 StatusCode::FORBIDDEN
@@ -114,9 +115,10 @@ impl ApiErrorCode {
             UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             BadGateway => StatusCode::BAD_GATEWAY,
-            SandboxIssuerLimitReached | IssuerRegistrationInProgress | ServiceUnavailable => {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
+            SandboxIssuerLimitReached
+            | IssuerRegistrationInProgress
+            | ServiceUnavailable
+            | RequestTimedOut => StatusCode::SERVICE_UNAVAILABLE,
             InternalError => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -159,5 +161,134 @@ struct CustomApiError {
 impl AppError for CustomApiError {
     fn response(&self) -> Response {
         json_error(self.code, &self.detail)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn published_codes_keep_their_wire_names_and_http_statuses() {
+        use ApiErrorCode::*;
+
+        for (code, wire_name, status) in [
+            (Unauthorized, "unauthorized", StatusCode::UNAUTHORIZED),
+            (NotFound, "not_found", StatusCode::NOT_FOUND),
+            (
+                MethodNotAllowed,
+                "method_not_allowed",
+                StatusCode::METHOD_NOT_ALLOWED,
+            ),
+            (
+                CrossOriginForbidden,
+                "cross_origin_forbidden",
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                TermsNotAccepted,
+                "terms_not_accepted",
+                StatusCode::FORBIDDEN,
+            ),
+            (TermsChanged, "terms_changed", StatusCode::CONFLICT),
+            (
+                RegistrationLimitReached,
+                "registration_limit_reached",
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                ActiveIssuerLimitReached,
+                "active_issuer_limit_reached",
+                StatusCode::CONFLICT,
+            ),
+            (
+                SandboxIssuerLimitReached,
+                "sandbox_issuer_limit_reached",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                IssuerRegistrationInProgress,
+                "issuer_registration_in_progress",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                KeyMaterialInUse,
+                "key_material_in_use",
+                StatusCode::CONFLICT,
+            ),
+            (
+                InvalidPublicKey,
+                "invalid_public_key",
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                PrivateKeySubmitted,
+                "private_key_submitted",
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                InvalidDisplayName,
+                "invalid_display_name",
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (IssuerChanged, "issuer_changed", StatusCode::CONFLICT),
+            (
+                IssuerNotRenewable,
+                "issuer_not_renewable",
+                StatusCode::CONFLICT,
+            ),
+            (
+                RegistrationBeingDecided,
+                "registration_being_decided",
+                StatusCode::CONFLICT,
+            ),
+            (
+                RegistrationAlreadyDecided,
+                "registration_already_decided",
+                StatusCode::CONFLICT,
+            ),
+            (
+                InvalidRejectionReason,
+                "invalid_rejection_reason",
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (InvalidJson, "invalid_json", StatusCode::BAD_REQUEST),
+            (
+                InvalidRequestBody,
+                "invalid_request_body",
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (InvalidQuery, "invalid_query", StatusCode::BAD_REQUEST),
+            (BodyReadFailed, "body_read_failed", StatusCode::BAD_REQUEST),
+            (
+                UnsupportedMediaType,
+                "unsupported_media_type",
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            ),
+            (
+                PayloadTooLarge,
+                "payload_too_large",
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+            (BadGateway, "bad_gateway", StatusCode::BAD_GATEWAY),
+            (
+                ServiceUnavailable,
+                "service_unavailable",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                RequestTimedOut,
+                "request_timed_out",
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                InternalError,
+                "internal_error",
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        ] {
+            assert_eq!(serde_json::to_value(code).unwrap(), wire_name);
+            assert_eq!(code.status(), status, "{wire_name}");
+        }
     }
 }

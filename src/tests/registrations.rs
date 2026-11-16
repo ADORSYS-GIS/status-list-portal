@@ -133,6 +133,10 @@ fn detail(response: &Response) -> Value {
     response.json()["errors"][0]["detail"].clone()
 }
 
+fn code(response: &Response) -> Value {
+    response.json()["errors"][0]["code"].clone()
+}
+
 #[tokio::test]
 async fn with_approval_on_a_registration_waits_for_an_operator() {
     let (app, _anon) = TestApp::init()
@@ -178,6 +182,7 @@ async fn with_approval_on_private_keys_are_refused_at_once() {
     let response = user.post("/api/v1/issuers", &body).await;
 
     assert_snapshot!(response.status(), @"422 Unprocessable Entity");
+    assert_eq!(code(&response), "private_key_submitted");
     assert!(registrations_of(&user).await.is_empty());
 }
 
@@ -564,6 +569,7 @@ async fn a_request_under_way_holds_back_others() {
         let response = ask_for_an_issuer(&user).await;
 
         assert_snapshot!(response.status(), @"503 Service Unavailable");
+        assert_eq!(code(&response), "issuer_registration_in_progress");
         QueryResult::Ok(())
     })
     .await
@@ -695,6 +701,7 @@ async fn another_users_registration_is_out_of_reach() {
         .await;
 
     assert_snapshot!(response.status(), @"404 Not Found");
+    assert_eq!(code(&response), "not_found");
     assert!(registrations_of(&someone_else).await.is_empty());
     assert_eq!(registrations_of(&owner).await.len(), 1);
 }
@@ -739,6 +746,7 @@ async fn decided_registrations_cannot_be_withdrawn() {
         .await;
 
     assert_snapshot!(response.status(), @"409 Conflict");
+    assert_eq!(code(&response), "registration_already_decided");
 }
 
 #[tokio::test]
@@ -749,6 +757,18 @@ async fn ids_that_are_not_numbers_are_not_found() {
     let response = user.delete("/api/v1/registrations/latest").await;
 
     assert_snapshot!(response.status(), @"404 Not Found");
+    assert_eq!(code(&response), "not_found");
+}
+
+#[tokio::test]
+async fn unknown_numeric_registration_ids_are_not_found() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_user("octocat").await;
+
+    let response = withdraw(&user, 999_999).await;
+
+    assert_snapshot!(response.status(), @"404 Not Found");
+    assert_eq!(code(&response), "not_found");
 }
 
 #[tokio::test]
@@ -776,6 +796,7 @@ async fn the_admin_api_failing_leaves_nothing_waiting() {
     let response = ask_for_an_issuer(&user).await;
 
     assert_snapshot!(response.status(), @"503 Service Unavailable");
+    assert_eq!(code(&response), "service_unavailable");
     assert!(registrations_of(&user).await.is_empty());
 }
 
@@ -802,6 +823,7 @@ async fn a_withdrawal_during_an_approval_is_refused() {
     );
 
     assert_snapshot!(withdrawn.status(), @"409 Conflict");
+    assert_eq!(code(&withdrawn), "registration_being_decided");
     assert_snapshot!(detail(&withdrawn), @r#""This registration is being decided. Please try again in a moment.""#);
     assert_eq!(approved.unwrap().id, ISSUER_ID);
     assert_eq!(registrations_of(&user).await[0]["state"], "approved");

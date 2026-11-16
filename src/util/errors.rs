@@ -241,47 +241,47 @@ mod tests {
 
     #[tokio::test]
     async fn admin_api_codes_map_to_portal_errors() {
-        for (code, portal_code, serialized_code) in [
+        for (code, expected_status, serialized_code) in [
             (
                 ErrorCode::IssuerNotFound,
-                ApiErrorCode::NotFound,
+                StatusCode::NOT_FOUND,
                 "not_found",
             ),
             (
                 ErrorCode::KeyMaterialInUse,
-                ApiErrorCode::KeyMaterialInUse,
+                StatusCode::CONFLICT,
                 "key_material_in_use",
             ),
             (
                 ErrorCode::InvalidPublicJwk,
-                ApiErrorCode::InvalidPublicKey,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "invalid_public_key",
             ),
             (
                 ErrorCode::UnsupportedAlgorithm,
-                ApiErrorCode::InvalidPublicKey,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 "invalid_public_key",
             ),
             (
                 ErrorCode::PreconditionFailed,
-                ApiErrorCode::IssuerChanged,
+                StatusCode::CONFLICT,
                 "issuer_changed",
             ),
             (
                 ErrorCode::ServiceUnavailable,
-                ApiErrorCode::ServiceUnavailable,
+                StatusCode::SERVICE_UNAVAILABLE,
                 "service_unavailable",
             ),
             (
                 ErrorCode::InvalidToken,
-                ApiErrorCode::BadGateway,
+                StatusCode::BAD_GATEWAY,
                 "bad_gateway",
             ),
-            (ErrorCode::Unknown, ApiErrorCode::BadGateway, "bad_gateway"),
+            (ErrorCode::Unknown, StatusCode::BAD_GATEWAY, "bad_gateway"),
         ] {
             let response = BoxedAppError::from(refused(code)).response();
 
-            assert_eq!(response.status(), portal_code.status(), "{code}");
+            assert_eq!(response.status(), expected_status, "{code}");
             assert_eq!(
                 body_json(response).await["errors"][0]["code"],
                 serialized_code,

@@ -103,6 +103,8 @@ pub async fn approve(
         let registration = lock_pending(conn, id, None).await?;
         let user = User::find(conn, registration.user_id).await?;
         if !TermsAcceptance::exists(conn, user.id, &ctx.config.terms.version).await? {
+            // Approval is currently an operator CLI action. If exposed over HTTP, give
+            // this developer condition its own code rather than reusing the user's code.
             return Err(errors::custom(
                 ApiErrorCode::TermsNotAccepted,
                 "The developer has not accepted the current terms of use.",
@@ -187,19 +189,13 @@ async fn lock_pending(
 ) -> AppResult<Registration> {
     let found =
         |registration: &Registration| user_id.is_none_or(|user_id| registration.user_id == user_id);
-    let not_found = || {
-        errors::custom(
-            ApiErrorCode::RegistrationNotFound,
-            "No registration has this id.",
-        )
-    };
     let Some(registration) = Registration::try_lock(conn, id, user_id).await? else {
         return match Registration::find(conn, id).await.optional()? {
             Some(held) if found(&held) => Err(errors::custom(
                 ApiErrorCode::RegistrationBeingDecided,
                 "This registration is being decided. Please try again in a moment.",
             )),
-            _ => Err(not_found()),
+            _ => Err(errors::not_found()),
         };
     };
     if registration.state() != RegistrationState::Pending {

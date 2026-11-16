@@ -197,7 +197,7 @@ impl NewIssuerRequest {
         (status = 409, description = "The account has as many active issuers as allowed, or the key is registered already.", body = ApiErrorResponse),
         (status = 422, description = "The display name or the public key cannot be used.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
-        (status = 503, description = "The sandbox has no room for another issuer, or another one is being registered.", body = ApiErrorResponse),
+        (status = 503, description = "sandbox_issuer_limit_reached, issuer_registration_in_progress, or service_unavailable.", body = ApiErrorResponse),
     ),
 )]
 pub async fn create_issuer(
@@ -270,7 +270,7 @@ pub async fn get_issuer(
         (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
         (status = 409, description = "The issuer is deleted, the account has as many active issuers as allowed, or the issuer changed while this request ran.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
-        (status = 503, description = "The sandbox has no room for another issuer, or another one is being registered.", body = ApiErrorResponse),
+        (status = 503, description = "sandbox_issuer_limit_reached, issuer_registration_in_progress, or service_unavailable.", body = ApiErrorResponse),
     ),
 )]
 pub async fn renew_issuer(

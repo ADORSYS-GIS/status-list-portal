@@ -206,6 +206,10 @@ async fn a_registration_under_way_holds_back_others() {
         let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
 
         assert_snapshot!(response.status(), @"503 Service Unavailable");
+        assert_eq!(
+            response.json()["errors"][0]["code"],
+            "issuer_registration_in_progress"
+        );
         QueryResult::Ok(())
     })
     .await
@@ -246,6 +250,7 @@ async fn registering_needs_the_current_terms() {
     let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
 
     assert_snapshot!(response.status(), @"403 Forbidden");
+    assert_eq!(response.json()["errors"][0]["code"], "terms_not_accepted");
     assert!(
         app.admin_api()
             .received_requests()
@@ -265,6 +270,10 @@ async fn private_keys_never_leave_the_portal() {
     let response = user.post("/api/v1/issuers", &body).await;
 
     assert_snapshot!(response.status(), @"422 Unprocessable Entity");
+    assert_eq!(
+        response.json()["errors"][0]["code"],
+        "private_key_submitted"
+    );
     assert!(
         app.admin_api()
             .received_requests()
@@ -426,6 +435,10 @@ async fn a_full_sandbox_registers_no_more() {
     let response = user.post("/api/v1/issuers", &new_issuer_body()).await;
 
     assert_snapshot!(response.status(), @"503 Service Unavailable");
+    assert_eq!(
+        response.json()["errors"][0]["code"],
+        "sandbox_issuer_limit_reached"
+    );
     assert!(
         requests_with_method(app.admin_api(), "POST")
             .await
@@ -499,6 +512,10 @@ async fn renewing_an_expired_issuer_needs_room() {
     let response = user.post(&format!("{ISSUER_URL}/renew"), &json!({})).await;
 
     assert_snapshot!(response.status(), @"409 Conflict");
+    assert_eq!(
+        response.json()["errors"][0]["code"],
+        "active_issuer_limit_reached"
+    );
     assert!(
         requests_with_method(app.admin_api(), "PATCH")
             .await
@@ -547,6 +564,7 @@ async fn deleted_issuers_cannot_be_renewed() {
     let response = user.post(&format!("{ISSUER_URL}/renew"), &json!({})).await;
 
     assert_snapshot!(response.status(), @"409 Conflict");
+    assert_eq!(response.json()["errors"][0]["code"], "issuer_not_renewable");
     assert!(
         requests_with_method(app.admin_api(), "PATCH")
             .await
@@ -640,6 +658,7 @@ async fn a_throttled_status_list_server_is_unavailable() {
     let response = user.get("/api/v1/issuers").await;
 
     assert_snapshot!(response.status(), @"503 Service Unavailable");
+    assert_eq!(response.json()["errors"][0]["code"], "service_unavailable");
 }
 
 #[tokio::test]

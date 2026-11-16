@@ -90,8 +90,8 @@ pub async fn list_registrations(
     responses(
         (status = 204, description = "Withdrawn."),
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
-        (status = 404, description = "The user has no registration with this id.", body = ApiErrorResponse),
-        (status = 409, description = "The registration was decided already, or is being decided.", body = ApiErrorResponse),
+        (status = 404, description = "not_found: The user has no registration with this id.", body = ApiErrorResponse),
+        (status = 409, description = "registration_already_decided or registration_being_decided.", body = ApiErrorResponse),
     ),
 )]
 pub async fn withdraw_registration(
