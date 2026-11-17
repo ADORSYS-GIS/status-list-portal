@@ -65,7 +65,7 @@ When logs are exported, the lines `RUST_LOG` lets through go to the OTLP endpoin
 
 ## Privacy
 
-Telemetry never carries query strings, which hold the code and state of a GitHub sign-in, cookies, tokens, email addresses, GitHub logins or IP addresses. Log lines name accounts by the portal's internal user id. Spans carry the request path, which can hold an issuer's id, and the client's user agent, each cut at 256 bytes. Error messages are logged as they are, without the URLs of the admin API's requests, whose queries name an issuer's owner.
+Telemetry never carries query strings, which hold the code and state of a GitHub sign-in, cookies, tokens, email addresses, GitHub logins or IP addresses. Log lines name accounts by the portal's internal user id. This holds at the default `RUST_LOG=info`, and for exported logs at any level. Below `INFO`, libraries write their own lines to stdout, and some carry the values they handle: at `DEBUG`, the database client logs each query's parameters, a sign-in's login, name and email address among them. Where stdout is collected, turn on debug for the portal alone, such as `RUST_LOG=info,status_list_portal=debug`. Spans carry the request path, which can hold an issuer's id, and the client's user agent, each cut at 256 bytes. Error messages are logged as they are, without the URLs of the admin API's requests, whose queries name an issuer's owner.
 
 ## Trying it locally
 
