@@ -332,7 +332,8 @@ impl AdminApi {
             http.response.status_code = Empty,
             error.type = Empty,
             server.address = self.host.as_str(),
-            server.port = self.port,
+            // As a number, as in the call durations: tracing would record a `u16` as text.
+            server.port = self.port.map(i64::from),
             url.template = route,
         );
         TraceContextPropagator::new()

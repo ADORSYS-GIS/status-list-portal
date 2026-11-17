@@ -99,6 +99,16 @@ async fn registrations_are_always_traced_into_the_admin_api() {
         attribute(call, "url.template").as_deref(),
         Some("/admin/v1/issuers")
     );
+    // A number, as in the call durations, so the key has one type.
+    let port = i64::from(app.admin_api().address().port());
+    assert!(
+        call.attributes
+            .iter()
+            .any(|kv| kv.key.as_str() == "server.port"
+                && kv.value == opentelemetry::Value::I64(port)),
+        "{:?}",
+        call.attributes
+    );
 
     // The admin API continues the trace from the call's span.
     let received = app.admin_api().received_requests().await.unwrap();
