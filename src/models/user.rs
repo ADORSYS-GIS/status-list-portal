@@ -23,14 +23,23 @@ pub struct User {
 
 impl std::fmt::Debug for User {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            id,
+            gh_id,
+            gh_login,
+            name,
+            email: _,
+            created_at,
+            session_epoch,
+        } = self;
         f.debug_struct("User")
-            .field("id", &self.id)
-            .field("gh_id", &self.gh_id)
-            .field("gh_login", &self.gh_login)
-            .field("name", &self.name)
+            .field("id", id)
+            .field("gh_id", gh_id)
+            .field("gh_login", gh_login)
+            .field("name", name)
             .field("email", &"[REDACTED]")
-            .field("created_at", &self.created_at)
-            .field("session_epoch", &self.session_epoch)
+            .field("created_at", created_at)
+            .field("session_epoch", session_epoch)
             .finish()
     }
 }

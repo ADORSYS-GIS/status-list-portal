@@ -157,6 +157,7 @@ async fn ping(pool: &db::Pool) -> anyhow::Result<()> {
             .execute(&mut conn)
             .await
             .context("readiness query failed")?;
+        db::ensure_current_schema(&mut conn).await?;
         anyhow::Ok(())
     };
     tokio::time::timeout(READINESS_TIMEOUT, query)

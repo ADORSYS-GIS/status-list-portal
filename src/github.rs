@@ -56,7 +56,7 @@ pub struct PendingSignIn {
 }
 
 /// A GitHub account, as GitHub reports it at sign-in.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Account {
     pub id: i64,
     pub login: String,

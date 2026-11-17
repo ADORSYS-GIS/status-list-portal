@@ -68,7 +68,8 @@ pub struct Database {
     /// Connection URL (`APP_DATABASE__URL`), for example
     /// `postgres://portal:password@localhost:5432/portal`.
     pub url: SecretString,
-    /// Optional PEM bundle of additional trusted Postgres CAs (`APP_DATABASE__TLS_CA_FILE`).
+    /// Optional PEM bundle of trusted Postgres CAs, replacing system roots
+    /// (`APP_DATABASE__TLS_CA_FILE`).
     pub tls_ca_file: Option<PathBuf>,
     /// Most connections the pool keeps open (`APP_DATABASE__POOL_SIZE`).
     #[serde(default = "default_database_pool_size")]
@@ -80,13 +81,19 @@ pub struct Database {
 pub struct MigrationConfig {
     #[serde(default)]
     pub env: Env,
+    #[serde(default)]
+    pub log_format: LogFormat,
     pub database: Database,
 }
 
 impl MigrationConfig {
     pub fn from_environment() -> Result<Self, ConfigError> {
+        Self::from_source(environment())
+    }
+
+    fn from_source(environment: Environment) -> Result<Self, ConfigError> {
         ::config::Config::builder()
-            .add_source(environment())
+            .add_source(environment)
             .build()?
             .try_deserialize()
             .map_err(without_value)
@@ -468,6 +475,28 @@ mod tests {
         assert_eq!(config.sandbox.max_active_issuers, 100);
         assert_eq!(config.sandbox.lifetime_days.get(), 30);
         assert!(!config.sandbox.manual_approval);
+    }
+
+    #[test]
+    fn migration_configuration_needs_only_database_settings() {
+        let vars = [
+            ("APP_DATABASE__URL".to_owned(), DATABASE_URL.to_owned()),
+            (
+                "APP_DATABASE__TLS_CA_FILE".to_owned(),
+                "/run/secrets/ca.pem".to_owned(),
+            ),
+            ("APP_LOG_FORMAT".to_owned(), "json".to_owned()),
+        ];
+        let config =
+            MigrationConfig::from_source(environment().source(Some(vars.into_iter().collect())))
+                .unwrap();
+        assert_eq!(config.env, Env::Production);
+        assert_eq!(config.log_format, LogFormat::Json);
+        assert_eq!(config.database.url.expose_secret(), DATABASE_URL);
+        assert_eq!(
+            config.database.tls_ca_file,
+            Some(PathBuf::from("/run/secrets/ca.pem"))
+        );
     }
 
     #[test]

@@ -29,9 +29,11 @@ The frontend lives in `frontend/` and needs [Bun](https://bun.com). Its commands
 
 Run `portal migrate` as a Kubernetes Job before rolling out `portal server`
 (for example, Helm `pre-install` and `pre-upgrade` hooks). The job needs only `APP_DATABASE__URL`,
-`APP_ENV`, and optionally `APP_DATABASE__TLS_CA_FILE`. Give it a migration role
+optionally `APP_ENV` (production by default), `APP_LOG_FORMAT`, and
+`APP_DATABASE__TLS_CA_FILE`. Give it a migration role
 that owns the portal tables. Give the server a separate role with DML privileges;
-do not mount the migration credential in the server Pod. Two migration jobs may
+do not mount the migration credential in the server Pod. Always run migrations as
+the same role used in `ALTER DEFAULT PRIVILEGES` below. Two migration jobs may
 overlap: an advisory lock ensures that each pending migration runs once.
 
 For a new database, provision distinct roles before the first migration. As the
@@ -49,20 +51,50 @@ ALTER DEFAULT PRIVILEGES FOR ROLE portal_migrator IN SCHEMA public
     GRANT USAGE, SELECT ON SEQUENCES TO portal_app;
 ```
 
-Existing tables and sequences also need matching `GRANT ... ON ALL TABLES` and
-`GRANT ... ON ALL SEQUENCES`. When migrating an existing installation, transfer
-ownership of existing tables to the migration role before applying future
-schema changes. Keep `CREATE` on the schema and database ownership away from
-the server role. Production connections require TLS and verify the server's CA
-chain and hostname. Mount an extra PEM CA bundle and set
-`APP_DATABASE__TLS_CA_FILE` in both workloads when the system store lacks that CA.
+After the first migration, remove the app role's write access to Diesel's
+migration history while retaining `SELECT` for readiness:
+
+```sql
+REVOKE INSERT, UPDATE, DELETE ON __diesel_schema_migrations FROM portal_app;
+```
+
+For an existing installation, apply the following in order in the portal
+database, with administrator credentials. First create `portal_app` and grant
+it access to the existing objects before changing the running server's role:
+
+```sql
+GRANT CONNECT ON DATABASE portal TO portal_app;
+GRANT USAGE ON SCHEMA public TO portal_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO portal_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO portal_app;
+REVOKE INSERT, UPDATE, DELETE ON __diesel_schema_migrations FROM portal_app;
+```
+
+Roll out `portal server` with the new app credential and confirm readiness and
+normal requests. Then transfer ownership from the old server role to the
+migration role before the next migration:
+
+```sql
+REASSIGN OWNED BY portal_old TO portal_migrator;
+```
+
+Inspect objects owned by `portal_old` first: `REASSIGN OWNED` affects all of
+them in this database, including the database itself if that role owns it.
+Apply the default privileges above for `portal_migrator` so later migrations
+grant the app role access to new objects. Keep `CREATE` on the schema and
+database ownership away from the server role. Production connections require
+TLS and verify the server's CA chain and hostname. Set
+`APP_DATABASE__TLS_CA_FILE` in both workloads to use only the PEM CAs in that
+file; otherwise system CAs are trusted. Production rejects plaintext
+connections on loopback and Unix sockets as well as remote hosts.
 
 ## Kubernetes probes
 
 Set `APP_SERVER__BIND_ADDRESS=0.0.0.0:8080` in the server container. The listener
 starts without waiting for migrations, because the migration Job ran before the
 rollout. The startup probe below allows up to one minute for process startup;
-database readiness is checked separately:
+database readiness is checked separately and remains unavailable while a
+migration is pending or the migration history cannot be read:
 
 ```yaml
 startupProbe:
@@ -86,7 +118,8 @@ readinessProbe:
   timeoutSeconds: 3
 ```
 
-Readiness begins as unavailable. A separate one-connection pool checks PostgreSQL every
+Readiness begins as unavailable. A separate one-connection pool checks PostgreSQL and
+the migration history every
 five seconds, with a two-second deadline. One failed check is tolerated; two consecutive
 failures make the instance unready. Results older than 15 seconds are unready. Size the
 database connection limit for one extra connection per portal replica.

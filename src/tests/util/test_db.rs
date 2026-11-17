@@ -27,15 +27,26 @@ static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 /// A migrated database of the test's own, dropped with this value.
 pub struct TestDatabase {
     name: String,
-    url: Url,
+    admin_url: Url,
+    app_url: Option<Url>,
+    migration_url: Option<Url>,
+    roles: Option<(String, String)>,
 }
 
 impl TestDatabase {
     pub async fn new() -> Self {
-        let test_db = Self::unmigrated().await;
-        db::run_migrations(&test_db.config(), Env::Test)
+        let mut test_db = Self::unmigrated().await;
+        test_db.create_roles().await;
+        db::run_migrations(&test_db.migration_config(), Env::Test)
             .await
             .expect("failed to migrate the test database");
+        diesel::sql_query(
+            "REVOKE INSERT, UPDATE, DELETE ON __diesel_schema_migrations FROM ".to_owned()
+                + &test_db.roles.as_ref().unwrap().0,
+        )
+        .execute(&mut test_db.admin_connect().await)
+        .await
+        .expect("failed to protect migration history");
         test_db
     }
 
@@ -50,16 +61,18 @@ impl TestDatabase {
         ])
         .await;
 
-        let url = url_for(&name);
-        Self { name, url }
+        let admin_url = url_for(&name);
+        Self {
+            name,
+            admin_url,
+            app_url: None,
+            migration_url: None,
+            roles: None,
+        }
     }
 
     pub fn url(&self) -> &str {
-        self.url.as_str()
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
+        self.app_url.as_ref().unwrap_or(&self.admin_url).as_str()
     }
 
     pub fn config(&self) -> config::Database {
@@ -70,10 +83,72 @@ impl TestDatabase {
         }
     }
 
+    pub fn migration_config(&self) -> config::Database {
+        let url = self.migration_url.as_ref().unwrap_or(&self.admin_url);
+        config::Database {
+            url: SecretString::from(url.as_str()),
+            tls_ca_file: None,
+            pool_size: NonZeroUsize::MIN,
+        }
+    }
+
     pub async fn connect(&self) -> AsyncPgConnection {
         AsyncPgConnection::establish(self.url())
             .await
             .expect("failed to connect to the test database")
+    }
+
+    pub async fn admin_connect(&self) -> AsyncPgConnection {
+        AsyncPgConnection::establish(self.admin_url.as_str())
+            .await
+            .expect("failed to connect as test administrator")
+    }
+
+    async fn create_roles(&mut self) {
+        let id = self.name.rsplit_once('_').unwrap().1;
+        let pid = std::process::id();
+        let app = format!("pa_{pid}_{id}");
+        let migrator = format!("pm_{pid}_{id}");
+        self.roles = Some((app.clone(), migrator.clone()));
+        let mut admin = self.admin_connect().await;
+        for role in [&app, &migrator] {
+            diesel::sql_query(format!("DROP ROLE IF EXISTS {role}"))
+                .execute(&mut admin)
+                .await
+                .expect("failed to clear stale test role");
+            diesel::sql_query(format!("CREATE ROLE {role} LOGIN PASSWORD 'test-password'"))
+                .execute(&mut admin)
+                .await
+                .expect("failed to create test role");
+        }
+        for grant in [
+            format!(
+                "GRANT CONNECT ON DATABASE \"{}\" TO {app}, {migrator}",
+                self.name
+            ),
+            "REVOKE CREATE ON SCHEMA public FROM PUBLIC".to_owned(),
+            format!("GRANT USAGE ON SCHEMA public TO {app}, {migrator}"),
+            format!("GRANT CREATE ON SCHEMA public TO {migrator}"),
+            format!(
+                "ALTER DEFAULT PRIVILEGES FOR ROLE {migrator} IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {app}"
+            ),
+            format!(
+                "ALTER DEFAULT PRIVILEGES FOR ROLE {migrator} IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO {app}"
+            ),
+        ] {
+            diesel::sql_query(grant)
+                .execute(&mut admin)
+                .await
+                .expect("failed to grant test role privileges");
+        }
+        let mut app_url = self.admin_url.clone();
+        app_url.set_username(&app).unwrap();
+        app_url.set_password(Some("test-password")).unwrap();
+        self.app_url = Some(app_url);
+        let mut migration_url = self.admin_url.clone();
+        migration_url.set_username(&migrator).unwrap();
+        migration_url.set_password(Some("test-password")).unwrap();
+        self.migration_url = Some(migration_url);
     }
 }
 
@@ -82,12 +157,22 @@ impl Drop for TestDatabase {
         // Drop cannot await, and the test's runtime may already be gone, so the database is
         // dropped from a thread with a runtime of its own.
         let statement = format!("DROP DATABASE \"{}\" WITH (FORCE)", self.name);
+        let roles = self.roles.take();
         let dropped = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("failed to start a runtime")
-                .block_on(run_on_server(&[statement]));
+                .block_on(async {
+                    run_on_server(&[statement]).await;
+                    if let Some((app, migrator)) = roles {
+                        run_on_server(&[
+                            format!("DROP ROLE IF EXISTS {app}"),
+                            format!("DROP ROLE IF EXISTS {migrator}"),
+                        ])
+                        .await;
+                    }
+                });
         })
         .join();
         if dropped.is_err() {

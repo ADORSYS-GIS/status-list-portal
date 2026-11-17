@@ -32,6 +32,21 @@ async fn development_can_use_plaintext() {
     url.set_query(Some("sslmode=disable"));
     let pool = db::pool(&database(url.as_str(), None), Env::Development).unwrap();
     let _conn = pool.get().await.unwrap();
+
+    let error = db::pool(&database(url.as_str(), None), Env::Production)
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("must not weaken"), "{error}");
+
+    url.set_query(None);
+    let error = db::pool(&database(url.as_str(), None), Env::Production)
+        .unwrap()
+        .get()
+        .await
+        .err()
+        .expect("plaintext Postgres unexpectedly accepted production TLS");
+    let detail = format!("{error:?}");
+    assert!(detail.contains("TLS") || detail.contains("ssl"), "{detail}");
 }
 
 #[tokio::test]
@@ -41,7 +56,14 @@ async fn production_verifies_tls_ca_and_hostname() {
         std::env::var("TEST_TLS_CA_FILE"),
         std::env::var("TEST_TLS_WRONG_CA_FILE"),
     ) else {
-        // The CI job starts a separate TLS Postgres. Local tests can run without it.
+        if std::env::var_os("CI").is_some() {
+            panic!(
+                "CI must provide TEST_TLS_DATABASE_URL, TEST_TLS_CA_FILE and TEST_TLS_WRONG_CA_FILE"
+            );
+        }
+        eprintln!(
+            "skipping TLS integration test: set TEST_TLS_DATABASE_URL, TEST_TLS_CA_FILE and TEST_TLS_WRONG_CA_FILE"
+        );
         return;
     };
     let good = database(&url, Some(ca.into()));
@@ -61,21 +83,36 @@ async fn production_verifies_tls_ca_and_hostname() {
         .unwrap();
 
     let wrong_ca = database(&url, Some(wrong_ca.into()));
-    assert!(
-        db::pool(&wrong_ca, Env::Production)
-            .unwrap()
-            .get()
-            .await
-            .is_err()
+    let error = db::pool(&wrong_ca, Env::Production)
+        .unwrap()
+        .get()
+        .await
+        .err()
+        .expect("wrong CA unexpectedly worked");
+    assert!(format!("{error:?}").contains("UnknownIssuer"), "{error:?}");
+
+    let require = database(
+        &format!("{url}?sslmode=require"),
+        wrong_ca.tls_ca_file.clone(),
     );
+    let error = db::pool(&require, Env::Development)
+        .unwrap()
+        .get()
+        .await
+        .err()
+        .expect("wrong CA unexpectedly worked with require");
+    assert!(format!("{error:?}").contains("UnknownIssuer"), "{error:?}");
 
     let wrong_host = url.replace("@localhost:", "@127.0.0.1:");
     let wrong_host = database(&wrong_host, good.tls_ca_file.clone());
+    let error = db::pool(&wrong_host, Env::Production)
+        .unwrap()
+        .get()
+        .await
+        .err()
+        .expect("wrong host unexpectedly worked");
     assert!(
-        db::pool(&wrong_host, Env::Production)
-            .unwrap()
-            .get()
-            .await
-            .is_err()
+        format!("{error:?}").contains("certificate not valid for name"),
+        "{error:?}"
     );
 }

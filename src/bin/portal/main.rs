@@ -33,26 +33,20 @@ async fn main() -> anyhow::Result<()> {
             let config = MigrationConfig::from_environment().context(
                 "invalid migration configuration (.env.template lists the APP_DATABASE settings)",
             )?;
-            util::logging::init(Default::default(), LogOutput::Stderr)?;
+            util::logging::init(config.log_format, LogOutput::Stderr)?;
             db::run_migrations(&config.database, config.env).await?;
             Ok(())
         }
-        command => {
-            let config = Config::from_environment()
-                .context("invalid configuration (.env.template lists every APP_* setting)")?;
-            let log_output = match command {
-                Command::Server => LogOutput::Stdout,
-                Command::Admin(_) => LogOutput::Stderr,
-                Command::Migrate => unreachable!(),
-            };
-            util::logging::init(config.log_format, log_output)?;
-            match command {
-                Command::Server => server::run(config).await,
-                Command::Admin(command) => admin::run(config, command).await,
-                Command::Migrate => unreachable!(),
-            }
-        }
+        Command::Server => server::run(load_config(LogOutput::Stdout)?).await,
+        Command::Admin(command) => admin::run(load_config(LogOutput::Stderr)?, command).await,
     }
+}
+
+fn load_config(output: LogOutput) -> anyhow::Result<Config> {
+    let config = Config::from_environment()
+        .context("invalid configuration (.env.template lists every APP_* setting)")?;
+    util::logging::init(config.log_format, output)?;
+    Ok(config)
 }
 
 /// Loads `.env` when it exists. A missing file is fine; an unreadable one is an error.
