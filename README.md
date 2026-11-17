@@ -28,7 +28,8 @@ The frontend lives in `frontend/` and needs [Bun](https://bun.com). Its commands
 
 Set `RUST_BACKTRACE=1` to include stack traces in panic logs. Release builds keep
 function names, but strip debug information, so file names and line numbers may
-be unavailable.
+be unavailable. Rust's default panic hook writes the trace to stderr as plain text;
+it is separate from JSON logs written to stdout when `APP_LOG_FORMAT=json`.
 
 ### Kubernetes probes
 
@@ -90,9 +91,11 @@ Tests use the Postgres from `docker compose`, with a fresh database per test. `b
 
 When an intentional API change makes its snapshot test fail, run
 `INSTA_UPDATE=always cargo test --lib openapi_snapshot`, review the snapshot
-diff, and run `cargo test --all-targets --locked` before committing it. Other snapshot
-assertions in the integration tests are inline; update those intentionally in their
-test source when behavior changes.
+diff, then run `bun run test -u` to regenerate the frontend API types from it.
+Commit both generated updates together after running `cargo test --all-targets --locked`
+and `bun run test`. Other snapshot assertions in the integration tests are inline;
+with `cargo-insta` installed, run `cargo insta review` to review and accept intentional
+changes into their test source.
 
 ### Adding database migrations
 
@@ -115,9 +118,9 @@ diesel migration run
 ```
 
 If editing a migration already applied locally, run `diesel migration redo` before
-generating the schema. Run `diesel print-schema` and replace the checked-in Diesel
-schema with its exact output, including the generated header and declaration order.
-Then run the tests. CI compares that schema against a fresh migrated database.
+generating the schema. Diesel CLI updates the checked-in schema automatically when
+migrations run or are redone. Review that change and run the tests. CI compares the
+schema against a fresh migrated database.
 
 ## License
 

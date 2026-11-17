@@ -2,7 +2,7 @@ name: Advisory audit
 
 on:
   schedule:
-    - cron: "0 6 * * 1"
+    - cron: "17 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -36,8 +36,8 @@ jobs:
           title="cargo-deny advisory audit failed"
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           issue_number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --search '"cargo-deny advisory audit failed" in:title' \
-            --json number,title --jq '.[] | select(.title == "cargo-deny advisory audit failed") | .number')
+            --limit 1000 --json number,title \
+            --jq 'first(.[] | select(.title == "cargo-deny advisory audit failed")) | .number')
           if [ -n "$issue_number" ]; then
             gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" \
               --body "Another audit failed: $run_url"
