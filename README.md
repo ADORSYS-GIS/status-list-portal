@@ -26,58 +26,8 @@ The frontend lives in `frontend/` and needs [Bun](https://bun.com). Its commands
 
 ## Deploy
 
-Set `RUST_BACKTRACE=1` to include stack traces in panic logs. Release builds keep
-function names, but strip debug information, so file names and line numbers may
-be unavailable. Rust's default panic hook writes the trace to stderr as plain text;
-it is separate from JSON logs written to stdout when `APP_LOG_FORMAT=json`.
-
-### Kubernetes probes
-
-Set `APP_SERVER__BIND_ADDRESS=0.0.0.0:8080` in the container. The HTTP listener
-starts after database migrations finish. Give startup enough time for the longest
-migration and for waiting on another replica's migration lock. For example, these
-container probes allow up to five minutes of startup before liveness takes effect:
-
-```yaml
-startupProbe:
-  httpGet:
-    path: /health/live
-    port: 8080
-  periodSeconds: 5
-  timeoutSeconds: 3
-  failureThreshold: 60
-livenessProbe:
-  httpGet:
-    path: /health/live
-    port: 8080
-  periodSeconds: 10
-  timeoutSeconds: 3
-readinessProbe:
-  httpGet:
-    path: /health/ready
-    port: 8080
-  periodSeconds: 5
-  timeoutSeconds: 3
-```
-
-Readiness begins as unavailable. A separate one-connection pool checks PostgreSQL every
-five seconds, with a two-second deadline. One failed check is tolerated; two consecutive
-failures make the instance unready. Results older than 15 seconds are unready. Size the
-database connection limit for one extra connection per portal replica.
-
-Restrict access to the container port to the ingress controller or reverse proxy,
-for example with a Kubernetes NetworkPolicy. Otherwise, other in-cluster clients
-can connect directly and bypass the proxy's timeouts.
-
-### Reverse proxy
-
-Put a reverse proxy in front of the portal and configure a header read timeout there.
-`axum::serve` does not impose one, so a client can otherwise hold a connection open while
-sending request headers slowly. For example, set `client_header_timeout 10s;` in an NGINX
-server block, or set the ingress-nginx ConfigMap's `client-header-timeout` to `10`
-seconds. Configure an idle connection timeout too, such as NGINX's `keepalive_timeout`.
-The portal's 30-second request timeout starts once the request headers have arrived
-and also covers reading the body. It does not replace the proxy's header read timeout.
+The [deployment guide](docs/deployment.md) covers backtraces, Kubernetes probes,
+network access and reverse proxy timeouts.
 
 ## Test
 
@@ -87,40 +37,9 @@ cargo test
 
 Tests use the Postgres from `docker compose`, with a fresh database per test. `bun run test` runs the frontend's tests, some of them in Chromium (`bun run playwright install chromium`). `bun test` would run Bun's own test runner instead.
 
-### Updating snapshots
+## Contributing
 
-When an intentional API change makes its snapshot test fail, run
-`INSTA_UPDATE=always cargo test --lib openapi_snapshot`, review the snapshot
-diff, then run `bun run test -u` to regenerate the frontend API types from it.
-Commit both generated updates together after running `cargo test --all-targets --locked`
-and `bun run test`. Other snapshot assertions in the integration tests are inline;
-with `cargo-insta` installed, run `cargo insta review` to review and accept intentional
-changes into their test source.
-
-### Adding database migrations
-
-Install Diesel CLI with PostgreSQL support at the version pinned in CI. Then create
-the migration:
-
-```sh
-diesel migration generate <name>
-```
-
-Implement the forward and rollback SQL. Diesel CLI reads `DATABASE_URL`, while the
-server reads `APP_DATABASE__URL`. Apply the migrations to a fresh local development
-database so previously created tables cannot affect the generated schema. For the
-local Docker database, create a scratch database and set the CLI connection URL:
-
-```sh
-docker compose exec db createdb -U postgres portal_schema
-export DATABASE_URL=postgres://postgres:postgres@localhost:5432/portal_schema
-diesel migration run
-```
-
-If editing a migration already applied locally, run `diesel migration redo` before
-generating the schema. Diesel CLI updates the checked-in schema automatically when
-migrations run or are redone. Review that change and run the tests. CI compares the
-schema against a fresh migrated database.
+The [contributor guide](CONTRIBUTING.md) covers snapshot updates and database migrations.
 
 ## License
 
