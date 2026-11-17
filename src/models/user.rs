@@ -26,8 +26,8 @@ impl std::fmt::Debug for User {
         let Self {
             id,
             gh_id,
-            gh_login,
-            name,
+            gh_login: _,
+            name: _,
             email: _,
             created_at,
             session_epoch,
@@ -35,8 +35,8 @@ impl std::fmt::Debug for User {
         f.debug_struct("User")
             .field("id", id)
             .field("gh_id", gh_id)
-            .field("gh_login", gh_login)
-            .field("name", name)
+            .field("gh_login", &"[REDACTED]")
+            .field("name", &"[REDACTED]")
             .field("email", &"[REDACTED]")
             .field("created_at", created_at)
             .field("session_epoch", session_epoch)

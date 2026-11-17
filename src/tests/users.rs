@@ -9,7 +9,7 @@ const OCTOCAT: NewUser<'static> = NewUser {
 };
 
 #[test]
-fn user_debug_redacts_email() {
+fn user_debug_redacts_personal_details() {
     let user = User {
         id: 1,
         gh_id: OCTOCAT.gh_id,
@@ -21,7 +21,11 @@ fn user_debug_redacts_email() {
     };
     let debug = format!("{user:?}");
     assert!(debug.contains("email: \"[REDACTED]\""));
+    assert!(debug.contains("gh_login: \"[REDACTED]\""));
+    assert!(debug.contains("name: \"[REDACTED]\""));
     assert!(!debug.contains(OCTOCAT.email));
+    assert!(!debug.contains(OCTOCAT.gh_login));
+    assert!(!debug.contains(OCTOCAT.name.unwrap()));
 }
 
 #[tokio::test]

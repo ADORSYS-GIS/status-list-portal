@@ -19,7 +19,7 @@ use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use rustls::pki_types::{CertificateDer, pem::PemObject};
 use rustls::{ClientConfig, RootCertStore};
 use secrecy::ExposeSecret;
-use tokio_postgres::config::SslMode;
+use tokio_postgres::config::{Host, SslMode};
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{info, warn};
 
@@ -132,19 +132,23 @@ struct ConnectionOptions {
 impl ConnectionOptions {
     fn new(database: &config::Database, env: Env) -> anyhow::Result<Self> {
         let production = env == Env::Production;
-        let (connection_string, mode) = normalize_sslmode(database.url.expose_secret())?;
-        if production
-            && mode
-                .as_deref()
-                .is_some_and(|mode| mode != "require" && mode != "verify-full")
-        {
-            anyhow::bail!("production APP_DATABASE__URL must not weaken Postgres TLS");
-        }
-        let mut config: tokio_postgres::Config = connection_string
+        let mut config: tokio_postgres::Config = database
+            .url
+            .expose_secret()
             .parse()
-            .context("invalid APP_DATABASE__URL Postgres connection string")?;
+            .context("invalid APP_DATABASE__URL Postgres connection string (use sslmode=require for verified TLS; verify-full is unsupported)")?;
         if production {
-            config.ssl_mode(SslMode::Require);
+            if config.get_ssl_mode() == SslMode::Disable {
+                if !local_database_hosts(&config) {
+                    anyhow::bail!(
+                        "production APP_DATABASE__URL may disable Postgres TLS only for Unix sockets or loopback hosts"
+                    );
+                }
+            } else {
+                // The Rustls connector verifies the CA chain and hostname for Require.
+                // Upgrade Prefer so a remote production connection cannot use plaintext.
+                config.ssl_mode(SslMode::Require);
+            }
         }
         let mut roots = RootCertStore::empty();
         if let Some(path) = &database.tls_ca_file {
@@ -171,7 +175,7 @@ impl ConnectionOptions {
                 );
             }
         }
-        if production && roots.is_empty() {
+        if production && config.get_ssl_mode() != SslMode::Disable && roots.is_empty() {
             anyhow::bail!("production Postgres TLS needs trusted CA certificates");
         }
         let tls = ClientConfig::builder_with_provider(Arc::new(
@@ -196,99 +200,23 @@ impl ConnectionOptions {
     }
 }
 
-/// Tokio Postgres accepts URI and libpq key/value connection strings, but does not
-/// recognize libpq's `verify-full`. The Rustls connector verifies the chain and host
-/// for every TLS mode, so `require` is the equivalent here. Preserve every other byte:
-/// URL form encoding changes `%20` into `+`, which Tokio Postgres reads differently.
-fn normalize_sslmode(input: &str) -> anyhow::Result<(String, Option<String>)> {
-    if input.starts_with("postgres://") || input.starts_with("postgresql://") {
-        let Some((prefix, query)) = input.split_once('?') else {
-            return Ok((input.to_owned(), None));
-        };
-        let mut mode = None;
-        let mut segments = Vec::new();
-        for segment in query.split('&') {
-            let (key, _) = segment.split_once('=').unwrap_or((segment, ""));
-            if url::form_urlencoded::parse(segment.as_bytes())
-                .next()
-                .is_some_and(|(name, _)| name == "sslmode")
-            {
-                if mode.is_some() {
-                    anyhow::bail!("APP_DATABASE__URL must specify sslmode at most once");
-                }
-                let decoded = url::form_urlencoded::parse(segment.as_bytes())
-                    .next()
-                    .map(|(_, value)| value.into_owned())
-                    .unwrap_or_default();
-                mode = Some(decoded.clone());
-                if decoded == "verify-full" {
-                    segments.push(format!("{key}=require"));
-                    continue;
-                }
-            }
-            segments.push(segment.to_owned());
-        }
-        return Ok((format!("{prefix}?{}", segments.join("&")), mode));
+/// An explicit plaintext production connection is safe only within the local host.
+fn local_database_hosts(config: &tokio_postgres::Config) -> bool {
+    let hosts = config.get_hosts();
+    let hostaddrs = config.get_hostaddrs();
+    if hosts.is_empty() && hostaddrs.is_empty() {
+        return false;
     }
-
-    // Scan only the parameter boundaries; let tokio-postgres validate the full
-    // key/value grammar. Quoted values may contain spaces or escaped quotes.
-    let bytes = input.as_bytes();
-    let mut index = 0;
-    let mut mode = None;
-    let mut replacement = None;
-    while index < bytes.len() {
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
+    hosts.iter().all(|host| match host {
+        Host::Tcp(name) => {
+            name == "localhost"
+                || name
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
         }
-        let key_start = index;
-        while index < bytes.len() && !bytes[index].is_ascii_whitespace() && bytes[index] != b'=' {
-            index += 1;
-        }
-        let key = &input[key_start..index];
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if index >= bytes.len() || bytes[index] != b'=' {
-            break;
-        }
-        index += 1;
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        let value_start = index;
-        let quoted = index < bytes.len() && bytes[index] == b'\'';
-        if quoted {
-            index += 1;
-        }
-        while index < bytes.len() {
-            if bytes[index] == b'\\' {
-                index = (index + 2).min(bytes.len());
-            } else if quoted && bytes[index] == b'\'' {
-                index += 1;
-                break;
-            } else if !quoted && bytes[index].is_ascii_whitespace() {
-                break;
-            } else {
-                index += 1;
-            }
-        }
-        if key == "sslmode" {
-            if mode.is_some() {
-                anyhow::bail!("APP_DATABASE__URL must specify sslmode at most once");
-            }
-            let value = input[value_start..index].trim_matches('\'');
-            mode = Some(value.to_owned());
-            if value == "verify-full" {
-                replacement = Some(value_start..index);
-            }
-        }
-    }
-    let mut normalized = input.to_owned();
-    if let Some(range) = replacement {
-        normalized.replace_range(range, "require");
-    }
-    Ok((normalized, mode))
+        #[cfg(unix)]
+        Host::Unix(_) => true,
+    }) && hostaddrs.iter().all(std::net::IpAddr::is_loopback)
 }
 
 #[derive(QueryableByName)]
@@ -385,17 +313,15 @@ pub async fn run_migrations(database: &config::Database, env: Env) -> anyhow::Re
 
 #[cfg(test)]
 mod connection_string_tests {
-    use super::normalize_sslmode;
+    use super::local_database_hosts;
     use crate::{Env, config};
     use secrecy::SecretString;
     use std::num::NonZeroUsize;
 
     #[test]
-    fn verify_full_keeps_other_query_values_byte_for_byte() {
-        let input = "postgres://u:p@db/portal?application_name=portal%20prod&options=-c%20search_path%3Dportal&sslmode=verify-full";
-        let (normalized, mode) = normalize_sslmode(input).unwrap();
-        assert_eq!(mode.as_deref(), Some("verify-full"));
-        let config: tokio_postgres::Config = normalized.parse().unwrap();
+    fn parses_query_values_without_reencoding() {
+        let input = "postgres://u:p@db/portal?application_name=portal%20prod&options=-c%20search_path%3Dportal&sslmode=require";
+        let config: tokio_postgres::Config = input.parse().unwrap();
         assert_eq!(config.get_application_name(), Some("portal prod"));
         assert_eq!(config.get_options(), Some("-c search_path=portal"));
     }
@@ -405,10 +331,9 @@ mod connection_string_tests {
         for input in [
             "postgres://u:p@h1:5432,h2:5432/db?target_session_attrs=read-write",
             "host=db user=portal dbname=portal",
-            "host=db user=portal dbname=portal sslmode='verify-full'",
+            "host=db user=portal dbname=portal sslmode=require",
         ] {
-            let (normalized, _) = normalize_sslmode(input).unwrap();
-            let _: tokio_postgres::Config = normalized.parse().unwrap();
+            let _: tokio_postgres::Config = input.parse().unwrap();
         }
     }
 
@@ -417,6 +342,7 @@ mod connection_string_tests {
         for input in [
             "postgres://db/portal?sslrootcert=/tmp/ca.pem",
             "postgres://db/portal?sslmode=verify-ca",
+            "postgres://db/portal?sslmode=verify-full",
         ] {
             let database = config::Database {
                 url: SecretString::from(input),
@@ -424,6 +350,30 @@ mod connection_string_tests {
                 pool_size: NonZeroUsize::MIN,
             };
             assert!(super::pool(&database, Env::Development).is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    fn plaintext_requires_only_local_hosts_and_hostaddrs() {
+        for input in [
+            "host=localhost sslmode=disable",
+            "host=127.0.0.1 sslmode=disable",
+            "host=::1 sslmode=disable",
+            "host=localhost,127.0.0.1 hostaddr=127.0.0.1,::1 sslmode=disable",
+            #[cfg(unix)]
+            "host=/var/run/postgresql sslmode=disable",
+        ] {
+            let config: tokio_postgres::Config = input.parse().unwrap();
+            assert!(local_database_hosts(&config), "{input}");
+        }
+        for input in [
+            "host=db sslmode=disable",
+            "host=localhost,db sslmode=disable",
+            "host=localhost hostaddr=10.0.0.1 sslmode=disable",
+            "host=db hostaddr=127.0.0.1 sslmode=disable",
+        ] {
+            let config: tokio_postgres::Config = input.parse().unwrap();
+            assert!(!local_database_hosts(&config), "{input}");
         }
     }
 }

@@ -15,13 +15,30 @@ fn database(url: &str, ca: Option<PathBuf>) -> config::Database {
 }
 
 #[test]
-fn production_rejects_weak_tls_modes_before_connecting() {
-    for mode in ["disable", "allow", "prefer", "verify-ca"] {
-        let url = format!("postgres://localhost/portal?sslmode={mode}");
+fn production_rejects_remote_plaintext_and_unsupported_modes() {
+    for url in [
+        "postgres://db.example/portal?sslmode=disable",
+        "host=localhost hostaddr=10.0.0.1 sslmode=disable",
+    ] {
+        let error = db::pool(&database(url, None), Env::Production)
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("only for Unix sockets or loopback"),
+            "{error}"
+        );
+    }
+    for mode in ["allow", "verify-ca", "verify-full"] {
+        let url = format!("postgres://db.example/portal?sslmode={mode}");
         let error = db::pool(&database(&url, None), Env::Production)
             .err()
             .unwrap();
-        assert!(error.to_string().contains("must not weaken"), "{error}");
+        assert!(
+            error.to_string().contains("invalid APP_DATABASE__URL"),
+            "{error}"
+        );
     }
 }
 
@@ -33,10 +50,11 @@ async fn development_can_use_plaintext() {
     let pool = db::pool(&database(url.as_str(), None), Env::Development).unwrap();
     let _conn = pool.get().await.unwrap();
 
-    let error = db::pool(&database(url.as_str(), None), Env::Production)
-        .err()
+    let _conn = db::pool(&database(url.as_str(), None), Env::Production)
+        .unwrap()
+        .get()
+        .await
         .unwrap();
-    assert!(error.to_string().contains("must not weaken"), "{error}");
 
     url.set_query(None);
     let error = db::pool(&database(url.as_str(), None), Env::Production)
@@ -72,11 +90,8 @@ async fn production_verifies_tls_ca_and_hostname() {
         .get()
         .await
         .unwrap();
-    let verify_full = database(
-        &format!("{url}?sslmode=verify-full"),
-        good.tls_ca_file.clone(),
-    );
-    let _conn = db::pool(&verify_full, Env::Production)
+    let prefer = database(&format!("{url}?sslmode=prefer"), good.tls_ca_file.clone());
+    let _conn = db::pool(&prefer, Env::Production)
         .unwrap()
         .get()
         .await
