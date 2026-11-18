@@ -1,12 +1,67 @@
-# Proposes newer versions of what is pinned by digest or commit, so the pins do not go stale:
-# the Dockerfile's base images and the workflows' actions.
+# Proposes newer versions of the Rust dependencies, and of what is pinned by digest or commit
+# so the pins do not go stale: the Dockerfile's base images and the workflows' actions. A
+# release waits a week before it is proposed, so that a broken or malicious one is likely
+# withdrawn first.
 version: 2
 updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+    # Indirect dependencies too: their fixes reach the portal only through Cargo.lock.
+    allow:
+      - dependency-type: all
+    groups:
+      patch-updates:
+        patterns:
+          - "*"
+        update-types:
+          - patch
+      minor-updates:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+      major-updates:
+        patterns:
+          - "*"
+        update-types:
+          - major
+    ignore:
+      # Held at 0.12, the version oauth2 5.0 is built on: see Cargo.toml.
+      - dependency-name: reqwest
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+    cooldown:
+      default-days: 7
+
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+    cooldown:
+      default-days: 7
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    cooldown:
+      default-days: 7
