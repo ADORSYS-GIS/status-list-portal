@@ -19,6 +19,7 @@ use status_list_portal::{Env, ServerContext, build_handler};
 use url::Url;
 use wiremock::MockServer;
 
+use super::telemetry::{MetricsRecorder, RecordedMetrics, keep_callsites_undecided};
 use super::{MockAnonymousUser, MockCookieUser, TestDatabase};
 
 /// Where the tests pretend browsers reach the portal.
@@ -48,6 +49,7 @@ struct TestAppInner {
     /// Stands in for the Status List Server's admin API.
     admin_api: MockServer,
     ctx: ServerContext,
+    metrics: MetricsRecorder,
     session_key: SessionKey,
     db: Option<TestDatabase>,
 }
@@ -59,6 +61,7 @@ pub struct TestApp(Arc<TestAppInner>);
 
 impl TestApp {
     pub fn init() -> TestAppBuilder {
+        keep_callsites_undecided();
         TestAppBuilder {
             unreachable_database: false,
             sandbox: config::Sandbox::default(),
@@ -81,6 +84,11 @@ impl TestApp {
     /// The state the app's handlers share, such as its admin API client.
     pub fn ctx(&self) -> &ServerContext {
         &self.0.ctx
+    }
+
+    /// The metrics the app recorded so far.
+    pub fn metrics(&self) -> RecordedMetrics {
+        self.0.metrics.collect()
     }
 
     pub async fn db_conn(&self) -> AsyncPgConnection {
@@ -205,8 +213,9 @@ impl TestAppBuilder {
         if self.frontend {
             config.server.frontend_dir = Some(FRONTEND_DIR.into());
         }
-        let mut ctx =
-            ServerContext::from_config(config).expect("failed to build the server context");
+        let metrics = MetricsRecorder::new();
+        let mut ctx = ServerContext::from_config(config, &metrics.meter())
+            .expect("failed to build the server context");
         ctx.start_readiness()
             .expect("failed to start database readiness for the test server");
         let app = TestApp(Arc::new(TestAppInner {
@@ -214,6 +223,7 @@ impl TestAppBuilder {
             github,
             admin_api,
             ctx,
+            metrics,
             session_key,
             db: test_db,
         }));

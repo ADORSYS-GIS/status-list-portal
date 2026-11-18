@@ -16,6 +16,7 @@ use crate::admin_api::{
 };
 use crate::config;
 use crate::db;
+use crate::metrics::SandboxLimit;
 use crate::models::{NewRegistration, Registration, RegistrationState, TermsAcceptance, User};
 use crate::server::ServerContext;
 use crate::util::errors::{self, ApiErrorCode, AppResult};
@@ -292,7 +293,7 @@ async fn ensure_limits(
     // One read answers both limits on the account: when it holds fewer issuers than the
     // account may register, it holds all of them.
     let without_issuer = Registration::count_without_issuer(conn, user_id, approving).await?;
-    ensure_registrations_left(&ctx.config.sandbox, registered.len() + without_issuer)?;
+    ensure_registrations_left(ctx, registered.len() + without_issuer)?;
     let active = registered
         .iter()
         .filter(|issuer| issuer.state == IssuerState::Active)
@@ -359,9 +360,11 @@ fn sandbox_issuers(owner: Option<&Owner>, state: Option<IssuerState>) -> IssuerQ
 
 /// Refuses another registration when the account registered as many issuers as it may.
 /// Deleted issuers count, since the admin API keeps them.
-fn ensure_registrations_left(sandbox: &config::Sandbox, registered: usize) -> AppResult<()> {
-    let most = sandbox.max_registrations_per_account;
+fn ensure_registrations_left(ctx: &ServerContext, registered: usize) -> AppResult<()> {
+    let most = ctx.config.sandbox.max_registrations_per_account;
     if registered >= most {
+        ctx.metrics
+            .sandbox_refusal(SandboxLimit::RegistrationsPerAccount);
         return Err(errors::custom(
             ApiErrorCode::RegistrationLimitReached,
             format!(
@@ -380,6 +383,7 @@ async fn ensure_room(ctx: &ServerContext, active: usize) -> AppResult<()> {
     let limits = &ctx.config.sandbox;
     let per_account = limits.max_issuers_per_account;
     if active >= per_account {
+        ctx.metrics.sandbox_refusal(SandboxLimit::IssuersPerAccount);
         return Err(errors::custom(
             ApiErrorCode::ActiveIssuerLimitReached,
             format!(
@@ -391,6 +395,7 @@ async fn ensure_room(ctx: &ServerContext, active: usize) -> AppResult<()> {
     let in_total = limits.max_active_issuers;
     let in_sandbox = sandbox_issuers(None, Some(IssuerState::Active));
     if ctx.admin_api.count_issuers(&in_sandbox, in_total).await? >= in_total {
+        ctx.metrics.sandbox_refusal(SandboxLimit::ActiveIssuers);
         return Err(errors::custom(
             ApiErrorCode::SandboxIssuerLimitReached,
             "The sandbox has no room for another issuer right now. Please try again later.",
