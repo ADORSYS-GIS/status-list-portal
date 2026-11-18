@@ -13,7 +13,9 @@ The portal is one container: the server, which also serves the frontend. It need
 docker build --tag status-list-portal .
 ```
 
-The image runs `portal server` on port 8080 as a user without privileges. It sets `APP_ENV=production`, `APP_LOG_FORMAT=json` and the frontend's location, and holds CA certificates for the HTTPS calls the server makes. CI builds it for every change.
+The image runs `portal server` on port 8080 as a user without privileges. It sets `APP_ENV=production`, `APP_LOG_FORMAT=json` and the frontend's location. The server is one static binary, so the image holds no C library and no shell, only the CA certificates for the HTTPS calls the server makes. CI builds it for every change.
+
+It builds for `linux/amd64` and `linux/arm64`, such as with `docker buildx build --platform linux/amd64,linux/arm64`. The server is cross-compiled for each, not emulated.
 
 Operators' commands run from the same image, in place of `server`:
 
