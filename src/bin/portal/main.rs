@@ -14,6 +14,12 @@ use status_list_portal::telemetry::{OPERATOR_COMMAND_SPAN, Process, Telemetry};
 use tracing::field::Empty;
 use tracing::{Instrument, error, info_span};
 
+/// Allocates with jemalloc, which holds up under concurrent load better than musl's allocator,
+/// the one the static image would otherwise use. MSVC builds keep the system allocator.
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 /// Developer portal for the Status List Server. Every command reads the `APP_*` settings
 /// that `.env.template` lists, and the operators' commands expect the database that
 /// `portal migrate` migrated.

@@ -92,6 +92,10 @@ utoipa = { version = "6.0", features = ["time"] }
 utoipa-axum = "0.3"
 uuid = { version = "1.29", features = ["v4"] }
 
+# The binary's allocator: see src/bin/portal/main.rs. jemalloc does not build with MSVC.
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.7"
+
 [dev-dependencies]
 insta = { version = "1.49", features = ["json"] }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["testing"] }
