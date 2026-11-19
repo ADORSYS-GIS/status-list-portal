@@ -17,5 +17,14 @@ services:
       timeout: 5s
       retries: 5
 
+  # Grafana, with an OpenTelemetry Collector, Tempo, Loki and Prometheus behind it:
+  # `docker compose --profile observability up -d`. docs/telemetry.md shows how to use it.
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.37.0
+    profiles: [observability]
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+      - "127.0.0.1:4318:4318"
+
 volumes:
   pgdata:

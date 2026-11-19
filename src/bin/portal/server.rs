@@ -1,6 +1,7 @@
 //! The HTTP server.
 
 use anyhow::Context;
+use opentelemetry::metrics::Meter;
 use status_list_portal::config::Config;
 use status_list_portal::{ServerContext, build_handler};
 use tokio::net::TcpListener;
@@ -8,9 +9,10 @@ use tokio::signal;
 use tracing::{info, warn};
 
 /// Serves requests until SIGTERM or Ctrl+C. Migrations run in a separate job.
-pub async fn run(config: Config) -> anyhow::Result<()> {
+/// Records metrics with `meter`.
+pub async fn run(config: Config, meter: &Meter) -> anyhow::Result<()> {
     let bind_address = config.server.bind_address;
-    let mut ctx = ServerContext::from_config(config)?;
+    let mut ctx = ServerContext::from_config(config, meter)?;
 
     let terminate = terminate_signal()?;
     let listener = TcpListener::bind(bind_address)

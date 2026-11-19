@@ -29,6 +29,10 @@ The frontend lives in `frontend/` and needs [Bun](https://bun.com). Its commands
 
 See [deployment guidance](docs/deployment.md) for database roles, migrations, TLS and Kubernetes probes.
 
+## Telemetry
+
+The server's log lines go to stdout. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to also send traces, metrics and logs to an OpenTelemetry Collector, or any backend that takes OTLP over HTTP. [docs/telemetry.md](docs/telemetry.md) lists the settings and what the portal records, and shows how to try it with `docker compose --profile observability up -d`.
+
 ## Test
 
 ```sh
