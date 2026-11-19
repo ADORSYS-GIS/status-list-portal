@@ -3,6 +3,7 @@
 mod admin;
 mod server;
 
+use std::future::Future;
 use std::process::ExitCode;
 
 use anyhow::Context;
@@ -51,6 +52,11 @@ fn main() -> anyhow::Result<ExitCode> {
         Action::Migrate(config) => (config.env, config.log_format, Process::Command),
         Action::Admin(config, _) => (config.env, config.log_format, Process::Command),
     };
+    let failure_message = match &action {
+        Action::Server(_) => Some("the server stopped"),
+        Action::Migrate(_) => Some("migration failed"),
+        Action::Admin(_, _) => None,
+    };
     let telemetry = Telemetry::from_env(env, process)?;
     telemetry.init_subscriber(log_format)?;
 
@@ -61,35 +67,46 @@ fn main() -> anyhow::Result<ExitCode> {
             Action::Server(config) => server::run(config, &meter).await,
             Action::Admin(config, command) => admin::run(config, &meter, command).await,
             Action::Migrate(config) => {
-                let span = info_span!(
-                    parent: None,
-                    OPERATOR_COMMAND_SPAN,
-                    otel.status_code = Empty,
-                    operator.command = "migrate",
-                );
-                let result = db::run_migrations(&config.database, config.env)
-                    .instrument(span.clone())
-                    .await;
-                if result.is_err() {
-                    span.record("otel.status_code", "ERROR");
-                }
-                result.map(|_| ())
+                run_operator_command("migrate", async {
+                    db::run_migrations(&config.database, config.env)
+                        .await
+                        .map(|_| ())
+                })
+                .await
             }
         }
     });
     // The exporters run on threads of their own, and shutting them down blocks until they
     // have sent what they hold, so it waits for the runtime to stop.
     drop(runtime);
-    let result = match result {
-        // The server's logs are where its operators look, so the reason it stopped goes
-        // there, in their format, and is exported before the exporters stop.
-        Err(error) if process == Process::Server => {
-            error!(error = %format!("{error:#}"), "the server stopped");
+    let result = match (result, failure_message) {
+        // The server and migration job report failures in the configured log format
+        // before the exporters stop.
+        (Err(error), Some(message)) => {
+            error!(error = %format!("{error:#}"), "{message}");
             Ok(ExitCode::FAILURE)
         }
-        result => result.map(|()| ExitCode::SUCCESS),
+        (result, _) => result.map(|()| ExitCode::SUCCESS),
     };
     telemetry.shutdown();
+    result
+}
+
+/// Runs an operator command in its own trace and marks failures on that trace.
+async fn run_operator_command<F>(name: &'static str, future: F) -> anyhow::Result<()>
+where
+    F: Future<Output = anyhow::Result<()>>,
+{
+    let span = info_span!(
+        parent: None,
+        OPERATOR_COMMAND_SPAN,
+        otel.status_code = Empty,
+        operator.command = name,
+    );
+    let result = future.instrument(span.clone()).await;
+    if result.is_err() {
+        span.record("otel.status_code", "ERROR");
+    }
     result
 }
 

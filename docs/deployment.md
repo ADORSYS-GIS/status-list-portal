@@ -1,5 +1,7 @@
 # Deployment
 
+## Database roles and migrations
+
 Run `portal migrate` as a Kubernetes Job before rolling out `portal server`
 (for example, Helm `pre-install` and `pre-upgrade` hooks). The job needs only `APP_DATABASE__URL`,
 optionally `APP_ENV` (production by default), `APP_LOG_FORMAT`, and
@@ -56,8 +58,11 @@ them in this database, including the database itself if that role owns it.
 Apply the full new-database grant block above for `portal_migrator`, including
 `GRANT USAGE, CREATE ON SCHEMA public`, so it can create new tables and grant
 the app role access to them. Keep `CREATE` on the schema and database ownership
-away from the server role. Production connections require
-TLS and verify the server's CA chain and hostname. Set
+away from the server role.
+
+## Database TLS
+
+Production connections require TLS and verify the server's CA chain and hostname. Set
 `APP_DATABASE__TLS_CA_FILE` in both workloads to use only the PEM CAs in that
 file; otherwise system CAs are trusted. Use `sslmode=require` for verified TLS;
 this connector does not accept libpq's `verify-full`. In production, `prefer`
