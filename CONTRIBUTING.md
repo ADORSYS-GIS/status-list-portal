@@ -25,10 +25,11 @@ other branches cannot affect the generated schema. With the local Docker databas
 
 ```sh
 export DATABASE_URL=postgres://postgres:postgres@localhost:5432/portal_schema
-diesel database reset
+diesel database reset --no-default-migration
 ```
 
-`diesel database reset` drops and recreates the database named by `DATABASE_URL`, then
-applies every migration. Check that the URL points to the scratch database before
-running it. Diesel CLI updates the checked-in schema automatically. Review that change
-and run the tests. CI compares the schema against a fresh migrated database.
+The reset drops and recreates the database named by `DATABASE_URL`, then applies
+every migration. The flag prevents Diesel from adding its default setup migration
+to the repository. Check that the URL points to the scratch database before running
+it. Diesel CLI updates the checked-in schema automatically. Review that change and
+run the tests. CI compares the schema against a fresh migrated database.
