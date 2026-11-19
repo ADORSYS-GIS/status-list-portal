@@ -24,39 +24,10 @@ Signing in needs a [GitHub OAuth app](https://docs.github.com/en/apps/oauth-apps
 
 The frontend lives in `frontend/` and needs [Bun](https://bun.com). Its commands run from the repository's root. With the backend running, `bun install && bun run dev` serves it at <http://localhost:5173>, passing API calls to the backend. Set `APP_SERVER__ORIGIN=http://localhost:5173` so that signing in returns there. For the backend to serve it instead, run `bun run build` and set `APP_SERVER__FRONTEND_DIR=frontend/build`.
 
-## Kubernetes probes
+## Deploy
 
-Set `APP_SERVER__BIND_ADDRESS=0.0.0.0:8080` in the container. The HTTP listener
-starts after database migrations finish. Give startup enough time for the longest
-migration and for waiting on another replica's migration lock. For example, these
-container probes allow up to five minutes of startup before liveness takes effect:
-
-```yaml
-startupProbe:
-  httpGet:
-    path: /health/live
-    port: 8080
-  periodSeconds: 5
-  timeoutSeconds: 3
-  failureThreshold: 60
-livenessProbe:
-  httpGet:
-    path: /health/live
-    port: 8080
-  periodSeconds: 10
-  timeoutSeconds: 3
-readinessProbe:
-  httpGet:
-    path: /health/ready
-    port: 8080
-  periodSeconds: 5
-  timeoutSeconds: 3
-```
-
-Readiness begins as unavailable. A separate one-connection pool checks PostgreSQL every
-five seconds, with a two-second deadline. One failed check is tolerated; two consecutive
-failures make the instance unready. Results older than 15 seconds are unready. Size the
-database connection limit for one extra connection per portal replica.
+The [deployment guide](docs/deployment.md) covers backtraces, Kubernetes probes,
+network access and reverse proxy timeouts.
 
 ## Telemetry
 
@@ -69,6 +40,10 @@ cargo test
 ```
 
 Tests use the Postgres from `docker compose`, with a fresh database per test. `bun run test` runs the frontend's tests, some of them in Chromium (`bun run playwright install chromium`). `bun test` would run Bun's own test runner instead.
+
+## Contributing
+
+The [contributor guide](CONTRIBUTING.md) covers snapshot updates and database migrations.
 
 ## License
 

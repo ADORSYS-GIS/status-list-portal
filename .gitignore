@@ -3,6 +3,8 @@
 *.pem
 !/test_data/**/*.pem
 *.key
+*.pending-snap
+*.snap.new
 
 # Frontend
 node_modules/
