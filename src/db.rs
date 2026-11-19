@@ -151,28 +151,32 @@ impl ConnectionOptions {
             }
         }
         let mut roots = RootCertStore::empty();
-        if let Some(path) = &database.tls_ca_file {
-            let certs = CertificateDer::pem_file_iter(path)
-                .with_context(|| format!("failed to open Postgres CA bundle {}", path.display()))?
-                .collect::<Result<Vec<_>, _>>()
-                .context("failed to parse Postgres CA bundle")?;
-            let (added, ignored) = roots.add_parsable_certificates(certs);
-            if added == 0 || ignored != 0 {
-                anyhow::bail!(
-                    "Postgres CA bundle has {added} valid and {ignored} invalid certificates"
-                );
-            }
-        } else {
-            let native = rustls_native_certs::load_native_certs();
-            roots.add_parsable_certificates(native.certs);
-            if !native.errors.is_empty() {
-                warn!(errors = ?native.errors, "some system Postgres CA certificates could not be loaded");
-            }
-            if roots.is_empty() && !native.errors.is_empty() {
-                anyhow::bail!(
-                    "failed to load system Postgres CA certificates: {:?}",
-                    native.errors
-                );
+        if config.get_ssl_mode() != SslMode::Disable {
+            if let Some(path) = &database.tls_ca_file {
+                let certs = CertificateDer::pem_file_iter(path)
+                    .with_context(|| {
+                        format!("failed to open Postgres CA bundle {}", path.display())
+                    })?
+                    .collect::<Result<Vec<_>, _>>()
+                    .context("failed to parse Postgres CA bundle")?;
+                let (added, ignored) = roots.add_parsable_certificates(certs);
+                if added == 0 || ignored != 0 {
+                    anyhow::bail!(
+                        "Postgres CA bundle has {added} valid and {ignored} invalid certificates"
+                    );
+                }
+            } else {
+                let native = rustls_native_certs::load_native_certs();
+                roots.add_parsable_certificates(native.certs);
+                if !native.errors.is_empty() {
+                    warn!(errors = ?native.errors, "some system Postgres CA certificates could not be loaded");
+                }
+                if roots.is_empty() && !native.errors.is_empty() {
+                    anyhow::bail!(
+                        "failed to load system Postgres CA certificates: {:?}",
+                        native.errors
+                    );
+                }
             }
         }
         if production && config.get_ssl_mode() != SslMode::Disable && roots.is_empty() {
@@ -313,17 +317,26 @@ pub async fn run_migrations(database: &config::Database, env: Env) -> anyhow::Re
 
 #[cfg(test)]
 mod connection_string_tests {
-    use super::local_database_hosts;
+    use super::{ConnectionOptions, local_database_hosts};
     use crate::{Env, config};
     use secrecy::SecretString;
     use std::num::NonZeroUsize;
+    use std::path::PathBuf;
+
+    fn database(input: &str) -> config::Database {
+        config::Database {
+            url: SecretString::from(input),
+            tls_ca_file: None,
+            pool_size: NonZeroUsize::MIN,
+        }
+    }
 
     #[test]
     fn parses_query_values_without_reencoding() {
         let input = "postgres://u:p@db/portal?application_name=portal%20prod&options=-c%20search_path%3Dportal&sslmode=require";
-        let config: tokio_postgres::Config = input.parse().unwrap();
-        assert_eq!(config.get_application_name(), Some("portal prod"));
-        assert_eq!(config.get_options(), Some("-c search_path=portal"));
+        let options = ConnectionOptions::new(&database(input), Env::Development).unwrap();
+        assert_eq!(options.config.get_application_name(), Some("portal prod"));
+        assert_eq!(options.config.get_options(), Some("-c search_path=portal"));
     }
 
     #[test]
@@ -333,7 +346,8 @@ mod connection_string_tests {
             "host=db user=portal dbname=portal",
             "host=db user=portal dbname=portal sslmode=require",
         ] {
-            let _: tokio_postgres::Config = input.parse().unwrap();
+            let options = ConnectionOptions::new(&database(input), Env::Development).unwrap();
+            assert!(!options.config.get_hosts().is_empty());
         }
     }
 
@@ -344,12 +358,10 @@ mod connection_string_tests {
             "postgres://db/portal?sslmode=verify-ca",
             "postgres://db/portal?sslmode=verify-full",
         ] {
-            let database = config::Database {
-                url: SecretString::from(input),
-                tls_ca_file: None,
-                pool_size: NonZeroUsize::MIN,
-            };
-            assert!(super::pool(&database, Env::Development).is_err(), "{input}");
+            assert!(
+                ConnectionOptions::new(&database(input), Env::Development).is_err(),
+                "{input}"
+            );
         }
     }
 
@@ -375,5 +387,15 @@ mod connection_string_tests {
             let config: tokio_postgres::Config = input.parse().unwrap();
             assert!(!local_database_hosts(&config), "{input}");
         }
+    }
+
+    #[test]
+    fn plaintext_does_not_load_unused_ca_bundle() {
+        let mut database = database("host=localhost sslmode=disable");
+        database.tls_ca_file = Some(PathBuf::from("/nonexistent/portal-ca.pem"));
+        assert!(ConnectionOptions::new(&database, Env::Development).is_ok());
+        assert!(ConnectionOptions::new(&database, Env::Production).is_ok());
+        database.url = SecretString::from("host=localhost sslmode=require");
+        assert!(ConnectionOptions::new(&database, Env::Production).is_err());
     }
 }

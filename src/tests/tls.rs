@@ -43,7 +43,7 @@ fn production_rejects_remote_plaintext_and_unsupported_modes() {
 }
 
 #[tokio::test]
-async fn development_can_use_plaintext() {
+async fn plaintext_needs_an_explicit_local_disable() {
     let test_db = TestDatabase::new().await;
     let mut url = url::Url::parse(test_db.url()).unwrap();
     url.set_query(Some("sslmode=disable"));
@@ -64,7 +64,7 @@ async fn development_can_use_plaintext() {
         .err()
         .expect("plaintext Postgres unexpectedly accepted production TLS");
     let detail = format!("{error:?}");
-    assert!(detail.contains("TLS") || detail.contains("ssl"), "{detail}");
+    assert!(detail.contains("server does not support TLS"), "{detail}");
 }
 
 #[tokio::test]
