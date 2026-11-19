@@ -27,7 +27,8 @@ The frontend lives in `frontend/` and needs [Bun](https://bun.com). Its commands
 
 ## Deploy
 
-See [deployment guidance](docs/deployment.md) for database roles, migrations, TLS and Kubernetes probes.
+The [deployment guide](docs/deployment.md) covers database roles, migrations,
+TLS, backtraces, Kubernetes probes, network access and reverse proxy timeouts.
 
 ## Telemetry
 
@@ -49,6 +50,10 @@ export $(bash test_data/start_tls_postgres.sh)
 cargo test production_verifies_tls_ca_and_hostname
 docker rm -f "$TEST_TLS_CONTAINER"
 ```
+
+## Contributing
+
+The [contributor guide](CONTRIBUTING.md) covers snapshot updates and database migrations.
 
 ## License
 

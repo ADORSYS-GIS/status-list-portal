@@ -107,4 +107,5 @@ incremental = true
 opt-level = 3
 lto = true
 codegen-units = 1
-strip = true
+# Preserve function names in release backtraces.
+strip = "debuginfo"
