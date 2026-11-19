@@ -10,6 +10,7 @@ pub mod config;
 pub mod controllers;
 pub mod db;
 pub mod github;
+pub mod metrics;
 pub mod middleware;
 pub mod models;
 pub mod openapi;
@@ -18,6 +19,7 @@ pub mod sandbox;
 /// Diesel table definitions generated from the database migrations.
 pub mod schema;
 pub mod server;
+pub mod telemetry;
 pub mod util;
 
 pub use crate::server::{ServerContext, ServerContextInner};
@@ -39,9 +41,21 @@ pub enum Env {
     Production,
 }
 
+impl Env {
+    /// The name `APP_ENV` gives it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Development => "development",
+            Self::Test => "test",
+            Self::Production => "production",
+        }
+    }
+}
+
 /// Builds the router with every route and middleware.
 pub fn build_handler(ctx: ServerContext) -> axum::Router {
     let origin = ctx.config.server.origin.clone();
+    let metrics = ctx.metrics.clone();
     let frontend = ctx.frontend.clone();
-    middleware::apply_middleware(router::build_router(ctx), &origin, frontend)
+    middleware::apply_middleware(router::build_router(ctx), &origin, metrics, frontend)
 }
