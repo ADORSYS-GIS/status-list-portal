@@ -51,25 +51,31 @@ impl SignInLimiter {
         }
     }
 
-    /// Takes a token for `client`'s network, then one for the replica, at `now`. Returns how
-    /// long until one comes back if either has none left.
+    /// Takes a token for `client`'s network and one for the replica, at `now`, or neither:
+    /// a sign-in that one limit refuses costs nothing against the other. Returns how long
+    /// until a token comes back if either has none left.
     pub(super) fn take(&self, client: IpAddr, now: OffsetDateTime) -> Result<(), Duration> {
         let network = network(client);
         let mut buckets = self.buckets.lock().unwrap_or_else(PoisonError::into_inner);
-        if buckets.by_network.contains_key(&network) || self.has_room(&mut buckets, now) {
-            let bucket = buckets
-                .by_network
-                .get(&network)
-                .copied()
-                .unwrap_or_else(|| Bucket::full(self.limit, now));
-            buckets
-                .by_network
-                .insert(network, bucket.take(self.limit, now)?);
-        }
+        let counted = buckets.by_network.contains_key(&network) || self.has_room(&mut buckets, now);
+        let network_bucket = counted
+            .then(|| {
+                buckets
+                    .by_network
+                    .get(&network)
+                    .copied()
+                    .unwrap_or_else(|| Bucket::full(self.limit, now))
+                    .take(self.limit, now)
+            })
+            .transpose()?;
         let total = buckets
             .total
-            .unwrap_or_else(|| Bucket::full(self.total_limit, now));
-        buckets.total = Some(total.take(self.total_limit, now)?);
+            .unwrap_or_else(|| Bucket::full(self.total_limit, now))
+            .take(self.total_limit, now)?;
+        if let Some(bucket) = network_bucket {
+            buckets.by_network.insert(network, bucket);
+        }
+        buckets.total = Some(total);
         Ok(())
     }
 
@@ -198,5 +204,17 @@ mod tests {
             limiter.take(address("192.0.2.4"), NOW),
             Err(Duration::seconds(60))
         );
+    }
+
+    #[test]
+    fn a_refusal_by_the_replica_limit_costs_the_network_nothing() {
+        let limiter = SignInLimiter::new(LIMIT, RateLimit::new(1, 1));
+        limiter.take(address("192.0.2.1"), NOW).unwrap();
+        let client = address("192.0.2.2");
+        assert_eq!(limiter.take(client, NOW), Err(Duration::seconds(1)));
+
+        // Both of the network's tokens are left once the replica's comes back.
+        assert_eq!(limiter.take(client, NOW + Duration::seconds(1)), Ok(()));
+        assert_eq!(limiter.take(client, NOW + Duration::seconds(2)), Ok(()));
     }
 }
