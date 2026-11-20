@@ -1,5 +1,6 @@
 use crate::util::TestDatabase;
-use status_list_portal::models::{NewUser, User};
+use status_list_portal::github::Account;
+use status_list_portal::models::{NewUser, TermsAcceptance, User};
 
 const OCTOCAT: NewUser<'static> = NewUser {
     gh_id: 583231,
@@ -7,6 +8,56 @@ const OCTOCAT: NewUser<'static> = NewUser {
     name: Some("The Octocat"),
     email: "octocat@example.com",
 };
+
+#[test]
+fn user_debug_redacts_personal_details() {
+    let user = User {
+        id: 1,
+        gh_id: OCTOCAT.gh_id,
+        gh_login: OCTOCAT.gh_login.into(),
+        name: OCTOCAT.name.map(str::to_string),
+        email: OCTOCAT.email.into(),
+        created_at: time::OffsetDateTime::UNIX_EPOCH,
+        session_epoch: 0,
+    };
+    let debug = format!("{user:?}");
+    assert!(debug.contains("email: \"[REDACTED]\""));
+    assert!(debug.contains("gh_login: \"[REDACTED]\""));
+    assert!(debug.contains("name: \"[REDACTED]\""));
+    assert!(!debug.contains(OCTOCAT.email));
+    assert!(!debug.contains(OCTOCAT.gh_login));
+    assert!(!debug.contains(OCTOCAT.name.unwrap()));
+}
+
+#[test]
+fn public_account_types_debug_only_ids() {
+    let account = Account {
+        id: 1,
+        login: OCTOCAT.gh_login.into(),
+        name: OCTOCAT.name.map(str::to_string),
+        email: OCTOCAT.email.into(),
+    };
+    let acceptance = TermsAcceptance {
+        user_id: 2,
+        terms_version: "private-version",
+        email: OCTOCAT.email,
+    };
+    for debug in [
+        format!("{account:?}"),
+        format!("{OCTOCAT:?}"),
+        format!("{acceptance:?}"),
+    ] {
+        assert!(debug.contains(".."), "{debug}");
+        for secret in [
+            OCTOCAT.email,
+            OCTOCAT.gh_login,
+            OCTOCAT.name.unwrap(),
+            "private-version",
+        ] {
+            assert!(!debug.contains(secret), "{debug}");
+        }
+    }
+}
 
 #[tokio::test]
 async fn first_sign_in_creates_the_account() {

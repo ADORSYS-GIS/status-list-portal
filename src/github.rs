@@ -58,13 +58,21 @@ pub struct PendingSignIn {
 }
 
 /// A GitHub account, as GitHub reports it at sign-in.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Account {
     pub id: i64,
     pub login: String,
     pub name: Option<String>,
     /// Primary email, which GitHub has verified.
     pub email: String,
+}
+
+impl std::fmt::Debug for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Account")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

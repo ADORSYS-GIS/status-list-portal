@@ -9,7 +9,7 @@ use crate::models::TermsAcceptance;
 use crate::server::ServerContext;
 use crate::util::errors::{ApiErrorResponse, AppResult};
 
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Serialize, ToSchema)]
 pub struct MeResponse {
     /// GitHub login.
     #[schema(example = "octocat")]
@@ -22,6 +22,34 @@ pub struct MeResponse {
     email: String,
     /// Whether the user accepted the current terms of use. Registering an issuer needs it.
     terms_accepted: bool,
+}
+
+impl std::fmt::Debug for MeResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeResponse")
+            .field("terms_accepted", &self.terms_accepted)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MeResponse;
+
+    #[test]
+    fn debug_hides_account_details() {
+        let response = MeResponse {
+            login: "private-login".into(),
+            name: Some("Private Name".into()),
+            email: "private@example.com".into(),
+            terms_accepted: true,
+        };
+        let debug = format!("{response:?}");
+        assert!(debug.contains("terms_accepted: true"));
+        for secret in ["private-login", "Private Name", "private@example.com"] {
+            assert!(!debug.contains(secret), "{debug}");
+        }
+    }
 }
 
 /// The signed-in user.

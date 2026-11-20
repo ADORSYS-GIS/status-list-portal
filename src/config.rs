@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use ::config::{ConfigError, Environment};
 use axum_extra::extract::cookie::Key;
 use secrecy::{ExposeSecret, SecretString};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, de};
 use url::{Host, Url};
 
@@ -68,9 +69,28 @@ pub struct Database {
     /// Connection URL (`APP_DATABASE__URL`), for example
     /// `postgres://portal:password@localhost:5432/portal`.
     pub url: SecretString,
+    /// Optional PEM bundle of trusted Postgres CAs, replacing system roots
+    /// (`APP_DATABASE__TLS_CA_FILE`).
+    pub tls_ca_file: Option<PathBuf>,
     /// Most connections the pool keeps open (`APP_DATABASE__POOL_SIZE`).
     #[serde(default = "default_database_pool_size")]
     pub pool_size: NonZeroUsize,
+}
+
+/// Settings needed by the standalone migration job. Other application secrets are not needed.
+#[derive(Debug, Deserialize)]
+pub struct MigrationConfig {
+    #[serde(default)]
+    pub env: Env,
+    #[serde(default)]
+    pub log_format: LogFormat,
+    pub database: Database,
+}
+
+impl MigrationConfig {
+    pub fn from_environment() -> Result<Self, ConfigError> {
+        load(environment())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -287,16 +307,16 @@ impl<'de> Deserialize<'de> for SessionKey {
 impl Config {
     /// Reads the configuration from the process environment.
     pub fn from_environment() -> Result<Self, ConfigError> {
-        Self::from_source(environment())
+        load(environment())
     }
+}
 
-    fn from_source(environment: Environment) -> Result<Self, ConfigError> {
-        ::config::Config::builder()
-            .add_source(environment)
-            .build()?
-            .try_deserialize()
-            .map_err(without_value)
-    }
+fn load<T: DeserializeOwned>(environment: Environment) -> Result<T, ConfigError> {
+    ::config::Config::builder()
+        .add_source(environment)
+        .build()?
+        .try_deserialize()
+        .map_err(without_value)
 }
 
 /// Drops the value from type and value errors: a variable set at the wrong level, such as
@@ -428,7 +448,7 @@ mod tests {
             .into_iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect();
-        Config::from_source(environment().source(Some(vars)))
+        super::load(environment().source(Some(vars)))
     }
 
     /// Loads the required settings, then these variables, which can override them.
@@ -457,6 +477,27 @@ mod tests {
         assert_eq!(config.sandbox.max_active_issuers, 100);
         assert_eq!(config.sandbox.lifetime_days.get(), 30);
         assert!(!config.sandbox.manual_approval);
+    }
+
+    #[test]
+    fn migration_configuration_needs_only_database_settings() {
+        let vars = [
+            ("APP_DATABASE__URL".to_owned(), DATABASE_URL.to_owned()),
+            (
+                "APP_DATABASE__TLS_CA_FILE".to_owned(),
+                "/run/secrets/ca.pem".to_owned(),
+            ),
+            ("APP_LOG_FORMAT".to_owned(), "json".to_owned()),
+        ];
+        let config: MigrationConfig =
+            super::load(environment().source(Some(vars.into_iter().collect()))).unwrap();
+        assert_eq!(config.env, Env::Production);
+        assert_eq!(config.log_format, LogFormat::Json);
+        assert_eq!(config.database.url.expose_secret(), DATABASE_URL);
+        assert_eq!(
+            config.database.tls_ca_file,
+            Some(PathBuf::from("/run/secrets/ca.pem"))
+        );
     }
 
     #[test]
