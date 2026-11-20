@@ -307,21 +307,60 @@ export interface components {
              * @example 6f1c2a9e-0b7d-4c1e-9a53-2f8d7e4b1c00
              */
             id: string;
-            /** @description Keys that may sign the issuer's management tokens, newest first. */
+            /**
+             * @description Every key of the issuer, revoked ones included, newest first. Only `active` keys may
+             *     sign its management tokens.
+             */
             keys: components["schemas"]["IssuerKeyResponse"][];
             /**
              * @description Where the issuer's management tokens go.
              * @example https://status.example.com
              */
             management_url: string;
+            /**
+             * Format: date-time
+             * @description From when the issuer is close enough to `expires_at` to need renewing: a week before
+             *     it, or the last quarter of the sandbox lifetime when that is shorter. `null` when the
+             *     issuer never expires.
+             */
+            renew_from: string | null;
             /** @description Only `active` issuers can write status lists. Deleted issuers are `suspended`. */
             state: components["schemas"]["IssuerState"];
+            /** @description What the issuer uses of its tier's limits. */
+            usage: components["schemas"]["IssuerUsageResponse"];
         };
         /**
          * @description Only `active` issuers can write status lists.
          * @enum {string}
          */
         IssuerState: "active" | "suspended" | "expired";
+        /** @description What the issuer uses of its tier's limits. */
+        IssuerUsageResponse: {
+            /**
+             * Format: int32
+             * @description Keys that are not revoked.
+             * @example 1
+             */
+            keys: number;
+            /**
+             * Format: int32
+             * @description Most keys the issuer may have that are not revoked. `null` when there is no limit.
+             * @example 5
+             */
+            keys_limit: number | null;
+            /**
+             * Format: int32
+             * @description Status lists the issuer holds.
+             * @example 3
+             */
+            lists: number;
+            /**
+             * Format: int32
+             * @description Most status lists the issuer may hold.
+             * @example 10
+             */
+            lists_limit: number;
+        };
         /** @enum {string} */
         KeyState: "active" | "reserved" | "revoked";
         MeResponse: {
