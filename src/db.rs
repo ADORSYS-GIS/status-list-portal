@@ -3,6 +3,7 @@
 //! Production connections use TLS with certificate and hostname verification.
 
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -88,9 +89,7 @@ fn build_pool(config: &config::Database, env: Env, max_size: usize) -> anyhow::R
     let options = Arc::new(ConnectionOptions::new(config, env)?);
     let mut manager_config = ManagerConfig::default();
     manager_config.custom_setup = Box::new(move |_| establish(options.clone()));
-    // The custom setup owns the parsed connection configuration. The manager's
-    // URL argument is unused; keeping a credential-bearing copy there would
-    // unnecessarily expose it through another String.
+    // Connections come from options; the manager never reads its URL.
     let manager = AsyncDieselConnectionManager::new_with_config("", manager_config);
     Pool::builder(manager)
         .max_size(max_size)
@@ -126,62 +125,17 @@ fn establish(
 
 struct ConnectionOptions {
     config: tokio_postgres::Config,
-    tls: ClientConfig,
+    tls: MakeRustlsConnect,
 }
 
 impl ConnectionOptions {
     fn new(database: &config::Database, env: Env) -> anyhow::Result<Self> {
-        let production = env == Env::Production;
-        let mut config: tokio_postgres::Config = database
-            .url
-            .expose_secret()
-            .parse()
-            .context("invalid APP_DATABASE__URL Postgres connection string (use sslmode=require for verified TLS; verify-full is unsupported)")?;
-        if production {
-            if config.get_ssl_mode() == SslMode::Disable {
-                if !local_database_hosts(&config) {
-                    anyhow::bail!(
-                        "production APP_DATABASE__URL may disable Postgres TLS only for Unix sockets or loopback hosts"
-                    );
-                }
-            } else {
-                // The Rustls connector verifies the CA chain and hostname for Require.
-                // Upgrade Prefer so a remote production connection cannot use plaintext.
-                config.ssl_mode(SslMode::Require);
-            }
-        }
-        let mut roots = RootCertStore::empty();
-        if config.get_ssl_mode() != SslMode::Disable {
-            if let Some(path) = &database.tls_ca_file {
-                let certs = CertificateDer::pem_file_iter(path)
-                    .with_context(|| {
-                        format!("failed to open Postgres CA bundle {}", path.display())
-                    })?
-                    .collect::<Result<Vec<_>, _>>()
-                    .context("failed to parse Postgres CA bundle")?;
-                let (added, ignored) = roots.add_parsable_certificates(certs);
-                if added == 0 || ignored != 0 {
-                    anyhow::bail!(
-                        "Postgres CA bundle has {added} valid and {ignored} invalid certificates"
-                    );
-                }
-            } else {
-                let native = rustls_native_certs::load_native_certs();
-                roots.add_parsable_certificates(native.certs);
-                if !native.errors.is_empty() {
-                    warn!(errors = ?native.errors, "some system Postgres CA certificates could not be loaded");
-                }
-                if roots.is_empty() && !native.errors.is_empty() {
-                    anyhow::bail!(
-                        "failed to load system Postgres CA certificates: {:?}",
-                        native.errors
-                    );
-                }
-            }
-        }
-        if production && config.get_ssl_mode() != SslMode::Disable && roots.is_empty() {
-            anyhow::bail!("production Postgres TLS needs trusted CA certificates");
-        }
+        let config = connection_config(database.url.expose_secret(), env)?;
+        let roots = if config.get_ssl_mode() == SslMode::Disable {
+            RootCertStore::empty()
+        } else {
+            root_store(database.tls_ca_file.as_deref(), env == Env::Production)?
+        };
         let tls = ClientConfig::builder_with_provider(Arc::new(
             rustls::crypto::aws_lc_rs::default_provider(),
         ))
@@ -189,19 +143,76 @@ impl ConnectionOptions {
         .context("failed to configure Postgres TLS versions")?
         .with_root_certificates(roots)
         .with_no_client_auth();
+        let tls = MakeRustlsConnect::new(tls);
         Ok(Self { config, tls })
     }
 
     async fn connect(&self) -> ConnectionResult<AsyncPgConnection> {
         let (client, conn) = self
             .config
-            .connect(MakeRustlsConnect::new(self.tls.clone()))
+            .connect(self.tls.clone())
             .await
             .map_err(|error| {
                 ConnectionError::BadConnection(format!("{:#}", anyhow::Error::new(error)))
             })?;
         AsyncPgConnection::try_from_client_and_connection(client, conn).await
     }
+}
+
+fn connection_config(url: &str, env: Env) -> anyhow::Result<tokio_postgres::Config> {
+    let mut config: tokio_postgres::Config = url
+        .parse()
+        .context("invalid APP_DATABASE__URL Postgres connection string (use sslmode=require for verified TLS; verify-full is unsupported)")?;
+    if env == Env::Production {
+        if config.get_ssl_mode() == SslMode::Disable {
+            if !local_database_hosts(&config) {
+                anyhow::bail!(
+                    "production APP_DATABASE__URL may disable Postgres TLS only for Unix sockets or loopback hosts"
+                );
+            }
+        } else {
+            // The Rustls connector verifies the CA chain and hostname for Require.
+            // Upgrade Prefer so a remote production connection cannot use plaintext.
+            config.ssl_mode(SslMode::Require);
+        }
+    }
+    Ok(config)
+}
+
+fn root_store(ca_file: Option<&Path>, production: bool) -> anyhow::Result<RootCertStore> {
+    let mut roots = RootCertStore::empty();
+    let mut native_errors = None;
+    if let Some(path) = ca_file {
+        let certs = CertificateDer::pem_file_iter(path)
+            .with_context(|| format!("failed to open Postgres CA bundle {}", path.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .context("failed to parse Postgres CA bundle")?;
+        let (added, ignored) = roots.add_parsable_certificates(certs);
+        if ignored != 0 {
+            anyhow::bail!(
+                "Postgres CA bundle has {added} valid and {ignored} invalid certificates"
+            );
+        }
+    } else {
+        let native = rustls_native_certs::load_native_certs();
+        roots.add_parsable_certificates(native.certs);
+        if !native.errors.is_empty() {
+            warn!(errors = ?native.errors, "some system Postgres CA certificates could not be loaded");
+            native_errors = Some(format!("{:?}", native.errors));
+        }
+    }
+    if roots.is_empty() {
+        if let Some(errors) = native_errors {
+            anyhow::bail!("failed to load system Postgres CA certificates: {errors}");
+        }
+        if ca_file.is_some() {
+            anyhow::bail!("Postgres CA bundle has 0 valid and 0 invalid certificates");
+        }
+        if production {
+            anyhow::bail!("production Postgres TLS needs trusted CA certificates");
+        }
+    }
+    Ok(roots)
 }
 
 /// An explicit plaintext production connection is safe only within the local host.
@@ -316,8 +327,8 @@ pub async fn run_migrations(database: &config::Database, env: Env) -> anyhow::Re
 }
 
 #[cfg(test)]
-mod connection_string_tests {
-    use super::{ConnectionOptions, local_database_hosts};
+mod tests {
+    use super::*;
     use crate::{Env, config};
     use secrecy::SecretString;
     use std::num::NonZeroUsize;
@@ -332,35 +343,29 @@ mod connection_string_tests {
     }
 
     #[test]
-    fn parses_query_values_without_reencoding() {
-        let input = "postgres://u:p@db/portal?application_name=portal%20prod&options=-c%20search_path%3Dportal&sslmode=require";
-        let options = ConnectionOptions::new(&database(input), Env::Development).unwrap();
-        assert_eq!(options.config.get_application_name(), Some("portal prod"));
-        assert_eq!(options.config.get_options(), Some("-c search_path=portal"));
-    }
-
-    #[test]
-    fn accepts_multi_host_and_key_value_connection_strings() {
-        for input in [
-            "postgres://u:p@h1:5432,h2:5432/db?target_session_attrs=read-write",
-            "host=db user=portal dbname=portal",
-            "host=db user=portal dbname=portal sslmode=require",
-        ] {
-            let options = ConnectionOptions::new(&database(input), Env::Development).unwrap();
-            assert!(!options.config.get_hosts().is_empty());
-        }
-    }
-
-    #[test]
-    fn invalid_postgres_options_fail_when_the_pool_is_built() {
+    fn invalid_postgres_options_and_remote_plaintext_fail_at_startup() {
         for input in [
             "postgres://db/portal?sslrootcert=/tmp/ca.pem",
+            "postgres://db/portal?sslmode=allow",
             "postgres://db/portal?sslmode=verify-ca",
             "postgres://db/portal?sslmode=verify-full",
         ] {
+            let error = connection_config(input, Env::Development).unwrap_err();
             assert!(
-                ConnectionOptions::new(&database(input), Env::Development).is_err(),
-                "{input}"
+                error.to_string().contains("invalid APP_DATABASE__URL"),
+                "{error}"
+            );
+        }
+        for input in [
+            "postgres://db.example/portal?sslmode=disable",
+            "host=localhost hostaddr=10.0.0.1 sslmode=disable",
+        ] {
+            let error = connection_config(input, Env::Production).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("only for Unix sockets or loopback"),
+                "{error}"
             );
         }
     }

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use ::config::{ConfigError, Environment};
 use axum_extra::extract::cookie::Key;
 use secrecy::{ExposeSecret, SecretString};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, de};
 use url::{Host, Url};
 
@@ -88,15 +89,7 @@ pub struct MigrationConfig {
 
 impl MigrationConfig {
     pub fn from_environment() -> Result<Self, ConfigError> {
-        Self::from_source(environment())
-    }
-
-    fn from_source(environment: Environment) -> Result<Self, ConfigError> {
-        ::config::Config::builder()
-            .add_source(environment)
-            .build()?
-            .try_deserialize()
-            .map_err(without_value)
+        load(environment())
     }
 }
 
@@ -314,16 +307,16 @@ impl<'de> Deserialize<'de> for SessionKey {
 impl Config {
     /// Reads the configuration from the process environment.
     pub fn from_environment() -> Result<Self, ConfigError> {
-        Self::from_source(environment())
+        load(environment())
     }
+}
 
-    fn from_source(environment: Environment) -> Result<Self, ConfigError> {
-        ::config::Config::builder()
-            .add_source(environment)
-            .build()?
-            .try_deserialize()
-            .map_err(without_value)
-    }
+fn load<T: DeserializeOwned>(environment: Environment) -> Result<T, ConfigError> {
+    ::config::Config::builder()
+        .add_source(environment)
+        .build()?
+        .try_deserialize()
+        .map_err(without_value)
 }
 
 /// Drops the value from type and value errors: a variable set at the wrong level, such as
@@ -455,7 +448,7 @@ mod tests {
             .into_iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect();
-        Config::from_source(environment().source(Some(vars)))
+        super::load(environment().source(Some(vars)))
     }
 
     /// Loads the required settings, then these variables, which can override them.
@@ -496,9 +489,8 @@ mod tests {
             ),
             ("APP_LOG_FORMAT".to_owned(), "json".to_owned()),
         ];
-        let config =
-            MigrationConfig::from_source(environment().source(Some(vars.into_iter().collect())))
-                .unwrap();
+        let config: MigrationConfig =
+            super::load(environment().source(Some(vars.into_iter().collect()))).unwrap();
         assert_eq!(config.env, Env::Production);
         assert_eq!(config.log_format, LogFormat::Json);
         assert_eq!(config.database.url.expose_secret(), DATABASE_URL);

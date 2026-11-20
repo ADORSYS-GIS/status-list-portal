@@ -1,6 +1,7 @@
 //! The portal: its HTTP server, and commands for its operators.
 
 mod admin;
+mod migrate;
 mod server;
 
 use std::future::Future;
@@ -9,7 +10,6 @@ use std::process::ExitCode;
 use anyhow::Context;
 use clap::Parser;
 use status_list_portal::config::{Config, MigrationConfig};
-use status_list_portal::db;
 use status_list_portal::telemetry::{OPERATOR_COMMAND_SPAN, Process, Telemetry};
 use tracing::field::Empty;
 use tracing::{Instrument, error, info_span};
@@ -47,15 +47,20 @@ fn main() -> anyhow::Result<ExitCode> {
         Command::Server => Action::Server(load_config()?),
         Command::Admin(command) => Action::Admin(load_config()?, command),
     };
-    let (env, log_format, process) = match &action {
-        Action::Server(config) => (config.env, config.log_format, Process::Server),
-        Action::Migrate(config) => (config.env, config.log_format, Process::Command),
-        Action::Admin(config, _) => (config.env, config.log_format, Process::Command),
-    };
-    let failure_message = match &action {
-        Action::Server(_) => Some("the server stopped"),
-        Action::Migrate(_) => Some("migration failed"),
-        Action::Admin(_, _) => None,
+    let (env, log_format, process, failure_message) = match &action {
+        Action::Server(config) => (
+            config.env,
+            config.log_format,
+            Process::Server,
+            Some("the server stopped"),
+        ),
+        Action::Migrate(config) => (
+            config.env,
+            config.log_format,
+            Process::Command,
+            Some("migration failed"),
+        ),
+        Action::Admin(config, _) => (config.env, config.log_format, Process::Command, None),
     };
     let telemetry = Telemetry::from_env(env, process)?;
     telemetry.init_subscriber(log_format)?;
@@ -66,14 +71,7 @@ fn main() -> anyhow::Result<ExitCode> {
         match action {
             Action::Server(config) => server::run(config, &meter).await,
             Action::Admin(config, command) => admin::run(config, &meter, command).await,
-            Action::Migrate(config) => {
-                run_operator_command("migrate", async {
-                    db::run_migrations(&config.database, config.env)
-                        .await
-                        .map(|_| ())
-                })
-                .await
-            }
+            Action::Migrate(config) => migrate::run(config).await,
         }
     });
     // The exporters run on threads of their own, and shutting them down blocks until they

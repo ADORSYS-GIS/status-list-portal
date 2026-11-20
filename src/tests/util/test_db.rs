@@ -28,9 +28,14 @@ static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 pub struct TestDatabase {
     name: String,
     admin_url: Url,
-    app_url: Option<Url>,
-    migration_url: Option<Url>,
-    roles: Option<(String, String)>,
+    roles: Option<Roles>,
+}
+
+struct Roles {
+    app: String,
+    migrator: String,
+    app_url: Url,
+    migration_url: Url,
 }
 
 impl TestDatabase {
@@ -40,10 +45,10 @@ impl TestDatabase {
         db::run_migrations(&test_db.migration_config(), Env::Test)
             .await
             .expect("failed to migrate the test database");
-        diesel::sql_query(
-            "REVOKE INSERT, UPDATE, DELETE ON __diesel_schema_migrations FROM ".to_owned()
-                + &test_db.roles.as_ref().unwrap().0,
-        )
+        let app = &test_db.roles.as_ref().unwrap().app;
+        diesel::sql_query(format!(
+            "REVOKE INSERT, UPDATE, DELETE ON __diesel_schema_migrations FROM {app}"
+        ))
         .execute(&mut test_db.admin_connect().await)
         .await
         .expect("failed to protect migration history");
@@ -65,14 +70,15 @@ impl TestDatabase {
         Self {
             name,
             admin_url,
-            app_url: None,
-            migration_url: None,
             roles: None,
         }
     }
 
     pub fn url(&self) -> &str {
-        self.app_url.as_ref().unwrap_or(&self.admin_url).as_str()
+        self.roles
+            .as_ref()
+            .map_or(&self.admin_url, |roles| &roles.app_url)
+            .as_str()
     }
 
     pub fn config(&self) -> config::Database {
@@ -84,7 +90,10 @@ impl TestDatabase {
     }
 
     pub fn migration_config(&self) -> config::Database {
-        let url = self.migration_url.as_ref().unwrap_or(&self.admin_url);
+        let url = self
+            .roles
+            .as_ref()
+            .map_or(&self.admin_url, |roles| &roles.migration_url);
         config::Database {
             url: SecretString::from(url.as_str()),
             tls_ca_file: None,
@@ -109,7 +118,18 @@ impl TestDatabase {
         let pid = std::process::id();
         let app = format!("pa_{pid}_{id}");
         let migrator = format!("pm_{pid}_{id}");
-        self.roles = Some((app.clone(), migrator.clone()));
+        let mut app_url = self.admin_url.clone();
+        app_url.set_username(&app).unwrap();
+        app_url.set_password(Some("test-password")).unwrap();
+        let mut migration_url = self.admin_url.clone();
+        migration_url.set_username(&migrator).unwrap();
+        migration_url.set_password(Some("test-password")).unwrap();
+        self.roles = Some(Roles {
+            app: app.clone(),
+            migrator: migrator.clone(),
+            app_url,
+            migration_url,
+        });
         let mut admin = self.admin_connect().await;
         for role in [&app, &migrator] {
             diesel::sql_query(format!("DROP ROLE IF EXISTS {role}"))
@@ -141,14 +161,6 @@ impl TestDatabase {
                 .await
                 .expect("failed to grant test role privileges");
         }
-        let mut app_url = self.admin_url.clone();
-        app_url.set_username(&app).unwrap();
-        app_url.set_password(Some("test-password")).unwrap();
-        self.app_url = Some(app_url);
-        let mut migration_url = self.admin_url.clone();
-        migration_url.set_username(&migrator).unwrap();
-        migration_url.set_password(Some("test-password")).unwrap();
-        self.migration_url = Some(migration_url);
     }
 }
 
@@ -165,7 +177,7 @@ impl Drop for TestDatabase {
                 .expect("failed to start a runtime")
                 .block_on(async {
                     run_on_server(&[statement]).await;
-                    if let Some((app, migrator)) = roles {
+                    if let Some(Roles { app, migrator, .. }) = roles {
                         run_on_server(&[
                             format!("DROP ROLE IF EXISTS {app}"),
                             format!("DROP ROLE IF EXISTS {migrator}"),

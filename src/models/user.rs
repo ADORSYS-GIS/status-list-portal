@@ -77,6 +77,14 @@ pub struct NewUser<'a> {
     pub email: &'a str,
 }
 
+impl std::fmt::Debug for NewUser<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewUser")
+            .field("gh_id", &self.gh_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl NewUser<'_> {
     /// Creates the account, or refreshes the details of an account that signed in before.
     ///

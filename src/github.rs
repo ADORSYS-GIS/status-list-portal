@@ -67,6 +67,14 @@ pub struct Account {
     pub email: String,
 }
 
+impl std::fmt::Debug for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Account")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SignInError {
     /// GitHub refused the code, for example because it expired or was already used.

@@ -14,6 +14,14 @@ pub struct TermsAcceptance<'a> {
     pub email: &'a str,
 }
 
+impl std::fmt::Debug for TermsAcceptance<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TermsAcceptance")
+            .field("user_id", &self.user_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl TermsAcceptance<'_> {
     /// Records the acceptance. Accepting the same version again keeps the first record.
     pub async fn record(&self, conn: &mut AsyncPgConnection) -> QueryResult<()> {

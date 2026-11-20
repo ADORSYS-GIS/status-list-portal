@@ -14,34 +14,6 @@ fn database(url: &str, ca: Option<PathBuf>) -> config::Database {
     }
 }
 
-#[test]
-fn production_rejects_remote_plaintext_and_unsupported_modes() {
-    for url in [
-        "postgres://db.example/portal?sslmode=disable",
-        "host=localhost hostaddr=10.0.0.1 sslmode=disable",
-    ] {
-        let error = db::pool(&database(url, None), Env::Production)
-            .err()
-            .unwrap();
-        assert!(
-            error
-                .to_string()
-                .contains("only for Unix sockets or loopback"),
-            "{error}"
-        );
-    }
-    for mode in ["allow", "verify-ca", "verify-full"] {
-        let url = format!("postgres://db.example/portal?sslmode={mode}");
-        let error = db::pool(&database(&url, None), Env::Production)
-            .err()
-            .unwrap();
-        assert!(
-            error.to_string().contains("invalid APP_DATABASE__URL"),
-            "{error}"
-        );
-    }
-}
-
 #[tokio::test]
 async fn plaintext_needs_an_explicit_local_disable() {
     let test_db = TestDatabase::new().await;

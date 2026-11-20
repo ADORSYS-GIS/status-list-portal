@@ -2,18 +2,19 @@
 
 ## Database roles and migrations
 
-Run `portal migrate` as a Kubernetes Job before rolling out `portal server`
-(for example, Helm `pre-install` and `pre-upgrade` hooks). The job needs only `APP_DATABASE__URL`,
-optionally `APP_ENV` (production by default), `APP_LOG_FORMAT`, and
-`APP_DATABASE__TLS_CA_FILE`. Give it a migration role
-that owns the portal tables. Give the server a separate role with DML privileges;
-do not mount the migration credential in the server Pod. Always run migrations as
-the same role used in `ALTER DEFAULT PRIVILEGES` below. Two migration jobs may
-overlap: an advisory lock ensures that each pending migration runs once.
+Use separate database roles so a compromised server cannot change the schema or
+Diesel's migration history. The migration role owns portal tables; the server role
+has DML access only. Never mount the migration credential in the server Pod.
 
-For a new database, provision distinct roles before the first migration. As the
-database administrator, establish privileges before running migrations
-(substitute your database, role, and schema names):
+Run `portal migrate` as a Kubernetes Job before rolling out `portal server`
+(for example, with Helm `pre-install` and `pre-upgrade` hooks). The job needs
+`APP_DATABASE__URL` and, optionally, `APP_ENV` (production by default),
+`APP_LOG_FORMAT`, and `APP_DATABASE__TLS_CA_FILE`. Always use the same migration
+role named in the default-privilege grants below. An advisory lock lets
+overlapping jobs apply each pending migration once.
+
+For a new database, provision both roles and run this SQL as the administrator
+before the first migration (substitute your database, role, and schema names):
 
 ```sql
 GRANT CONNECT ON DATABASE portal TO portal_migrator, portal_app;
@@ -33,42 +34,46 @@ migration history while retaining `SELECT` for readiness:
 REVOKE INSERT, UPDATE, DELETE ON __diesel_schema_migrations FROM portal_app;
 ```
 
-For an existing installation, apply the following in order in the portal
-database, with administrator credentials. First create `portal_app` and grant
-it access to the existing objects before changing the running server's role:
+For an existing installation, use administrator credentials in the portal
+database and follow this order:
 
-```sql
-GRANT CONNECT ON DATABASE portal TO portal_app;
-GRANT USAGE ON SCHEMA public TO portal_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO portal_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO portal_app;
-REVOKE INSERT, UPDATE, DELETE ON __diesel_schema_migrations FROM portal_app;
-```
+1. Create `portal_app` and grant it access to existing objects, including
+   `SELECT` on the migration history for readiness:
 
-Roll out `portal server` with the new app credential and confirm readiness and
-normal requests. Then transfer ownership from the old server role to the
-migration role before the next migration:
+   ```sql
+   GRANT CONNECT ON DATABASE portal TO portal_app;
+   GRANT USAGE ON SCHEMA public TO portal_app;
+   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO portal_app;
+   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO portal_app;
+   REVOKE INSERT, UPDATE, DELETE ON __diesel_schema_migrations FROM portal_app;
+   ```
 
-```sql
-REASSIGN OWNED BY portal_old TO portal_migrator;
-```
+2. Roll out `portal server` with the new app credential. Confirm readiness and
+   normal requests.
 
-Inspect objects owned by `portal_old` first: `REASSIGN OWNED` affects all of
-them in this database, including the database itself if that role owns it.
-Apply the full new-database grant block above for `portal_migrator`, including
-`GRANT USAGE, CREATE ON SCHEMA public`, so it can create new tables and grant
-the app role access to them. Keep `CREATE` on the schema and database ownership
-away from the server role.
+3. Inspect everything owned by `portal_old`: `REASSIGN OWNED` affects all its
+   objects in this database, including the database itself if it owns it. Then
+   transfer ownership to the migration role before the next migration:
+
+   ```sql
+   REASSIGN OWNED BY portal_old TO portal_migrator;
+   ```
+
+4. Apply the full new-database grant block above for `portal_migrator`, including
+   `GRANT USAGE, CREATE ON SCHEMA public`. It must be able to create new tables
+   and grant the app role access to them. Keep `CREATE` on the schema and database
+   ownership away from the server role.
 
 ## Database TLS
 
-Production connections require TLS and verify the server's CA chain and hostname. Set
-`APP_DATABASE__TLS_CA_FILE` in both workloads to use only the PEM CAs in that
-file; otherwise system CAs are trusted. Use `sslmode=require` for verified TLS;
-this connector does not accept libpq's `verify-full`. In production, `prefer`
-is upgraded to `require`. An explicit `sslmode=disable` is allowed only when
-every host and host address is loopback or a Unix socket, for a local proxy
-that encrypts the onward connection. Remote plaintext connections are refused.
+- Production requires TLS with CA and hostname verification. Use
+  `sslmode=require` for verified TLS; this connector does not accept libpq's
+  `verify-full`. `prefer` is upgraded to `require` in production.
+- Set `APP_DATABASE__TLS_CA_FILE` in both workloads to trust only the PEM CAs
+  in that file. Without it, the system CAs are trusted.
+- An explicit `sslmode=disable` in production is allowed only when every host
+  and host address is loopback or a Unix socket, for a local proxy that encrypts
+  the onward connection. Remote plaintext connections are refused.
 
 ## Backtraces
 
