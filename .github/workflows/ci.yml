@@ -189,6 +189,124 @@ jobs:
       - name: Check the page's content security policy
         run: grep -q '<meta http-equiv="content-security-policy" content="' frontend/build/200.html
 
+  e2e:
+    name: End-to-end tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      E2E_DATABASE_URL: postgres://postgres:postgres@localhost:5432/portal_e2e
+    steps:
+      - name: Fetch Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-shared-key: workspace
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Chromium
+        run: bun run playwright install --with-deps chromium
+
+      - name: Run the end-to-end tests
+        run: bun run test:e2e
+
+      - name: Keep the report and traces of a failed run
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 7
+
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - name: Fetch Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the image
+        run: docker build --tag status-list-portal .
+
+      - name: Check that it runs without privileges
+        run: test "$(docker image inspect --format '{{.Config.User}}' status-list-portal)" = 65532
+
+      # The image's own server, not the end-to-end job's debug build: its static binary, CA
+      # certificates and frontend path. In production, plaintext reaches only a local database.
+      - name: Check that it serves the portal
+        run: |
+          cat > "$RUNNER_TEMP/portal.env" <<EOF
+          APP_SERVER__ORIGIN=http://localhost:8080
+          APP_DATABASE__URL=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+          APP_SESSION__KEY=$(openssl rand -hex 64)
+          APP_GITHUB__CLIENT_ID=ci
+          APP_GITHUB__CLIENT_SECRET=ci
+          APP_ADMIN_API__URL=http://localhost:8002
+          APP_ADMIN_API__PRINCIPAL=portal
+          APP_ADMIN_API__AUDIENCE=status-list-server
+          APP_ADMIN_API__KEY_ID=ci
+          APP_ADMIN_API__SIGNING_KEY_FILE=/run/secrets/admin-key.pem
+          APP_MANAGEMENT_API__URL=https://status.example.com
+          APP_MANAGEMENT_API__AUDIENCE=https://status.example.com
+          APP_TERMS__VERSION=ci
+          APP_TERMS__URL=https://example.com/terms
+          EOF
+          docker run --rm --network host --env-file "$RUNNER_TEMP/portal.env" status-list-portal migrate
+          docker run --detach --name portal --network host --env-file "$RUNNER_TEMP/portal.env" \
+            --volume "$PWD/test_data/admin-keys/es256.pem:/run/secrets/admin-key.pem:ro" \
+            status-list-portal
+          for _ in $(seq 30); do
+            curl --fail --silent --output /dev/null http://localhost:8080/health/ready && break
+            sleep 1
+          done
+          curl --fail --silent --show-error http://localhost:8080/health/ready
+          curl --fail --silent --show-error --header 'Accept: text/html' http://localhost:8080/ \
+            | grep -q '<meta http-equiv="content-security-policy"'
+
+      - name: Show the server's log
+        if: failure()
+        run: docker logs portal
+
+      # Cross-compiled from the runner's platform: the runner cannot emulate arm64, so a step
+      # that ran on arm64 would fail here.
+      - name: Build the image for arm64
+        run: |
+          docker build --platform linux/arm64 --tag status-list-portal:arm64 .
+          test "$(docker image inspect --format '{{.Architecture}}' status-list-portal:arm64)" = arm64
+
   markdown:
     name: Markdown
     runs-on: ubuntu-latest

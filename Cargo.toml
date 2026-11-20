@@ -40,6 +40,7 @@ diesel_migrations = "2.3"
 dotenvy = "0.15"
 hex = "0.4"
 http = "1.5"
+ipnet = "2.12"
 json-subscriber = { version = "0.3.1", features = ["tracing-opentelemetry-0-34"] }
 jsonwebtoken = { version = "11.1", features = ["aws_lc_rs"] }
 oauth2 = "5.0"
@@ -90,6 +91,10 @@ url = "2.5"
 utoipa = { version = "6.0", features = ["time"] }
 utoipa-axum = "0.3"
 uuid = { version = "1.29", features = ["v4"] }
+
+# The binary's allocator: see src/bin/portal/main.rs. jemalloc does not build with MSVC.
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.7"
 
 [dev-dependencies]
 insta = { version = "1.49", features = ["json"] }

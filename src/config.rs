@@ -3,21 +3,25 @@
 //! Every setting comes from an environment variable named `APP_` followed by the setting's
 //! path in upper case, with `__` between nested keys: `server.bind_address` is read from
 //! `APP_SERVER__BIND_ADDRESS`. An empty variable counts as unset. `.env.template` documents
-//! every setting.
+//! every setting. Secrets can also come from files: see [`secret_files`].
 
+mod secret_files;
+
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::num::{NonZeroU16, NonZeroUsize};
+use std::num::{NonZeroU16, NonZeroU32, NonZeroUsize};
 use std::path::PathBuf;
 
 use ::config::{ConfigError, Environment};
 use axum_extra::extract::cookie::Key;
 use secrecy::{ExposeSecret, SecretString};
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer, de};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use url::{Host, Url};
 
 use crate::Env;
 use crate::admin_api::SigningAlgorithm;
+use crate::client_address::TrustedProxies;
 use crate::util::logging::LogFormat;
 
 const DEFAULT_BIND_ADDRESS: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
@@ -47,6 +51,8 @@ pub struct Config {
     #[serde(default)]
     pub sandbox: Sandbox,
     pub terms: Terms,
+    /// How often developers may sign in and change their issuers (`APP_RATE_LIMITS__*`).
+    pub rate_limits: RateLimits,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,6 +67,11 @@ pub struct Server {
     /// answers API requests only, as when the frontend's dev server runs in front of it.
     #[serde(default)]
     pub frontend_dir: Option<PathBuf>,
+    /// The proxies in front of the server, whose `X-Forwarded-For` names the client
+    /// (`APP_SERVER__TRUSTED_PROXIES`): addresses or CIDR blocks, separated by commas. Behind
+    /// a proxy that is not listed, every client shares the proxy's sign-in limit.
+    #[serde(default)]
+    pub trusted_proxies: TrustedProxies,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,8 +99,9 @@ pub struct MigrationConfig {
 }
 
 impl MigrationConfig {
+    /// Reads the database settings as [`Config::from_environment`] does, secret files included.
     pub fn from_environment() -> Result<Self, ConfigError> {
-        load(environment())
+        load(process_vars())
     }
 }
 
@@ -107,11 +119,13 @@ pub struct GitHub {
     pub client_id: String,
     /// The OAuth app's client secret (`APP_GITHUB__CLIENT_SECRET`).
     pub client_secret: SecretString,
-    /// Where GitHub serves its sign-in pages. Only tests change it.
-    #[serde(skip, default = "default_github_web_url")]
+    /// Where GitHub serves its sign-in pages (`APP_GITHUB__WEB_URL`), ending with `/`. Only
+    /// tests point it elsewhere, at a stand-in for GitHub; production refuses that.
+    #[serde(default = "default_github_web_url", deserialize_with = "http_url")]
     pub web_url: Url,
-    /// Where GitHub serves its REST API. Only tests change it.
-    #[serde(skip, default = "default_github_api_url")]
+    /// Where GitHub serves its REST API (`APP_GITHUB__API_URL`), ending with `/`. Only tests
+    /// point it elsewhere.
+    #[serde(default = "default_github_api_url", deserialize_with = "http_url")]
     pub api_url: Url,
 }
 
@@ -201,6 +215,65 @@ pub struct Terms {
     /// Where the current terms are published (`APP_TERMS__URL`).
     #[serde(deserialize_with = "http_url")]
     pub url: Url,
+}
+
+/// How often a client may do something: `burst` times in a row, then once every
+/// `refill_seconds` (`APP_RATE_LIMITS__<ACTION>__BURST` and `__REFILL_SECONDS`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimit {
+    pub burst: NonZeroU32,
+    pub refill_seconds: NonZeroU32,
+}
+
+impl RateLimit {
+    /// Panics if either number is 0.
+    pub const fn new(burst: u32, refill_seconds: u32) -> Self {
+        Self {
+            burst: NonZeroU32::new(burst).expect("the burst is not 0"),
+            refill_seconds: NonZeroU32::new(refill_seconds).expect("the interval is not 0"),
+        }
+    }
+
+    pub fn refill_interval(self) -> time::Duration {
+        time::Duration::seconds(self.refill_seconds.get().into())
+    }
+}
+
+/// Rate limits: per developer for changes to their issuers, and per client network and per
+/// replica for sign-ins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimits {
+    /// Registering an issuer, at once or for approval.
+    pub register: RateLimit,
+    pub renew: RateLimit,
+    /// Deleting an issuer.
+    pub delete: RateLimit,
+    /// Finishing a sign-in with GitHub, per client network.
+    pub sign_in: RateLimit,
+    /// Finishing a sign-in, from all networks together: a client with many networks escapes
+    /// the per-network limit, and each sign-in calls GitHub with the portal's OAuth app.
+    pub sign_in_per_replica: RateLimit,
+}
+
+impl Default for RateLimits {
+    fn default() -> Self {
+        Self {
+            register: RateLimit::new(5, 600),
+            renew: RateLimit::new(10, 60),
+            delete: RateLimit::new(20, 30),
+            sign_in: RateLimit::new(20, 6),
+            sign_in_per_replica: RateLimit::new(100, 1),
+        }
+    }
+}
+
+/// The settings that have defaults one variable can override without the others, such as
+/// `APP_RATE_LIMITS__REGISTER__BURST` alone.
+#[derive(Serialize)]
+struct Defaults {
+    rate_limits: RateLimits,
 }
 
 /// The scheme, host and port browsers use to reach the portal, such as
@@ -305,15 +378,59 @@ impl<'de> Deserialize<'de> for SessionKey {
 }
 
 impl Config {
-    /// Reads the configuration from the process environment.
+    /// Reads the configuration from the process environment, and the secret files it names.
+    /// Variables whose names or values are not Unicode are left out.
     pub fn from_environment() -> Result<Self, ConfigError> {
-        load(environment())
+        Self::from_vars(process_vars())
+    }
+
+    /// Reads the configuration from `vars`, as if they were the process environment.
+    fn from_vars(vars: HashMap<String, String>) -> Result<Self, ConfigError> {
+        load::<Self>(vars)?.refuse_stand_ins()
+    }
+
+    /// Refuses, in production, a stand-in for GitHub: end-to-end tests sign in through one.
+    fn refuse_stand_ins(self) -> Result<Self, ConfigError> {
+        let github = &self.github;
+        let stand_in = github.web_url != default_github_web_url()
+            || github.api_url != default_github_api_url();
+        if self.env == Env::Production && stand_in {
+            return Err(ConfigError::Message(
+                "APP_GITHUB__WEB_URL and APP_GITHUB__API_URL are for tests: in production, the \
+                 portal signs developers in with GitHub itself"
+                    .to_string(),
+            ));
+        }
+        Ok(self)
     }
 }
 
-fn load<T: DeserializeOwned>(environment: Environment) -> Result<T, ConfigError> {
-    ::config::Config::builder()
-        .add_source(environment)
+/// The process environment. Variables whose names or values are not Unicode are left out.
+fn process_vars() -> HashMap<String, String> {
+    std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .collect()
+}
+
+/// Reads settings from `vars`, as if they were the process environment, and from the secret
+/// files they name.
+fn load<T: DeserializeOwned>(vars: HashMap<String, String>) -> Result<T, ConfigError> {
+    let defaults = ::config::Config::try_from(&Defaults {
+        rate_limits: RateLimits::default(),
+    })?;
+    let builder = secret_files::read(&vars)?
+        .into_iter()
+        .try_fold(::config::Config::builder(), |builder, (setting, value)| {
+            builder.set_override(setting, value)
+        })?;
+    // The `_FILE` variables are read above; as settings, they would be unknown.
+    let vars = vars
+        .into_iter()
+        .filter(|(name, _)| !secret_files::is_file_variable(name))
+        .collect();
+    builder
+        .add_source(defaults)
+        .add_source(environment().source(Some(vars)))
         .build()?
         .try_deserialize()
         .map_err(without_value)
@@ -448,7 +565,7 @@ mod tests {
             .into_iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect();
-        super::load(environment().source(Some(vars)))
+        Config::from_vars(vars)
     }
 
     /// Loads the required settings, then these variables, which can override them.
@@ -489,8 +606,7 @@ mod tests {
             ),
             ("APP_LOG_FORMAT".to_owned(), "json".to_owned()),
         ];
-        let config: MigrationConfig =
-            super::load(environment().source(Some(vars.into_iter().collect()))).unwrap();
+        let config: MigrationConfig = super::load(vars.into_iter().collect()).unwrap();
         assert_eq!(config.env, Env::Production);
         assert_eq!(config.log_format, LogFormat::Json);
         assert_eq!(config.database.url.expose_secret(), DATABASE_URL);
@@ -602,6 +718,58 @@ mod tests {
     }
 
     #[test]
+    fn secrets_can_come_from_files() {
+        let dir = std::env::temp_dir().join(format!("portal-secrets-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let key_file = dir.join("session-key");
+        let secret_file = dir.join("client-secret");
+        std::fs::write(&key_file, format!("{SESSION_KEY}\n")).unwrap();
+        std::fs::write(&secret_file, "s3cr3t-from-file\n").unwrap();
+        let from_files = [
+            ("APP_SESSION__KEY_FILE", key_file.to_str().unwrap()),
+            (
+                "APP_GITHUB__CLIENT_SECRET_FILE",
+                secret_file.to_str().unwrap(),
+            ),
+        ];
+        let from_variables = ["APP_SESSION__KEY", "APP_GITHUB__CLIENT_SECRET"];
+
+        let config = load_exactly(
+            REQUIRED
+                .iter()
+                .filter(|(name, _)| !from_variables.contains(name))
+                .chain(&from_files),
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let config = config.unwrap();
+        assert_eq!(
+            config.github.client_secret.expose_secret(),
+            "s3cr3t-from-file"
+        );
+        let from_variable = load(&[]).unwrap();
+        assert_eq!(
+            config.session.key.key().master(),
+            from_variable.session.key.key().master()
+        );
+    }
+
+    #[test]
+    fn the_migration_job_reads_the_database_url_from_a_file() {
+        let file = std::env::temp_dir().join(format!("portal-db-url-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&file, format!("{DATABASE_URL}\n")).unwrap();
+        let vars = [(
+            "APP_DATABASE__URL_FILE".to_owned(),
+            file.to_str().unwrap().to_owned(),
+        )];
+
+        let config: Result<MigrationConfig, _> = super::load(vars.into_iter().collect());
+        std::fs::remove_file(&file).unwrap();
+
+        assert_eq!(config.unwrap().database.url.expose_secret(), DATABASE_URL);
+    }
+
+    #[test]
     fn origins_are_normalized_like_the_origin_header() {
         let origin = PublicOrigin::parse("HTTPS://Portal.Example.com:443/").unwrap();
 
@@ -709,6 +877,67 @@ mod tests {
         let error = load(&[("APP_SERVER__BIND_ADDRESS", "nowhere")]).unwrap_err();
 
         assert!(error.to_string().contains("server.bind_address"), "{error}");
+    }
+
+    #[test]
+    fn rate_limits_can_be_changed_one_number_at_a_time() {
+        let config = load(&[("APP_RATE_LIMITS__REGISTER__BURST", "2")]).unwrap();
+
+        assert_eq!(config.rate_limits.register, RateLimit::new(2, 600));
+        let defaults = RateLimits::default();
+        assert_eq!(config.rate_limits.renew, defaults.renew);
+        assert_eq!(config.rate_limits.delete, defaults.delete);
+        assert_eq!(config.rate_limits.sign_in, defaults.sign_in);
+        assert_eq!(
+            config.rate_limits.sign_in_per_replica,
+            defaults.sign_in_per_replica
+        );
+
+        let error = load(&[("APP_RATE_LIMITS__SIGN_IN__REFILL_SECONDS", "0")]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("rate_limits.sign_in.refill_seconds"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn github_can_be_stood_in_for_outside_production() {
+        let stand_in = [
+            ("APP_GITHUB__WEB_URL", "http://127.0.0.1:18090/"),
+            ("APP_GITHUB__API_URL", "http://127.0.0.1:18090/api/"),
+        ];
+
+        let config = load(&[("APP_ENV", "development"), stand_in[0], stand_in[1]]).unwrap();
+
+        assert_eq!(config.github.web_url.as_str(), "http://127.0.0.1:18090/");
+        assert_eq!(
+            config.github.api_url.as_str(),
+            "http://127.0.0.1:18090/api/"
+        );
+        let in_production = [("APP_ENV", "production"), stand_in[1]];
+        let error = load(&in_production).unwrap_err();
+        assert!(error.to_string().contains("APP_GITHUB__WEB_URL"), "{error}");
+        assert!(load(&[("APP_ENV", "production")]).is_ok());
+    }
+
+    #[test]
+    fn trusted_proxies_are_none_unless_listed() {
+        assert_eq!(
+            load(&[]).unwrap().server.trusted_proxies,
+            TrustedProxies::default()
+        );
+
+        let config = load(&[("APP_SERVER__TRUSTED_PROXIES", "10.0.0.0/8, 192.168.1.10")]).unwrap();
+        let expected = TrustedProxies::parse("10.0.0.0/8,192.168.1.10").unwrap();
+        assert_eq!(config.server.trusted_proxies, expected);
+
+        let error = load(&[("APP_SERVER__TRUSTED_PROXIES", "the ingress")]).unwrap_err();
+        assert!(
+            error.to_string().contains("server.trusted_proxies"),
+            "{error}"
+        );
     }
 
     #[test]
