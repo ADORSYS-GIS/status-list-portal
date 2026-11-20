@@ -5,13 +5,21 @@ use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use crate::schema::terms_acceptances;
 
 /// A developer's acceptance of one version of the terms of use.
-#[derive(Debug, Insertable)]
+#[derive(Insertable)]
 #[diesel(table_name = terms_acceptances)]
 pub struct TermsAcceptance<'a> {
     pub user_id: i64,
     pub terms_version: &'a str,
     /// The verified email the account has when it accepts.
     pub email: &'a str,
+}
+
+impl std::fmt::Debug for TermsAcceptance<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TermsAcceptance")
+            .field("user_id", &self.user_id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl TermsAcceptance<'_> {

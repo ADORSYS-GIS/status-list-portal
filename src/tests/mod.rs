@@ -17,5 +17,6 @@ mod registrations;
 mod session;
 mod telemetry;
 mod terms;
+mod tls;
 mod users;
 mod util;

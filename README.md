@@ -13,6 +13,7 @@ Requires [Rust](https://rustup.rs) 1.99 or later (`rustup update`) and [Docker](
 ```sh
 cp .env.template .env   # every setting, documented
 docker compose up -d    # Postgres
+cargo run -- migrate    # apply pending migrations
 cargo run -- server     # http://localhost:8080
 ```
 
@@ -26,8 +27,8 @@ The frontend lives in `frontend/` and needs [Bun](https://bun.com). Its commands
 
 ## Deploy
 
-The [deployment guide](docs/deployment.md) covers backtraces, Kubernetes probes,
-network access and reverse proxy timeouts.
+The [deployment guide](docs/deployment.md) covers database roles, migrations,
+TLS, backtraces, Kubernetes probes, network access and reverse proxy timeouts.
 
 ## Telemetry
 
@@ -40,6 +41,15 @@ cargo test
 ```
 
 Tests use the Postgres from `docker compose`, with a fresh database per test. `bun run test` runs the frontend's tests, some of them in Chromium (`bun run playwright install chromium`). `bun test` would run Bun's own test runner instead.
+
+To run the TLS integration test locally, start its Docker fixture, export the
+printed variables, then run the test. Remove the container afterward:
+
+```sh
+export $(bash test_data/start_tls_postgres.sh)
+cargo test production_verifies_tls_ca_and_hostname
+docker rm -f "$TEST_TLS_CONTAINER"
+```
 
 ## Contributing
 

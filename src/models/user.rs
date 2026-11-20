@@ -6,7 +6,7 @@ use time::OffsetDateTime;
 use crate::schema::users;
 
 /// A developer who signed in with GitHub.
-#[derive(Debug, Clone, PartialEq, Eq, Queryable, Selectable)]
+#[derive(Clone, PartialEq, Eq, Queryable, Selectable)]
 #[diesel(table_name = users, check_for_backend(Pg))]
 pub struct User {
     pub id: i64,
@@ -19,6 +19,29 @@ pub struct User {
     pub created_at: OffsetDateTime,
     /// Copied into every session cookie; a cookie with another value is void.
     pub session_epoch: i32,
+}
+
+impl std::fmt::Debug for User {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            id,
+            gh_id,
+            gh_login: _,
+            name: _,
+            email: _,
+            created_at,
+            session_epoch,
+        } = self;
+        f.debug_struct("User")
+            .field("id", id)
+            .field("gh_id", gh_id)
+            .field("gh_login", &"[REDACTED]")
+            .field("name", &"[REDACTED]")
+            .field("email", &"[REDACTED]")
+            .field("created_at", created_at)
+            .field("session_epoch", session_epoch)
+            .finish()
+    }
 }
 
 impl User {
@@ -45,13 +68,21 @@ impl User {
 }
 
 /// Account details GitHub reports at sign-in.
-#[derive(Debug, Insertable, AsChangeset)]
+#[derive(Insertable, AsChangeset)]
 #[diesel(table_name = users, check_for_backend(Pg), treat_none_as_null = true)]
 pub struct NewUser<'a> {
     pub gh_id: i64,
     pub gh_login: &'a str,
     pub name: Option<&'a str>,
     pub email: &'a str,
+}
+
+impl std::fmt::Debug for NewUser<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewUser")
+            .field("gh_id", &self.gh_id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl NewUser<'_> {
