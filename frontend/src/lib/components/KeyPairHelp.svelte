@@ -8,7 +8,7 @@
 </script>
 
 <details>
-  <summary>Need a key pair?</summary>
+  <summary>Rather make the key pair on your machine?</summary>
   <ol>
     <li>Save this script as <code>make-key.mjs</code> in an empty folder.</li>
     <li>
