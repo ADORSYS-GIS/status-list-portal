@@ -12,6 +12,7 @@
   import { SIGNING_ALGORITHMS, type SigningAlgorithm, type Terms } from '#lib/api/index.ts';
   import { publicKeyProblem } from '#lib/keys.ts';
 
+  import KeyPairGenerator from './KeyPairGenerator.svelte';
   import KeyPairHelp from './KeyPairHelp.svelte';
 
   const DISPLAY_NAME_MAX = 100;
@@ -66,6 +67,11 @@
     }
     onsubmit({ displayName: displayName.trim(), alg, publicKey });
   }
+
+  function useGeneratedKey(publicJwk: string) {
+    publicKey = publicJwk;
+    alg = 'ES256';
+  }
 </script>
 
 <form bind:this={form} onsubmit={submit} novalidate>
@@ -113,6 +119,7 @@
     {/if}
   </div>
 
+  <KeyPairGenerator onkey={useGeneratedKey} />
   <KeyPairHelp {alg} />
 
   {#if !termsAccepted}
