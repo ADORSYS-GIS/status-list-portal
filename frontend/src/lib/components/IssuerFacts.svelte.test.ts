@@ -75,3 +75,26 @@ test('an issuer far from its expiry is not warned about', async () => {
   expect(fact(screen, 'Expires')?.textContent).toMatch(/in 20 days/);
   await expect.element(screen.getByText(/Expires soon/)).not.toBeInTheDocument();
 });
+
+test('an open page warns once the warning starts', async () => {
+  vi.useRealTimers();
+  const soon = (milliseconds: number) => new Date(Date.now() + milliseconds).toISOString();
+  const screen = await render(IssuerFacts, {
+    issuer: issuer({ expires_at: soon(3 * DAY), expires_soon_from: soon(200) }),
+  });
+  await expect.element(screen.getByText(/Expires soon/)).not.toBeInTheDocument();
+
+  await expect.element(screen.getByText(/Expires soon/)).toBeVisible();
+});
+
+test('a tab shown again reads the time again', async () => {
+  const screen = await render(IssuerFacts, { issuer: issuer() });
+  await expect.element(screen.getByText(/Expires soon/)).not.toBeInTheDocument();
+
+  // The clock moves past the warning's start while no timer fires, as in a sleeping laptop.
+  vi.setSystemTime(new Date(NOW.getTime() + 14 * DAY));
+  document.dispatchEvent(new Event('visibilitychange'));
+
+  await expect.element(screen.getByText(/Expires soon/)).toBeVisible();
+  expect(fact(screen, 'Expires')?.textContent).toMatch(/in 6 days/);
+});

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 
-import { expiresSoon, expiryText, usageText } from './format';
+import { expiresSoon, expiryText, nextExpiryChange, usageText } from './format';
 
 const NOW = new Date('2026-10-23T12:00:00Z');
 
@@ -49,6 +49,31 @@ test('only an active issuer that will expire is warned about', () => {
   expect(expiresSoon(active(-1, -8), NOW)).toBe(false);
   expect(expiresSoon({ ...active(-1, -8), state: 'expired' }, NOW)).toBe(false);
   expect(expiresSoon({ ...active(3, -4), state: 'suspended' }, NOW)).toBe(false);
+});
+
+/** `days` from `NOW`, in milliseconds since the epoch. */
+function at(days: number): number {
+  return NOW.getTime() + days * 24 * 60 * 60 * 1000;
+}
+
+test('the next change is the next whole day off the time left', () => {
+  // 20.5 days left reads as 21 until half a day from now.
+  expect(nextExpiryChange(active(20.5, 13.5), NOW)).toBe(at(0.5));
+  // Exactly 20 days left reads as 20 for a whole day.
+  expect(nextExpiryChange(active(20, 13), NOW)).toBe(at(1));
+});
+
+test('the start of the warning is a change, when it comes first', () => {
+  expect(nextExpiryChange(active(7.5, 0.25), NOW)).toBe(at(0.25));
+});
+
+test('on the last day the next change is the expiry', () => {
+  expect(nextExpiryChange(active(0.5, -6.5), NOW)).toBe(at(0.5));
+});
+
+test('an issuer that expired or never expires changes no more', () => {
+  expect(nextExpiryChange(active(-1, -8), NOW)).toBeNull();
+  expect(nextExpiryChange({ expires_at: null, expires_soon_from: null }, NOW)).toBeNull();
 });
 
 test('usage reads against its limit, or alone when there is none', () => {
