@@ -213,42 +213,50 @@ function refuse(response: ServerResponse, status: number, error: string, descrip
   return send(response, status, { error, error_description: description ?? error });
 }
 
+/** A refusal as the admin contract words it: `400 invalid_input` for a malformed body. */
+type Refusal = [status: number, error: string, description: string];
+
+const malformed = (description: string): Refusal => [400, 'invalid_input', description];
+
 /** Why an expiry would be refused, if it would: the sandbox keeps issuers 30 days at most. */
-function invalidExpiry(expiresAt: unknown): string | undefined {
+function invalidExpiry(expiresAt: unknown): Refusal | undefined {
   const now = Date.now() / 1000;
   const valid =
     typeof expiresAt === 'number' && expiresAt > now && expiresAt <= now + SANDBOX_LIFETIME;
-  return valid ? undefined : 'expires_at must be in the future, within the tier lifetime';
+  return valid
+    ? undefined
+    : [422, 'invalid_expiry', 'expires_at must be in the future, within the tier lifetime'];
 }
 
 /** Why a new issuer would be refused, if it would. */
-function invalidIssuer(body: Json): string | undefined {
+function invalidIssuer(body: Json): Refusal | undefined {
   const key = body.public_key;
   if (typeof body.display_name !== 'string' || !body.display_name.trim()) {
-    return 'display_name is missing';
+    return malformed('display_name is missing');
   }
   if (typeof body.owner !== 'string' || !/^github\|\d+$/.test(body.owner)) {
-    return 'owner must be github|<id>';
+    return malformed('owner must be github|<id>');
   }
   if (!ALGORITHMS.includes(body.alg as string)) {
-    return 'alg is not supported';
+    return malformed('alg is not supported');
   }
   if (typeof key !== 'object' || key === null || PRIVATE_MEMBERS.some((name) => name in key)) {
-    return 'public_key must be a public JWK';
+    return [422, 'invalid_public_jwk', 'public_key must be a public JWK'];
   }
   return invalidExpiry(body.expires_at);
 }
 
 /** Why a change would be refused, if it would: it sets exactly one of the expiry or state. */
-function invalidChange(change: Json): string | undefined {
+function invalidChange(change: Json): Refusal | undefined {
   const keys = Object.keys(change);
   if (keys.length !== 1) {
-    return 'set exactly one of expires_at or state';
+    return malformed('set exactly one of expires_at or state');
   }
   if ('state' in change) {
-    return ['active', 'suspended'].includes(change.state as string) ? undefined : 'unknown state';
+    const known = ['active', 'suspended'].includes(change.state as string);
+    return known ? undefined : malformed('unknown state');
   }
-  return 'expires_at' in change ? invalidExpiry(change.expires_at) : 'unknown change';
+  return 'expires_at' in change ? invalidExpiry(change.expires_at) : malformed('unknown change');
 }
 
 /** The issuer as the admin API shows it now: an active issuer past its expiry is expired. */
@@ -337,9 +345,12 @@ async function adminApi(request: IncomingMessage, response: ServerResponse) {
     }
     if (request.method === 'POST') {
       const body = await readJson(request);
-      const invalid = body ? invalidIssuer(body) : 'the body is not a JSON object';
-      if (!body || invalid) {
-        return refuse(response, 400, 'invalid_input', invalid);
+      if (!body) {
+        return refuse(response, ...malformed('the body is not a JSON object'));
+      }
+      const invalid = invalidIssuer(body);
+      if (invalid) {
+        return refuse(response, ...invalid);
       }
       const material = keyMaterial(body.public_key);
       const taken = [...issuers.values()].some(({ issuer }) =>
@@ -369,9 +380,12 @@ async function adminApi(request: IncomingMessage, response: ServerResponse) {
       return refuse(response, 412, 'precondition_failed');
     }
     const change = await readJson(request);
-    const invalid = change ? invalidChange(change) : 'the body is not a JSON object';
-    if (!change || invalid) {
-      return refuse(response, 400, 'invalid_input', invalid);
+    if (!change) {
+      return refuse(response, ...malformed('the body is not a JSON object'));
+    }
+    const invalid = invalidChange(change);
+    if (invalid) {
+      return refuse(response, ...invalid);
     }
     const state = 'expires_at' in change ? 'active' : change.state;
     const updated = {
