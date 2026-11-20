@@ -29,18 +29,18 @@ const LIFETIME_MARGIN: Duration = Duration::minutes(5);
 const REASON_MAX_CHARS: usize = 500;
 
 /// The longest an issuer is warned about its coming expiry.
-const LONGEST_RENEWAL_WINDOW: Duration = Duration::days(7);
+const LONGEST_EXPIRES_SOON_WINDOW: Duration = Duration::days(7);
 
 /// When an issuer registered or renewed now stops being active.
 pub fn expiry(sandbox: &config::Sandbox) -> OffsetDateTime {
     OffsetDateTime::now_utc() + lifetime(sandbox) - LIFETIME_MARGIN
 }
 
-/// How long before its expiry an issuer is warned that it needs renewing: a week, or a
+/// How long before its expiry an issuer is warned that it expires soon: a week, or a
 /// quarter of its lifetime when that is shorter, so that a short lifetime is not under
 /// warning from the moment it starts.
-pub fn renewal_window(sandbox: &config::Sandbox) -> Duration {
-    (lifetime(sandbox) / 4_u8).min(LONGEST_RENEWAL_WINDOW)
+pub fn expires_soon_window(sandbox: &config::Sandbox) -> Duration {
+    (lifetime(sandbox) / 4_u8).min(LONGEST_EXPIRES_SOON_WINDOW)
 }
 
 fn lifetime(sandbox: &config::Sandbox) -> Duration {
@@ -423,8 +423,8 @@ mod tests {
 
     use super::*;
 
-    fn renewal_window_for(lifetime_days: u16) -> Duration {
-        renewal_window(&config::Sandbox {
+    fn expires_soon_window_for(lifetime_days: u16) -> Duration {
+        expires_soon_window(&config::Sandbox {
             lifetime_days: NonZeroU16::new(lifetime_days).unwrap(),
             ..config::Sandbox::default()
         })
@@ -432,13 +432,13 @@ mod tests {
 
     #[test]
     fn a_long_lifetime_is_warned_about_a_week_before_it_ends() {
-        assert_eq!(renewal_window_for(30), Duration::days(7));
-        assert_eq!(renewal_window_for(28), Duration::days(7));
+        assert_eq!(expires_soon_window_for(30), Duration::days(7));
+        assert_eq!(expires_soon_window_for(28), Duration::days(7));
     }
 
     #[test]
     fn a_short_lifetime_is_warned_about_in_its_last_quarter() {
-        assert_eq!(renewal_window_for(7), Duration::hours(42));
-        assert_eq!(renewal_window_for(1), Duration::hours(6));
+        assert_eq!(expires_soon_window_for(7), Duration::hours(42));
+        assert_eq!(expires_soon_window_for(1), Duration::hours(6));
     }
 }

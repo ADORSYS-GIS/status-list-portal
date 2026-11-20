@@ -13,7 +13,7 @@ use http::StatusCode;
 use http::header::LOCATION;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 use tracing::info;
 use url::Url;
 use utoipa::{IntoParams, ToSchema};
@@ -49,12 +49,12 @@ pub struct IssuerResponse {
     #[serde(with = "time::serde::rfc3339::option")]
     #[schema(required = true)]
     expires_at: Option<OffsetDateTime>,
-    /// From when the issuer is close enough to `expires_at` to need renewing: a week before
-    /// it, or the last quarter of the sandbox lifetime when that is shorter. `null` when the
-    /// issuer never expires.
+    /// From when the portal warns that the issuer expires soon: a week before `expires_at`, or
+    /// the last quarter of the sandbox lifetime when that is shorter. Renewing works at any
+    /// time. `null` when the issuer never expires.
     #[serde(with = "time::serde::rfc3339::option")]
     #[schema(required = true)]
-    renew_from: Option<OffsetDateTime>,
+    expires_soon_from: Option<OffsetDateTime>,
     /// Every key of the issuer, revoked ones included, newest first. Only `active` keys may
     /// sign its management tokens.
     keys: Vec<IssuerKeyResponse>,
@@ -113,9 +113,12 @@ impl From<IssuerUsage> for IssuerUsageResponse {
 }
 
 impl IssuerResponse {
-    fn new(issuer: Issuer, config: &config::Config) -> Self {
-        let management_api = &config.management_api;
-        let renewal_window = sandbox::renewal_window(&config.sandbox);
+    /// `expires_soon_window` is how long before its expiry the issuer is warned about it.
+    fn new(
+        issuer: Issuer,
+        management_api: &config::ManagementApi,
+        expires_soon_window: Duration,
+    ) -> Self {
         let keys = issuer
             .keys
             .into_iter()
@@ -131,7 +134,7 @@ impl IssuerResponse {
             state: issuer.state,
             created_at: issuer.created_at,
             expires_at: issuer.expires_at,
-            renew_from: issuer.expires_at.map(|expiry| expiry - renewal_window),
+            expires_soon_from: issuer.expires_at.map(|expiry| expiry - expires_soon_window),
             keys,
             usage: issuer.usage.into(),
             management_url: management_api.url.as_str().trim_end_matches('/').to_owned(),
@@ -179,11 +182,13 @@ pub async fn list_issuers(
         .issuers_of(&owner)
         .list(query.cursor.as_deref())
         .await?;
+    let management_api = &ctx.config.management_api;
+    let expires_soon_window = sandbox::expires_soon_window(&ctx.config.sandbox);
     Ok(Json(IssuerListResponse {
         issuers: page
             .issuers
             .into_iter()
-            .map(|issuer| IssuerResponse::new(issuer, &ctx.config))
+            .map(|issuer| IssuerResponse::new(issuer, management_api, expires_soon_window))
             .collect(),
         next_cursor: page.next_cursor,
     }))
@@ -271,7 +276,11 @@ pub async fn create_issuer(
     ctx.metrics.registration(RegistrationOutcome::Created);
 
     let location = issuer_location(&ctx.config.server.origin, &issuer.id);
-    let body = IssuerResponse::new(issuer, &ctx.config);
+    let body = IssuerResponse::new(
+        issuer,
+        &ctx.config.management_api,
+        sandbox::expires_soon_window(&ctx.config.sandbox),
+    );
     Ok((StatusCode::CREATED, [(LOCATION, location)], Json(body)).into_response())
 }
 
@@ -300,7 +309,11 @@ pub async fn get_issuer(
         .get(&id)
         .await?
         .ok_or_else(errors::not_found)?;
-    Ok(Json(IssuerResponse::new(issuer.into_issuer(), &ctx.config)))
+    Ok(Json(IssuerResponse::new(
+        issuer.into_issuer(),
+        &ctx.config.management_api,
+        sandbox::expires_soon_window(&ctx.config.sandbox),
+    )))
 }
 
 /// Keeps one of the signed-in user's issuers active for another sandbox lifetime.
@@ -358,7 +371,11 @@ pub async fn renew_issuer(
     };
     let renewed = renewed.ok_or_else(errors::not_found)?;
     info!(user.id, issuer.id = %renewed.id, "renewed an issuer");
-    Ok(Json(IssuerResponse::new(renewed, &ctx.config)))
+    Ok(Json(IssuerResponse::new(
+        renewed,
+        &ctx.config.management_api,
+        sandbox::expires_soon_window(&ctx.config.sandbox),
+    )))
 }
 
 /// Deletes one of the signed-in user's issuers: suspends it.

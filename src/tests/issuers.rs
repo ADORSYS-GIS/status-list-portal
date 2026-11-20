@@ -30,7 +30,7 @@ fn shown_issuer_json() -> Value {
         "created_at": "2026-09-21T14:13:20Z",
         "expires_at": "2026-10-21T14:13:20Z",
         // A week before, as the default sandbox lifetime is a month.
-        "renew_from": "2026-10-14T14:13:20Z",
+        "expires_soon_from": "2026-10-14T14:13:20Z",
         "keys": [{
             "kid": "QoRTRSkzlInq0eOmPqJwmZ5OS9pxkN_SIf5KgZP2F8M",
             "alg": "ES256",
@@ -172,7 +172,7 @@ async fn a_short_lifetime_is_warned_about_in_its_last_quarter() {
 
     assert_snapshot!(response.status(), @"200 OK");
     // A day before `expires_at`, not a week: the whole lifetime is four days.
-    assert_eq!(response.json()["renew_from"], "2026-10-20T14:13:20Z");
+    assert_eq!(response.json()["expires_soon_from"], "2026-10-20T14:13:20Z");
 }
 
 #[tokio::test]
@@ -187,7 +187,7 @@ async fn an_issuer_that_never_expires_needs_no_renewing() {
 
     assert_snapshot!(response.status(), @"200 OK");
     assert_eq!(response.json()["expires_at"], Value::Null);
-    assert_eq!(response.json()["renew_from"], Value::Null);
+    assert_eq!(response.json()["expires_soon_from"], Value::Null);
 }
 
 #[tokio::test]

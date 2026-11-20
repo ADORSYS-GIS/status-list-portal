@@ -876,7 +876,7 @@ expression: openapi
           "state",
           "created_at",
           "expires_at",
-          "renew_from",
+          "expires_soon_from",
           "keys",
           "usage",
           "management_url",
@@ -910,6 +910,14 @@ expression: openapi
             "format": "date-time",
             "description": "When the issuer stops being active, unless it is renewed."
           },
+          "expires_soon_from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "From when the portal warns that the issuer expires soon: a week before `expires_at`, or\nthe last quarter of the sandbox lifetime when that is shorter. Renewing works at any\ntime. `null` when the issuer never expires."
+          },
           "id": {
             "type": "string",
             "description": "The `iss` of the issuer's management tokens.",
@@ -926,14 +934,6 @@ expression: openapi
             "type": "string",
             "description": "Where the issuer's management tokens go.",
             "example": "https://status.example.com"
-          },
-          "renew_from": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time",
-            "description": "From when the issuer is close enough to `expires_at` to need renewing: a week before\nit, or the last quarter of the sandbox lifetime when that is shorter. `null` when the\nissuer never expires."
           },
           "state": {
             "$ref": "#/components/schemas/IssuerState",

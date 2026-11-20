@@ -9,8 +9,10 @@
   let { issuers }: { issuers: Issuer[] } = $props();
 </script>
 
-<!-- Scrolls sideways on its own on narrow screens, so the page does not. -->
-<div class="scroll">
+<!-- Scrolls sideways on its own on narrow screens, so the page does not. Only the first
+     column has links, so keyboard users need to focus the region to scroll it. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div class="scroll" tabindex="0" role="region" aria-label="Issuers">
   <table>
     <thead>
       <tr>

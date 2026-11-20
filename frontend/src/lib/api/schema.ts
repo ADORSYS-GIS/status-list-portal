@@ -303,6 +303,13 @@ export interface components {
              */
             expires_at: string | null;
             /**
+             * Format: date-time
+             * @description From when the portal warns that the issuer expires soon: a week before `expires_at`, or
+             *     the last quarter of the sandbox lifetime when that is shorter. Renewing works at any
+             *     time. `null` when the issuer never expires.
+             */
+            expires_soon_from: string | null;
+            /**
              * @description The `iss` of the issuer's management tokens.
              * @example 6f1c2a9e-0b7d-4c1e-9a53-2f8d7e4b1c00
              */
@@ -317,13 +324,6 @@ export interface components {
              * @example https://status.example.com
              */
             management_url: string;
-            /**
-             * Format: date-time
-             * @description From when the issuer is close enough to `expires_at` to need renewing: a week before
-             *     it, or the last quarter of the sandbox lifetime when that is shorter. `null` when the
-             *     issuer never expires.
-             */
-            renew_from: string | null;
             /** @description Only `active` issuers can write status lists. Deleted issuers are `suspended`. */
             state: components["schemas"]["IssuerState"];
             /** @description What the issuer uses of its tier's limits. */

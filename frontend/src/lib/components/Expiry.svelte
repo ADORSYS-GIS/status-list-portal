@@ -2,7 +2,7 @@
   import type { Issuer } from '#lib/api/index.ts';
   import { expiresSoon, expiryText } from '#lib/format.ts';
 
-  let { issuer }: { issuer: Pick<Issuer, 'state' | 'expires_at' | 'renew_from'> } = $props();
+  let { issuer }: { issuer: Pick<Issuer, 'state' | 'expires_at' | 'expires_soon_from'> } = $props();
 </script>
 
 <!-- One root, so the warning goes under the date whatever lays out the component. -->

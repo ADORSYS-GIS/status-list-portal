@@ -12,9 +12,9 @@ function inDays(days: number): string {
   return new Date(NOW.getTime() + days * DAY).toISOString();
 }
 
-/** An expiry `days` from now, warned about from `windowDays` before it. */
-function expiry(days: number, windowDays = 7): Pick<Issuer, 'expires_at' | 'renew_from'> {
-  return { expires_at: inDays(days), renew_from: inDays(days - windowDays) };
+/** An expiry `days` from now, warned about from a week before it. */
+function expiry(days: number): Pick<Issuer, 'expires_at' | 'expires_soon_from'> {
+  return { expires_at: inDays(days), expires_soon_from: inDays(days - 7) };
 }
 
 beforeEach(() => {
@@ -69,11 +69,9 @@ test('an issuer close to its expiry is warned about', async () => {
   await expect.element(screen.getByText(/Expires soon/)).toBeVisible();
 });
 
-test('an expired issuer is not warned about', async () => {
-  const screen = await render(IssuerFacts, {
-    issuer: issuer({ state: 'expired', ...expiry(-1) }),
-  });
+test('an issuer far from its expiry is not warned about', async () => {
+  const screen = await render(IssuerFacts, { issuer: issuer() });
 
-  await expect.element(screen.getByText(/^Expired on /)).toBeVisible();
+  expect(fact(screen, 'Expires')?.textContent).toMatch(/in 20 days/);
   await expect.element(screen.getByText(/Expires soon/)).not.toBeInTheDocument();
 });

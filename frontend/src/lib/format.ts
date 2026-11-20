@@ -9,17 +9,13 @@ export function formatDateTime(iso: string): string {
   return dateTime.format(new Date(iso));
 }
 
-/** Whole days until `iso`, a part of a day counting as one. Zero or less once it is past. */
-function daysUntil(iso: string, now: Date): number {
-  return Math.ceil((new Date(iso).getTime() - now.getTime()) / DAY);
-}
-
 /** When an issuer stops being active, in words. */
 export function expiryText(expiresAt: string | null | undefined, now = new Date()): string {
   if (!expiresAt) {
     return 'Never';
   }
-  const days = daysUntil(expiresAt, now);
+  const expiry = new Date(expiresAt);
+  const days = Math.ceil((expiry.getTime() - now.getTime()) / DAY);
   if (days <= 0) {
     return `Expired on ${formatDateTime(expiresAt)}`;
   }
@@ -29,18 +25,19 @@ export function expiryText(expiresAt: string | null | undefined, now = new Date(
 
 /**
  * Whether an active issuer stops being active soon, unless it is renewed: from its
- * `renew_from`, which the backend sets from the sandbox lifetime, until its expiry.
+ * `expires_soon_from`, which the backend sets from the sandbox lifetime, until its expiry.
  */
 export function expiresSoon(
-  issuer: Pick<Issuer, 'state' | 'expires_at' | 'renew_from'>,
+  issuer: Pick<Issuer, 'state' | 'expires_at' | 'expires_soon_from'>,
   now = new Date(),
 ): boolean {
-  if (issuer.state !== 'active' || !issuer.expires_at || !issuer.renew_from) {
+  if (issuer.state !== 'active' || !issuer.expires_at || !issuer.expires_soon_from) {
     return false;
   }
   const time = now.getTime();
   return (
-    time >= new Date(issuer.renew_from).getTime() && time < new Date(issuer.expires_at).getTime()
+    time >= new Date(issuer.expires_soon_from).getTime() &&
+    time < new Date(issuer.expires_at).getTime()
   );
 }
 
