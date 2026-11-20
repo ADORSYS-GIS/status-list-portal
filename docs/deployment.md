@@ -244,7 +244,7 @@ Back the database up. It holds the developers' accounts, which version of the te
 
 Registering, renewing and deleting issuers are limited per developer, in the database, so the limits hold across replicas. A registration or a renewal counts once the developer may make it, whether the sandbox then has room or not. The database keeps up to three rows per developer for this, deleted with the account.
 
-Finishing a sign-in is limited per client network: an IPv4 address, or an IPv6 /64. Only sign-ins that started on the portal count. Each replica counts on its own, so with three replicas a network may sign in up to three times as often. A replica counts up to 10,000 networks at once; while it counts that many, sign-ins from further networks go through uncounted rather than be turned away.
+Finishing a sign-in is limited per client network: an IPv4 address, or an IPv6 /64. Only sign-ins that started on the portal count. Each replica counts on its own, so with three replicas a network may sign in up to three times as often. A replica counts up to 10,000 networks at once; while it counts that many, sign-ins from further networks go through uncounted rather than be turned away. A second limit counts every network's sign-ins together, so that a client with many networks still cannot get the portal's OAuth app throttled by GitHub.
 
 `.env.template` lists the defaults and their settings. The limits slow down one developer or one network. Someone with many GitHub accounts could still take the sandbox's places one account at a time; if that happens, `APP_SANDBOX__MANUAL_APPROVAL` puts every registration in front of an operator.
 

@@ -21,7 +21,8 @@ use crate::util::{MockAnonymousUser, MockCookieUser, RequestHelper, Response, Te
 /// A sign-in that did not start here.
 const MADE_UP_CALLBACK: &str = "/api/v1/session/github/callback?code=code&state=state";
 
-/// Once, then once an hour, for every action.
+/// Once, then once an hour, for every action and per network. The replica's sign-in limit
+/// keeps its default, so that networks stay apart.
 fn once_an_hour() -> RateLimits {
     let limit = RateLimit::new(1, 3600);
     RateLimits {
@@ -29,6 +30,7 @@ fn once_an_hour() -> RateLimits {
         renew: limit,
         delete: limit,
         sign_in: limit,
+        ..RateLimits::default()
     }
 }
 

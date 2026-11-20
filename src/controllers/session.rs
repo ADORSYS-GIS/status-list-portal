@@ -155,8 +155,8 @@ async fn sign_in(
     }
     let code = query.code.ok_or(Failure::Expired)?;
     // Each sign-in calls GitHub, so a client that sent many could get the portal's OAuth app
-    // throttled for everyone. Only a sign-in that started here counts: one made up does not
-    // reach GitHub, and must not use up the tokens of a network that others share.
+    // throttled for everyone. A callback without a matching state never calls GitHub, so it
+    // is not counted against a network that others may share.
     if ctx.rate_limiter.check_sign_in(client).is_err() {
         return Err(Failure::TooMany);
     }

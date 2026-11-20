@@ -240,8 +240,8 @@ impl RateLimit {
     }
 }
 
-/// Rate limits: per developer for changes to their issuers, and per client network for
-/// sign-ins.
+/// Rate limits: per developer for changes to their issuers, and per client network and per
+/// replica for sign-ins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RateLimits {
@@ -250,8 +250,11 @@ pub struct RateLimits {
     pub renew: RateLimit,
     /// Deleting an issuer.
     pub delete: RateLimit,
-    /// Finishing a sign-in with GitHub.
+    /// Finishing a sign-in with GitHub, per client network.
     pub sign_in: RateLimit,
+    /// Finishing a sign-in, from all networks together: a client with many networks escapes
+    /// the per-network limit, and each sign-in calls GitHub with the portal's OAuth app.
+    pub sign_in_per_replica: RateLimit,
 }
 
 impl Default for RateLimits {
@@ -261,6 +264,7 @@ impl Default for RateLimits {
             renew: RateLimit::new(10, 60),
             delete: RateLimit::new(20, 30),
             sign_in: RateLimit::new(20, 6),
+            sign_in_per_replica: RateLimit::new(100, 1),
         }
     }
 }
@@ -884,6 +888,10 @@ mod tests {
         assert_eq!(config.rate_limits.renew, defaults.renew);
         assert_eq!(config.rate_limits.delete, defaults.delete);
         assert_eq!(config.rate_limits.sign_in, defaults.sign_in);
+        assert_eq!(
+            config.rate_limits.sign_in_per_replica,
+            defaults.sign_in_per_replica
+        );
 
         let error = load(&[("APP_RATE_LIMITS__SIGN_IN__REFILL_SECONDS", "0")]).unwrap_err();
         assert!(
