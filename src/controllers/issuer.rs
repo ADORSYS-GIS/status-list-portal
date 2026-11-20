@@ -13,13 +13,14 @@ use http::StatusCode;
 use http::header::LOCATION;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 use tracing::info;
 use url::Url;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::admin_api::{
-    Issuer, IssuerChange, IssuerState, KeyState, NewIssuer, Owner, RequestedState, SigningAlgorithm,
+    Issuer, IssuerChange, IssuerState, IssuerUsage, KeyState, NewIssuer, Owner, RequestedState,
+    SigningAlgorithm,
 };
 use crate::auth::AuthenticatedUser;
 use crate::config::{self, PublicOrigin};
@@ -48,8 +49,17 @@ pub struct IssuerResponse {
     #[serde(with = "time::serde::rfc3339::option")]
     #[schema(required = true)]
     expires_at: Option<OffsetDateTime>,
-    /// Keys that may sign the issuer's management tokens, newest first.
+    /// From when the portal warns that the issuer expires soon: a week before `expires_at`, or
+    /// the last quarter of the sandbox lifetime when that is shorter. Renewing works at any
+    /// time. `null` when the issuer never expires.
+    #[serde(with = "time::serde::rfc3339::option")]
+    #[schema(required = true)]
+    expires_soon_from: Option<OffsetDateTime>,
+    /// Every key of the issuer, revoked ones included, newest first. Only `active` keys may
+    /// sign its management tokens.
     keys: Vec<IssuerKeyResponse>,
+    /// What the issuer uses of its tier's limits.
+    usage: IssuerUsageResponse,
     /// Where the issuer's management tokens go.
     #[schema(example = "https://status.example.com")]
     management_url: String,
@@ -67,8 +77,48 @@ pub struct IssuerKeyResponse {
     state: KeyState,
 }
 
+/// What the issuer uses of its tier's limits.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct IssuerUsageResponse {
+    /// Status lists the issuer holds.
+    #[schema(example = 3)]
+    lists: u32,
+    /// Most status lists the issuer may hold.
+    #[schema(example = 10)]
+    lists_limit: u32,
+    /// Keys that are not revoked.
+    #[schema(example = 1)]
+    keys: u32,
+    /// Most keys the issuer may have that are not revoked. `null` when there is no limit.
+    #[schema(example = 5, required = true)]
+    keys_limit: Option<u32>,
+}
+
+impl From<IssuerUsage> for IssuerUsageResponse {
+    fn from(usage: IssuerUsage) -> Self {
+        // Destructured, so that a field the admin API adds is not left out unnoticed.
+        let IssuerUsage {
+            lists,
+            lists_limit,
+            keys,
+            keys_limit,
+        } = usage;
+        Self {
+            lists,
+            lists_limit,
+            keys,
+            keys_limit,
+        }
+    }
+}
+
 impl IssuerResponse {
-    fn new(issuer: Issuer, management_api: &config::ManagementApi) -> Self {
+    /// `expires_soon_window` is how long before its expiry the issuer is warned about it.
+    fn new(
+        issuer: Issuer,
+        management_api: &config::ManagementApi,
+        expires_soon_window: Duration,
+    ) -> Self {
         let keys = issuer
             .keys
             .into_iter()
@@ -84,7 +134,9 @@ impl IssuerResponse {
             state: issuer.state,
             created_at: issuer.created_at,
             expires_at: issuer.expires_at,
+            expires_soon_from: issuer.expires_at.map(|expiry| expiry - expires_soon_window),
             keys,
+            usage: issuer.usage.into(),
             management_url: management_api.url.as_str().trim_end_matches('/').to_owned(),
             audience: management_api.audience.clone(),
         }
@@ -131,11 +183,12 @@ pub async fn list_issuers(
         .list(query.cursor.as_deref())
         .await?;
     let management_api = &ctx.config.management_api;
+    let expires_soon_window = sandbox::expires_soon_window(&ctx.config.sandbox);
     Ok(Json(IssuerListResponse {
         issuers: page
             .issuers
             .into_iter()
-            .map(|issuer| IssuerResponse::new(issuer, management_api))
+            .map(|issuer| IssuerResponse::new(issuer, management_api, expires_soon_window))
             .collect(),
         next_cursor: page.next_cursor,
     }))
@@ -223,7 +276,11 @@ pub async fn create_issuer(
     ctx.metrics.registration(RegistrationOutcome::Created);
 
     let location = issuer_location(&ctx.config.server.origin, &issuer.id);
-    let body = IssuerResponse::new(issuer, &ctx.config.management_api);
+    let body = IssuerResponse::new(
+        issuer,
+        &ctx.config.management_api,
+        sandbox::expires_soon_window(&ctx.config.sandbox),
+    );
     Ok((StatusCode::CREATED, [(LOCATION, location)], Json(body)).into_response())
 }
 
@@ -255,6 +312,7 @@ pub async fn get_issuer(
     Ok(Json(IssuerResponse::new(
         issuer.into_issuer(),
         &ctx.config.management_api,
+        sandbox::expires_soon_window(&ctx.config.sandbox),
     )))
 }
 
@@ -316,6 +374,7 @@ pub async fn renew_issuer(
     Ok(Json(IssuerResponse::new(
         renewed,
         &ctx.config.management_api,
+        sandbox::expires_soon_window(&ctx.config.sandbox),
     )))
 }
 
