@@ -1,38 +1,50 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import type { Issuer } from '#lib/api/index.ts';
-  import { expiryText } from '#lib/format.ts';
+  import { usageText } from '#lib/format.ts';
 
+  import Expiry from './Expiry.svelte';
   import StateBadge from './StateBadge.svelte';
 
   let { issuers }: { issuers: Issuer[] } = $props();
 </script>
 
-<table>
-  <thead>
-    <tr>
-      <th scope="col">Issuer</th>
-      <th scope="col">State</th>
-      <th scope="col">Expires</th>
-    </tr>
-  </thead>
-  <tbody>
-    {#each issuers as issuer (issuer.id)}
+<!-- Scrolls sideways on its own on narrow screens, so the page does not. -->
+<div class="scroll">
+  <table>
+    <thead>
       <tr>
-        <td>
-          <a href={resolve('/issuers/[id]', { id: encodeURIComponent(issuer.id) })}
-            >{issuer.display_name ?? issuer.id}</a
-          >
-          <span class="mono id">{issuer.id}</span>
-        </td>
-        <td><StateBadge state={issuer.state} /></td>
-        <td>{expiryText(issuer.expires_at)}</td>
+        <th scope="col">Issuer</th>
+        <th scope="col">State</th>
+        <th scope="col">Expires</th>
+        <th scope="col">Status lists</th>
+        <th scope="col">Keys in use</th>
       </tr>
-    {/each}
-  </tbody>
-</table>
+    </thead>
+    <tbody>
+      {#each issuers as issuer (issuer.id)}
+        <tr>
+          <td>
+            <a href={resolve('/issuers/[id]', { id: encodeURIComponent(issuer.id) })}
+              >{issuer.display_name ?? issuer.id}</a
+            >
+            <span class="mono id">{issuer.id}</span>
+          </td>
+          <td><StateBadge state={issuer.state} /></td>
+          <td><Expiry {issuer} /></td>
+          <td>{usageText(issuer.usage.lists, issuer.usage.lists_limit)}</td>
+          <td>{usageText(issuer.usage.keys, issuer.usage.keys_limit)}</td>
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+</div>
 
 <style>
+  .scroll {
+    overflow-x: auto;
+  }
+
   table {
     width: 100%;
     border-collapse: collapse;
