@@ -98,3 +98,16 @@ test('a tab shown again reads the time again', async () => {
   await expect.element(screen.getByText(/Expires soon/)).toBeVisible();
   expect(fact(screen, 'Expires')?.textContent).toMatch(/in 6 days/);
 });
+
+test('an issuer changed on an open page is read against the time now', async () => {
+  const screen = await render(IssuerFacts, { issuer: issuer() });
+
+  // Half a day goes by with no timer firing, then a renewal brings a new expiry.
+  const later = new Date(NOW.getTime() + DAY / 2);
+  vi.setSystemTime(later);
+  await screen.rerender({
+    issuer: issuer({ expires_at: new Date(later.getTime() + 30 * DAY).toISOString() }),
+  });
+
+  await expect.element(screen.getByText(/in 30 days/)).toBeVisible();
+});

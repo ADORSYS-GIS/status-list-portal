@@ -7,7 +7,16 @@
   /** The longest delay `setTimeout` holds; a later change is checked again then. */
   const MAX_DELAY = 2 ** 31 - 1;
 
-  let now = $state(new Date());
+  /** Bumped to read the time again. */
+  let tick = $state(0);
+
+  // Read again whenever the issuer changes too, as after a renewal: a time read hours ago
+  // would show too many days left and schedule the next change late.
+  const now = $derived.by(() => {
+    void issuer;
+    void tick;
+    return new Date();
+  });
 
   // A page left open reads again when the warning starts, a day goes by, or the issuer
   // expires.
@@ -17,14 +26,14 @@
       return;
     }
     const delay = Math.min(Math.max(next - now.getTime(), 0), MAX_DELAY);
-    const timer = setTimeout(() => (now = new Date()), delay);
+    const timer = setTimeout(() => tick++, delay);
     return () => clearTimeout(timer);
   });
 
   /** Timers can fire late in a hidden tab or after sleep, so a tab shown again reads again. */
   function onvisibilitychange() {
     if (document.visibilityState === 'visible') {
-      now = new Date();
+      tick++;
     }
   }
 </script>
