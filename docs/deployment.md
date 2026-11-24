@@ -95,9 +95,11 @@ The image needs no shell, no root and no writable file system. A pod spec along 
 ```yaml
 spec:
   terminationGracePeriodSeconds: 45
+  automountServiceAccountToken: false
   securityContext:
     runAsNonRoot: true
     runAsUser: 65532
+    runAsGroup: 65532
     fsGroup: 65532
     seccompProfile:
       type: RuntimeDefault
@@ -139,7 +141,7 @@ Restrict the network too, such as with a NetworkPolicy: only the ingress control
 
 ## Behind a proxy
 
-The proxy terminates HTTPS: the session cookies need it, and `APP_SERVER__ORIGIN` must be the address browsers use. List the proxy's addresses in `APP_SERVER__TRUSTED_PROXIES`, as narrowly as you can, such as the addresses the ingress controller's pods get. The server then reads the client's address from `X-Forwarded-For`, but only from those proxies; anything else that sends the header is ignored. Every listed address can name any client, so list no other workload, and never `0.0.0.0/0`, which the server refuses.
+The proxy terminates HTTPS: the session cookies need it, and `APP_SERVER__ORIGIN` must be the address browsers use. List the proxy's addresses in `APP_SERVER__TRUSTED_PROXIES`, as narrowly as you can, such as the addresses the ingress controller's pods get. The server then reads the client's address from `X-Forwarded-For`, not `Forwarded`, but only from those proxies; anything else that sends the header is ignored. Every listed address can name any client, so list no other workload, and never `0.0.0.0/0`, which the server refuses.
 
 Without the list, every request seems to come from the proxy, and all clients share one sign-in rate limit. A production server whose list is empty says so in its log when it starts.
 
@@ -168,6 +170,23 @@ Run `portal migrate` as a Kubernetes Job before rolling out `portal server`
 `APP_LOG_FORMAT`, and `APP_DATABASE__TLS_CA_FILE`. Always use the same migration
 role named in the default-privilege grants below. An advisory lock lets
 overlapping jobs apply each pending migration once.
+
+Give the Job its own environment rather than the server's: it reads no other secret, so
+only the migrator's database URL needs mounting.
+
+```yaml
+containers:
+  - name: migrate
+    image: status-list-portal
+    args: [migrate]
+    env:
+      - name: APP_DATABASE__URL_FILE
+        value: /run/secrets/portal-migrator/database-url
+    volumeMounts:
+      - name: migrator
+        mountPath: /run/secrets/portal-migrator
+        readOnly: true
+```
 
 For a new database, provision both roles and run this SQL as the administrator
 before the first migration (substitute your database, role, and schema names):
