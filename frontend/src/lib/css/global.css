@@ -1,6 +1,6 @@
 /* Design tokens. The brand colors are those of adorsys.com: ink #101828, accent blue #144587,
    and the lighter blues #25a8db and #7ccbe9 in dark mode. Every text color meets WCAG AA on
-   its background. */
+   its background, and form fields' borders have 3:1 contrast against it. */
 :root {
   color-scheme: light dark;
 
@@ -11,6 +11,7 @@
   --color-bg: #ffffff;
   --color-surface: #f8fafc;
   --color-border: #cbd5e1;
+  --color-control-border: #64748b;
   --color-text: #101828;
   --color-muted: #475569;
   --color-code-bg: #f1f5f9;
@@ -48,6 +49,7 @@
     --color-bg: #0b1120;
     --color-surface: #111827;
     --color-border: #334155;
+    --color-control-border: #64748b;
     --color-text: #f1f5f9;
     --color-muted: #a3b1c6;
     --color-code-bg: #1e293b;
@@ -234,7 +236,7 @@ textarea {
   width: 100%;
   min-height: 2.75rem;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-control-border);
   border-radius: var(--radius);
   background: var(--color-bg);
   color: var(--color-text);
