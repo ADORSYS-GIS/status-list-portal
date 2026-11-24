@@ -57,7 +57,8 @@ impl Env {
     }
 }
 
-/// Builds the router with every route and middleware.
+/// Builds the router with every route and middleware. Serve it with each connection's peer
+/// address, as [`serve`] does: the sign-in callback answers 500 without one.
 pub fn build_handler(ctx: ServerContext) -> axum::Router {
     let origin = ctx.config.server.origin.clone();
     let metrics = ctx.metrics.clone();
