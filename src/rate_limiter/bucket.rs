@@ -30,11 +30,6 @@ impl Bucket {
         }
     }
 
-    /// Whether the bucket is full again at `now`, so that forgetting it changes nothing.
-    pub(super) fn is_full(self, limit: RateLimit, now: OffsetDateTime) -> bool {
-        self.refill(limit, now).tokens >= limit.burst.get()
-    }
-
     /// Adds the tokens that came back since the last count. A full bucket starts counting
     /// again from `now`, so that tokens do not pile up beyond the burst.
     fn refill(self, limit: RateLimit, now: OffsetDateTime) -> Self {
@@ -107,14 +102,7 @@ mod tests {
         };
         let now = START + Duration::days(1);
 
-        assert!(bucket.is_full(LIMIT, now));
         assert_eq!(bucket.take(LIMIT, now).unwrap().tokens, 2);
-        assert!(
-            !Bucket::full(LIMIT, START)
-                .take(LIMIT, START)
-                .unwrap()
-                .is_full(LIMIT, START)
-        );
     }
 
     #[test]

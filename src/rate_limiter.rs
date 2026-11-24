@@ -5,7 +5,7 @@
 //!
 //! Developers' limits are token buckets in the database, so that they hold across replicas
 //! and restarts. Sign-ins come before there is an account to count them against, so each
-//! replica counts them in memory, per client network and in total.
+//! replica counts them per client network, in memory.
 
 mod bucket;
 mod sign_ins;
@@ -70,7 +70,7 @@ impl RateLimiter {
     pub fn new(limits: RateLimits, metrics: Metrics) -> Self {
         Self {
             limits,
-            sign_ins: SignInLimiter::new(limits.sign_in, limits.sign_in_per_replica),
+            sign_ins: SignInLimiter::new(limits.sign_in),
             metrics,
         }
     }
@@ -90,8 +90,8 @@ impl RateLimiter {
         taken.map_err(|retry_after| self.refuse(action.as_str(), action.refusal(), retry_after))
     }
 
-    /// Takes a sign-in token of the network `client` belongs to, then one of the replica's.
-    /// Without either, counts the refusal and returns how long until a token comes back.
+    /// Takes one of the sign-in tokens of the network `client` belongs to. Without one, counts
+    /// the refusal and returns how long until a token comes back.
     pub fn check_sign_in(&self, client: IpAddr) -> Result<(), Duration> {
         self.sign_ins
             .take(client, OffsetDateTime::now_utc())

@@ -1,5 +1,5 @@
-//! The sign-in limits, per client network and for all of them, kept in memory: each replica
-//! counts the sign-ins it serves.
+//! The sign-in limit, per client network, kept in memory: each replica counts the sign-ins it
+//! serves.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
@@ -10,10 +10,9 @@ use time::{Duration, OffsetDateTime};
 use super::bucket::Bucket;
 use crate::config::RateLimit;
 
-/// The most client networks counted at once. Networks whose buckets are full again are
-/// forgotten to make room. When none are, a new network is let through without being
-/// counted: a client that changes networks escapes a per-network limit anyway, and refusing
-/// would lock out everyone else.
+/// The most client networks counted at once. To count another, the network whose tokens were
+/// counted longest ago is forgotten: it has had the longest to fill up again, and forgetting a
+/// network only gives it its full burst back.
 const MAX_NETWORKS: usize = 10_000;
 
 /// The IPv6 prefix that one client controls: providers hand out /64 networks.
@@ -22,78 +21,52 @@ const IPV6_CLIENT_PREFIX: u32 = 64;
 #[derive(Debug)]
 pub(super) struct SignInLimiter {
     limit: RateLimit,
-    total_limit: RateLimit,
     max_networks: usize,
-    buckets: Mutex<Buckets>,
-}
-
-#[derive(Debug, Default)]
-struct Buckets {
-    by_network: HashMap<IpAddr, Bucket>,
-    /// Every network's sign-ins, including those let through uncounted per network.
-    total: Option<Bucket>,
-    /// When full buckets were last forgotten. Looking for them takes a while, so it happens
-    /// at most once per refill interval.
-    swept_at: Option<OffsetDateTime>,
+    by_network: Mutex<HashMap<IpAddr, Bucket>>,
 }
 
 impl SignInLimiter {
-    pub(super) fn new(limit: RateLimit, total_limit: RateLimit) -> Self {
-        Self::with_capacity(limit, total_limit, MAX_NETWORKS)
+    pub(super) fn new(limit: RateLimit) -> Self {
+        Self::with_capacity(limit, MAX_NETWORKS)
     }
 
-    fn with_capacity(limit: RateLimit, total_limit: RateLimit, max_networks: usize) -> Self {
+    fn with_capacity(limit: RateLimit, max_networks: usize) -> Self {
         Self {
             limit,
-            total_limit,
             max_networks,
-            buckets: Mutex::default(),
+            by_network: Mutex::default(),
         }
     }
 
-    /// Takes a token for `client`'s network and one for the replica, at `now`, or neither:
-    /// a sign-in that one limit refuses costs nothing against the other. Returns how long
-    /// until a token comes back if either has none left.
+    /// Takes a token for `client` at `now`. Returns how long until one comes back if none is
+    /// left.
     pub(super) fn take(&self, client: IpAddr, now: OffsetDateTime) -> Result<(), Duration> {
         let network = network(client);
-        let mut buckets = self.buckets.lock().unwrap_or_else(PoisonError::into_inner);
-        let counted = buckets.by_network.contains_key(&network) || self.has_room(&mut buckets, now);
-        let network_bucket = counted
-            .then(|| {
-                buckets
-                    .by_network
-                    .get(&network)
-                    .copied()
-                    .unwrap_or_else(|| Bucket::full(self.limit, now))
-                    .take(self.limit, now)
-            })
-            .transpose()?;
-        let total = buckets
-            .total
-            .unwrap_or_else(|| Bucket::full(self.total_limit, now))
-            .take(self.total_limit, now)?;
-        if let Some(bucket) = network_bucket {
-            buckets.by_network.insert(network, bucket);
-        }
-        buckets.total = Some(total);
+        let mut by_network = self
+            .by_network
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let bucket = match by_network.get(&network) {
+            Some(bucket) => *bucket,
+            None => {
+                if by_network.len() >= self.max_networks {
+                    forget_oldest(&mut by_network);
+                }
+                Bucket::full(self.limit, now)
+            }
+        };
+        by_network.insert(network, bucket.take(self.limit, now)?);
         Ok(())
     }
+}
 
-    /// Whether another network can be counted, after forgetting full buckets if it is time.
-    fn has_room(&self, buckets: &mut Buckets, now: OffsetDateTime) -> bool {
-        if buckets.by_network.len() < self.max_networks {
-            return true;
-        }
-        let due = buckets
-            .swept_at
-            .is_none_or(|swept_at| now - swept_at >= self.limit.refill_interval());
-        if due {
-            buckets
-                .by_network
-                .retain(|_, bucket| !bucket.is_full(self.limit, now));
-            buckets.swept_at = Some(now);
-        }
-        buckets.by_network.len() < self.max_networks
+fn forget_oldest(by_network: &mut HashMap<IpAddr, Bucket>) {
+    let oldest = by_network
+        .iter()
+        .min_by_key(|(_, bucket)| bucket.refilled_at)
+        .map(|(network, _)| *network);
+    if let Some(network) = oldest {
+        by_network.remove(&network);
     }
 }
 
@@ -115,8 +88,6 @@ mod tests {
 
     /// Two in a row, then one a minute.
     const LIMIT: RateLimit = RateLimit::new(2, 60);
-    /// High enough not to matter, except where a test says otherwise.
-    const NO_TOTAL: RateLimit = RateLimit::new(1_000, 1);
     const NOW: OffsetDateTime = datetime!(2026-10-25 12:00 UTC);
 
     fn address(input: &str) -> IpAddr {
@@ -125,7 +96,7 @@ mod tests {
 
     #[test]
     fn each_network_has_its_own_limit() {
-        let limiter = SignInLimiter::new(LIMIT, NO_TOTAL);
+        let limiter = SignInLimiter::new(LIMIT);
         let client = address("203.0.113.7");
 
         assert_eq!(limiter.take(client, NOW), Ok(()));
@@ -137,7 +108,7 @@ mod tests {
 
     #[test]
     fn an_ipv6_client_is_its_64_network() {
-        let limiter = SignInLimiter::new(LIMIT, NO_TOTAL);
+        let limiter = SignInLimiter::new(LIMIT);
 
         assert_eq!(limiter.take(address("2001:db8:1:2::1"), NOW), Ok(()));
         assert_eq!(limiter.take(address("2001:db8:1:2:ffff::9"), NOW), Ok(()));
@@ -146,75 +117,29 @@ mod tests {
     }
 
     #[test]
-    fn networks_whose_buckets_refilled_make_room() {
-        let limiter = SignInLimiter::with_capacity(LIMIT, NO_TOTAL, 2);
+    fn a_network_past_capacity_is_counted_too() {
+        let limiter = SignInLimiter::with_capacity(LIMIT, 1);
         limiter.take(address("192.0.2.1"), NOW).unwrap();
-        limiter.take(address("192.0.2.2"), NOW).unwrap();
+        let second = address("192.0.2.2");
 
-        // Both networks still have a token out, so a third is let through uncounted.
-        let third = address("192.0.2.3");
-        for _ in 0..5 {
-            assert_eq!(limiter.take(third, NOW), Ok(()));
-        }
-        // Once the others' buckets are full again, they are forgotten and it is counted.
-        let later = NOW + Duration::seconds(60);
-        assert_eq!(limiter.take(third, later), Ok(()));
-        assert_eq!(limiter.take(third, later), Ok(()));
-        assert_eq!(limiter.take(third, later), Err(Duration::seconds(60)));
+        assert_eq!(limiter.take(second, NOW), Ok(()));
+        assert_eq!(limiter.take(second, NOW), Ok(()));
+        assert_eq!(limiter.take(second, NOW), Err(Duration::seconds(60)));
     }
 
     #[test]
-    fn full_buckets_are_looked_for_at_most_once_per_interval() {
-        let limiter = SignInLimiter::with_capacity(LIMIT, NO_TOTAL, 1);
-        let counted = |network| {
-            limiter
-                .buckets
-                .lock()
-                .unwrap()
-                .by_network
-                .contains_key(&network)
-        };
-        let first = address("192.0.2.1");
+    fn the_network_counted_longest_ago_makes_room() {
+        let limiter = SignInLimiter::with_capacity(LIMIT, 2);
+        let (first, second) = (address("192.0.2.1"), address("192.0.2.2"));
         limiter.take(first, NOW).unwrap();
-        // The table is full, and a sweep finds nothing to forget yet.
+        limiter.take(second, NOW + Duration::seconds(10)).unwrap();
+
         limiter
-            .take(address("192.0.2.2"), NOW + Duration::seconds(30))
+            .take(address("192.0.2.3"), NOW + Duration::seconds(20))
             .unwrap();
 
-        // The first bucket is full again, but the last sweep was too recent to look again.
-        let third = address("192.0.2.3");
-        limiter.take(third, NOW + Duration::seconds(60)).unwrap();
-        assert!(counted(first) && !counted(third));
-
-        limiter.take(third, NOW + Duration::seconds(90)).unwrap();
-        assert!(!counted(first) && counted(third));
-    }
-
-    #[test]
-    fn all_networks_share_the_replica_limit() {
-        let limiter = SignInLimiter::with_capacity(LIMIT, RateLimit::new(3, 60), 2);
-        limiter.take(address("192.0.2.1"), NOW).unwrap();
-        limiter.take(address("192.0.2.2"), NOW).unwrap();
-
-        // The third network is past the table's capacity, so only the replica's limit counts it.
-        let third = address("192.0.2.3");
-        assert_eq!(limiter.take(third, NOW), Ok(()));
-        assert_eq!(limiter.take(third, NOW), Err(Duration::seconds(60)));
-        assert_eq!(
-            limiter.take(address("192.0.2.4"), NOW),
-            Err(Duration::seconds(60))
-        );
-    }
-
-    #[test]
-    fn a_refusal_by_the_replica_limit_costs_the_network_nothing() {
-        let limiter = SignInLimiter::new(LIMIT, RateLimit::new(1, 1));
-        limiter.take(address("192.0.2.1"), NOW).unwrap();
-        let client = address("192.0.2.2");
-        assert_eq!(limiter.take(client, NOW), Err(Duration::seconds(1)));
-
-        // Both of the network's tokens are left once the replica's comes back.
-        assert_eq!(limiter.take(client, NOW + Duration::seconds(1)), Ok(()));
-        assert_eq!(limiter.take(client, NOW + Duration::seconds(2)), Ok(()));
+        let counted = limiter.by_network.lock().unwrap();
+        assert!(!counted.contains_key(&first));
+        assert!(counted.contains_key(&second));
     }
 }
