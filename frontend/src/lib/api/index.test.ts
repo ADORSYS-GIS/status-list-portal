@@ -11,7 +11,9 @@ function issuer(id: string): Issuer {
     state: 'active',
     created_at: '2026-11-01T00:00:00Z',
     expires_at: '2026-12-01T00:00:00Z',
+    expires_soon_from: '2026-11-24T00:00:00Z',
     keys: [],
+    usage: { lists: 0, lists_limit: 10, keys: 0, keys_limit: null },
     management_url: 'https://status.example.com',
     audience: 'https://status.example.com',
   };

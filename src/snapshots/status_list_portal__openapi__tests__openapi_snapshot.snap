@@ -937,7 +937,9 @@ expression: openapi
           "state",
           "created_at",
           "expires_at",
+          "expires_soon_from",
           "keys",
+          "usage",
           "management_url",
           "audience"
         ],
@@ -969,6 +971,14 @@ expression: openapi
             "format": "date-time",
             "description": "When the issuer stops being active, unless it is renewed."
           },
+          "expires_soon_from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "From when the portal warns that the issuer expires soon: a week before `expires_at`, or\nthe last quarter of the sandbox lifetime when that is shorter. Renewing works at any\ntime. `null` when the issuer never expires."
+          },
           "id": {
             "type": "string",
             "description": "The `iss` of the issuer's management tokens.",
@@ -979,7 +989,7 @@ expression: openapi
             "items": {
               "$ref": "#/components/schemas/IssuerKeyResponse"
             },
-            "description": "Keys that may sign the issuer's management tokens, newest first."
+            "description": "Every key of the issuer, revoked ones included, newest first. Only `active` keys may\nsign its management tokens."
           },
           "management_url": {
             "type": "string",
@@ -989,6 +999,10 @@ expression: openapi
           "state": {
             "$ref": "#/components/schemas/IssuerState",
             "description": "Only `active` issuers can write status lists. Deleted issuers are `suspended`."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/IssuerUsageResponse",
+            "description": "What the issuer uses of its tier's limits."
           }
         }
       },
@@ -1000,6 +1014,49 @@ expression: openapi
           "suspended",
           "expired"
         ]
+      },
+      "IssuerUsageResponse": {
+        "type": "object",
+        "description": "What the issuer uses of its tier's limits.",
+        "required": [
+          "lists",
+          "lists_limit",
+          "keys",
+          "keys_limit"
+        ],
+        "properties": {
+          "keys": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Keys that are not revoked.",
+            "example": 1,
+            "minimum": 0
+          },
+          "keys_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Most keys the issuer may have that are not revoked. `null` when there is no limit.",
+            "example": 5,
+            "minimum": 0
+          },
+          "lists": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Status lists the issuer holds.",
+            "example": 3,
+            "minimum": 0
+          },
+          "lists_limit": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Most status lists the issuer may hold.",
+            "example": 10,
+            "minimum": 0
+          }
+        }
       },
       "KeyState": {
         "type": "string",
