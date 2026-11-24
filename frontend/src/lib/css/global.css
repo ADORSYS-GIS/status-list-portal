@@ -247,6 +247,11 @@ textarea {
   resize: vertical;
 }
 
+textarea:read-only,
+select:disabled {
+  background: var(--color-surface);
+}
+
 [aria-invalid='true'] {
   border-color: var(--color-danger);
 }

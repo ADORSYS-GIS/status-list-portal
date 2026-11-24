@@ -69,6 +69,24 @@ test('a key pair made in the browser fills in the form once its private key is s
   expect(JSON.parse(publicKey)).not.toHaveProperty('d');
 });
 
+test('a key pair made in the browser stays in the form until the developer uses their own key', async () => {
+  const { screen } = await renderForm();
+  await screen.getByRole('button', { name: 'Make an ES256 key pair in this browser' }).click();
+  await screen.getByRole('button', { name: 'Download private-key.json' }).click();
+  await expect.element(screen.getByLabelText('Public key')).toHaveAttribute('readonly');
+  await expect.element(screen.getByLabelText('Algorithm')).toBeDisabled();
+
+  await screen.getByRole('button', { name: 'Use your own key instead' }).click();
+
+  await expect.element(screen.getByLabelText('Public key')).toHaveValue('');
+  await expect.element(screen.getByLabelText('Public key')).not.toHaveAttribute('readonly');
+  await expect.element(screen.getByLabelText('Public key')).toHaveFocus();
+  await expect.element(screen.getByLabelText('Algorithm')).toBeEnabled();
+  await expect
+    .element(screen.getByRole('button', { name: 'Make an ES256 key pair in this browser' }))
+    .toBeVisible();
+});
+
 test('an empty form points at the first field to fix', async () => {
   const { screen, onsubmit } = await renderForm();
 
