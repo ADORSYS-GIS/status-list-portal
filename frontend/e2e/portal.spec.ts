@@ -3,6 +3,7 @@
  * own, with stand-ins for GitHub and the admin API (`fakes.ts`).
  */
 
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
 import { ADMIN_API, GITHUB, GITHUB_USER_COOKIE } from './settings.ts';
@@ -17,6 +18,9 @@ interface HeldIssuer {
   expires_at: number;
   version: number;
 }
+
+/** The rules of WCAG 2.2 at levels A and AA, as axe tags them. */
+const WCAG_AA = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
 /** A GitHub account of the test's own, so tests share nothing. */
 function accountFor(testInfo: TestInfo): string {
@@ -74,6 +78,15 @@ async function heldIssuer(name: string): Promise<HeldIssuer> {
 function oneLifetimeAway(expiresAt: number): boolean {
   const fromNow = expiresAt - Date.now() / 1000;
   return fromNow > LIFETIME - 10 * 60 && fromNow <= LIFETIME;
+}
+
+/** Checks the page as it is now against WCAG 2.2 AA, naming each failure and where it is. */
+async function expectAccessible(page: Page) {
+  const { violations } = await new AxeBuilder({ page }).withTags(WCAG_AA).analyze();
+  const failures = violations.map(
+    ({ id, help, nodes }) => `${id}: ${help} (${nodes.map((node) => node.target).join(', ')})`,
+  );
+  expect(failures).toEqual([]);
 }
 
 test('a developer signs in with GitHub and out again', async ({ page }, testInfo) => {
@@ -136,3 +149,44 @@ test('a key registers one issuer only', async ({ page }, testInfo) => {
   ).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Register an issuer' })).toBeVisible();
 });
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test.describe(`in the ${colorScheme} theme`, () => {
+    test.use({ colorScheme });
+
+    test('the home page meets WCAG 2.2 AA', async ({ page }) => {
+      await page.goto('/');
+      await expect(
+        page.getByRole('heading', { name: /^Try the Status List Server/ }),
+      ).toBeVisible();
+      await expectAccessible(page);
+
+      await page.goto('/?sign_in_error=denied');
+      await expect(page.getByRole('alert')).toContainText('Signing in was cancelled on GitHub.');
+      await expectAccessible(page);
+    });
+
+    test('the registration page meets WCAG 2.2 AA', async ({ page }, testInfo) => {
+      await signIn(page, accountFor(testInfo));
+      await page.getByRole('link', { name: 'Register an issuer' }).click();
+      await expect(page.getByRole('heading', { name: 'Register an issuer' })).toBeVisible();
+      await expectAccessible(page);
+
+      await page.getByRole('button', { name: 'Register issuer' }).click();
+      await expect(page.getByLabel('Display name')).toBeFocused();
+      await expectAccessible(page);
+    });
+
+    test("an issuer's page meets WCAG 2.2 AA", async ({ page }, testInfo) => {
+      const name = `Wallet ${testInfo.testId}`;
+      await signIn(page, accountFor(testInfo));
+      await register(page, name, await publicKey());
+      await expect(page.getByRole('heading', { name, level: 1 })).toBeVisible();
+      await expectAccessible(page);
+
+      await page.getByRole('button', { name: 'Delete issuer' }).click();
+      await expect(page.getByRole('dialog', { name: `Delete ${name}?` })).toBeVisible();
+      await expectAccessible(page);
+    });
+  });
+}
