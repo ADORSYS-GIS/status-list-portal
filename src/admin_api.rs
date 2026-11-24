@@ -10,8 +10,8 @@ mod token;
 
 pub use issuer::{
     Issuer, IssuerChange, IssuerKey, IssuerPage, IssuerQuery, IssuerSource, IssuerState,
-    IssuerTier, IssuerUsage, KeyState, KeyType, NewIssuer, Owner, PublicJwk, RequestedState,
-    SigningAlgorithm, UnknownAlgorithm,
+    IssuerTier, IssuerUsage, KeyState, KeyType, NewIssuer, NewIssuerKey, Owner, PublicJwk,
+    RequestedState, SigningAlgorithm, UnknownAlgorithm,
 };
 
 use std::time::{Duration, Instant};
@@ -53,6 +53,8 @@ const IF_ISSUER_VERSION: HeaderName = HeaderName::from_static("if-issuer-version
 /// The admin API's routes, as telemetry names its calls.
 const ISSUERS_ROUTE: &str = "/admin/v1/issuers";
 const ISSUER_ROUTE: &str = "/admin/v1/issuers/{id}";
+const ISSUER_KEYS_ROUTE: &str = "/admin/v1/issuers/{id}/keys";
+const ISSUER_KEY_ROUTE: &str = "/admin/v1/issuers/{id}/keys/{kid}";
 
 /// Client of the admin API, signed in as the portal's admin principal.
 pub struct AdminApi {
@@ -288,6 +290,64 @@ impl AdminApi {
         self.found(request).await
     }
 
+    async fn add_key(
+        &self,
+        id: &str,
+        version: &IssuerVersion,
+        key: &NewIssuerKey,
+    ) -> Result<Option<IssuerKey>, AdminApiError> {
+        let Some(mut url) = self.issuer_url(id) else {
+            return Ok(None);
+        };
+        url.path_segments_mut()
+            .expect("issuer URL has a path")
+            .push("keys");
+        let request = self
+            .http
+            .post(url)
+            .header(IF_ISSUER_VERSION, &version.0)
+            .json(key);
+        match self.send(ISSUER_KEYS_ROUTE, request).await {
+            Ok(response) => Ok(Some(with_version(response).await?.0)),
+            Err(error) if error.code() == Some(ErrorCode::IssuerNotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn revoke_key(
+        &self,
+        id: &str,
+        kid: &str,
+        version: &IssuerVersion,
+    ) -> Result<Option<IssuerKey>, AdminApiError> {
+        if matches!(kid, "" | "." | "..") || kid.chars().count() > ISSUER_ID_MAX_CHARS {
+            return Ok(None);
+        }
+        let Some(mut url) = self.issuer_url(id) else {
+            return Ok(None);
+        };
+        url.path_segments_mut()
+            .expect("issuer URL has a path")
+            .extend(["keys", kid]);
+        let request = self
+            .http
+            .patch(url)
+            .header(IF_ISSUER_VERSION, &version.0)
+            .json(&serde_json::json!({ "state": "revoked" }));
+        match self.send(ISSUER_KEY_ROUTE, request).await {
+            Ok(response) => Ok(Some(with_version(response).await?.0)),
+            Err(error)
+                if matches!(
+                    error.code(),
+                    Some(ErrorCode::IssuerNotFound | ErrorCode::KeyNotFound)
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// `None` for an id that one URL path segment cannot hold.
     fn issuer_url(&self, id: &str) -> Option<Url> {
         // A path segment drops `.` and `..`, which would leave the issuer's URL.
@@ -454,6 +514,30 @@ impl OwnedIssuers<'_> {
             .update_issuer(&current.id, &current.version, change)
             .await?;
         Ok(updated.map(|(issuer, _)| issuer))
+    }
+
+    pub async fn add_key(
+        &self,
+        current: &OwnedIssuer,
+        key: &NewIssuerKey,
+    ) -> Result<Option<IssuerKey>, AdminApiError> {
+        if !self.owns(current) {
+            return Ok(None);
+        }
+        self.api.add_key(&current.id, &current.version, key).await
+    }
+
+    pub async fn revoke_key(
+        &self,
+        current: &OwnedIssuer,
+        kid: &str,
+    ) -> Result<Option<IssuerKey>, AdminApiError> {
+        if !self.owns(current) {
+            return Ok(None);
+        }
+        self.api
+            .revoke_key(&current.id, kid, &current.version)
+            .await
     }
 
     fn owns(&self, issuer: &Issuer) -> bool {

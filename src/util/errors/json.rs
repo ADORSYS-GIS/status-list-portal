@@ -51,6 +51,8 @@ pub enum ApiErrorCode {
     IssuerRegistrationInProgress,
     /// The public key is already registered.
     KeyMaterialInUse,
+    /// The issuer has reached its tier's key limit.
+    KeyLimitReached,
     /// The public key is malformed or incompatible with the chosen algorithm.
     InvalidPublicKey,
     /// The submitted key contains private key material.
@@ -102,6 +104,7 @@ impl ApiErrorCode {
             TermsChanged
             | ActiveIssuerLimitReached
             | KeyMaterialInUse
+            | KeyLimitReached
             | IssuerChanged
             | IssuerNotRenewable
             | RegistrationBeingDecided
@@ -216,6 +219,7 @@ mod tests {
                 "key_material_in_use",
                 StatusCode::CONFLICT,
             ),
+            (KeyLimitReached, "key_limit_reached", StatusCode::CONFLICT),
             (
                 InvalidPublicKey,
                 "invalid_public_key",

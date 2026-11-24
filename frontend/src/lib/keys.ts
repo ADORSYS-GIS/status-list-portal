@@ -87,19 +87,25 @@ console.log(JSON.stringify(await crypto.subtle.exportKey('jwk', publicKey)));
 }
 
 /** The key that signs the issuer's tokens: its newest active one. */
-export function signingKey(issuer: Issuer) {
-  return issuer.keys.find((key) => key.state === 'active') ?? issuer.keys[0];
+export function signingKey(issuer: Issuer, kid?: string) {
+  return issuer.keys.find(
+    (key) => key.state === 'active' && (kid === undefined || key.kid === kid),
+  );
 }
 
 /** A Node.js script that signs a management token for `issuer` with private-key.json. */
-export function tokenScript(issuer: Issuer): string {
-  const key = signingKey(issuer);
+export function tokenScript(
+  issuer: Issuer,
+  kid?: string,
+  privateKeyFile = 'private-key.json',
+): string {
+  const key = signingKey(issuer, kid);
   const alg = key?.alg ?? 'ES256';
   const header = { alg, typ: 'statuslist-management+jwt', kid: key?.kid ?? '' };
   return `// mint-token.mjs: run \`node mint-token.mjs\` (Node.js 22 or later).
 import { readFile } from 'node:fs/promises';
 
-const jwk = JSON.parse(await readFile('private-key.json', 'utf8'));
+const jwk = JSON.parse(await readFile(${JSON.stringify(privateKeyFile)}, 'utf8'));
 const key = await crypto.subtle.importKey('jwk', jwk, ${WEB_CRYPTO[alg].key}, false, ['sign']);
 const now = Math.floor(Date.now() / 1000);
 const header = ${JSON.stringify(header)};
@@ -109,6 +115,31 @@ const input = \`\${encode(header)}.\${encode(claims)}\`;
 const signature = await crypto.subtle.sign(${WEB_CRYPTO[alg].sign}, key, new TextEncoder().encode(input));
 console.log(\`\${input}.\${Buffer.from(signature).toString('base64url')}\`);
 `;
+}
+
+/** Makes a key pair locally. The private JWK must be downloaded and is never sent to the portal. */
+export async function browserKeyPair(
+  alg: SigningAlgorithm,
+): Promise<{ publicKey: JsonWebKey; privateKey: JsonWebKey }> {
+  const parameters: Record<SigningAlgorithm, EcKeyGenParams | RsaHashedKeyGenParams | Algorithm> = {
+    ES256: { name: 'ECDSA', namedCurve: 'P-256' },
+    ES384: { name: 'ECDSA', namedCurve: 'P-384' },
+    EdDSA: { name: 'Ed25519' },
+    PS256: {
+      name: 'RSA-PSS',
+      hash: 'SHA-256',
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+    },
+  };
+  const pair = (await crypto.subtle.generateKey(parameters[alg], true, [
+    'sign',
+    'verify',
+  ])) as CryptoKeyPair;
+  return {
+    publicKey: await crypto.subtle.exportKey('jwk', pair.publicKey),
+    privateKey: await crypto.subtle.exportKey('jwk', pair.privateKey),
+  };
 }
 
 /** Shell commands that publish a status list with one valid entry, as `issuer`. */

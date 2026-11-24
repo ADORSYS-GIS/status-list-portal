@@ -12,6 +12,7 @@ function issuer(id: string): Issuer {
     created_at: '2026-11-01T00:00:00Z',
     expires_at: '2026-12-01T00:00:00Z',
     keys: [],
+    usage: { keys: 0, keys_limit: 2 },
     management_url: 'https://status.example.com',
     audience: 'https://status.example.com',
   };

@@ -19,7 +19,8 @@ use url::Url;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::admin_api::{
-    Issuer, IssuerChange, IssuerState, KeyState, NewIssuer, Owner, RequestedState, SigningAlgorithm,
+    Issuer, IssuerChange, IssuerKey, IssuerState, KeyState, NewIssuer, NewIssuerKey, Owner,
+    RequestedState, SigningAlgorithm,
 };
 use crate::auth::AuthenticatedUser;
 use crate::config::{self, PublicOrigin};
@@ -48,8 +49,10 @@ pub struct IssuerResponse {
     #[serde(with = "time::serde::rfc3339::option")]
     #[schema(required = true)]
     expires_at: Option<OffsetDateTime>,
-    /// Keys that may sign the issuer's management tokens, newest first.
+    /// Every key, including revoked keys, newest first.
     keys: Vec<IssuerKeyResponse>,
+    /// Key use counted against this tier's limit.
+    usage: KeyUsageResponse,
     /// Where the issuer's management tokens go.
     #[schema(example = "https://status.example.com")]
     management_url: String,
@@ -67,16 +70,29 @@ pub struct IssuerKeyResponse {
     state: KeyState,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct KeyUsageResponse {
+    keys: u32,
+    #[schema(required = true)]
+    keys_limit: Option<u32>,
+}
+
+impl From<IssuerKey> for IssuerKeyResponse {
+    fn from(key: IssuerKey) -> Self {
+        Self {
+            kid: key.kid,
+            alg: key.alg,
+            state: key.state,
+        }
+    }
+}
+
 impl IssuerResponse {
     fn new(issuer: Issuer, management_api: &config::ManagementApi) -> Self {
         let keys = issuer
             .keys
             .into_iter()
-            .map(|key| IssuerKeyResponse {
-                kid: key.kid,
-                alg: key.alg,
-                state: key.state,
-            })
+            .map(IssuerKeyResponse::from)
             .collect();
         Self {
             id: issuer.id,
@@ -85,6 +101,10 @@ impl IssuerResponse {
             created_at: issuer.created_at,
             expires_at: issuer.expires_at,
             keys,
+            usage: KeyUsageResponse {
+                keys: issuer.usage.keys,
+                keys_limit: issuer.usage.keys_limit,
+            },
             management_url: management_api.url.as_str().trim_end_matches('/').to_owned(),
             audience: management_api.audience.clone(),
         }
@@ -256,6 +276,87 @@ pub async fn get_issuer(
         issuer.into_issuer(),
         &ctx.config.management_api,
     )))
+}
+
+// No `Debug`: a private key accidentally pasted into the request must stay out of logs.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NewIssuerKeyRequest {
+    alg: SigningAlgorithm,
+    #[schema(value_type = Object)]
+    public_key: Value,
+}
+
+/// Adds an active key to one of the signed-in user's issuers.
+#[utoipa::path(
+    post,
+    path = "/api/v1/issuers/{id}/keys",
+    tag = "issuers",
+    params(("id" = String, Path, description = "The issuer's id.")),
+    request_body = NewIssuerKeyRequest,
+    responses(
+        (status = 201, description = "Key added.", body = IssuerKeyResponse),
+        (status = 401, body = ApiErrorResponse),
+        (status = 404, body = ApiErrorResponse),
+        (status = 409, description = "Key limit, key already used, or issuer changed.", body = ApiErrorResponse),
+        (status = 422, description = "Invalid or private key.", body = ApiErrorResponse),
+        (status = 502, body = ApiErrorResponse),
+        (status = 503, body = ApiErrorResponse),
+    ),
+)]
+pub async fn add_issuer_key(
+    ctx: ServerContext,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(id): Path<String>,
+    JsonBody(request): JsonBody<NewIssuerKeyRequest>,
+) -> AppResult<(StatusCode, Json<IssuerKeyResponse>)> {
+    let key = NewIssuerKey {
+        alg: request.alg,
+        public_key: public_key::parse(&request.public_key, request.alg)?,
+    };
+    let owner = Owner::github(user.gh_id);
+    let issuers = ctx.admin_api.issuers_of(&owner);
+    let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
+    let added = issuers
+        .add_key(&current, &key)
+        .await?
+        .ok_or_else(errors::not_found)?;
+    info!(user.id, issuer.id = %id, key.id = %added.kid, "added issuer key");
+    Ok((StatusCode::CREATED, Json(added.into())))
+}
+
+/// Permanently revokes one key of the signed-in user's issuer.
+#[utoipa::path(
+    post,
+    path = "/api/v1/issuers/{id}/keys/{kid}/revoke",
+    tag = "issuers",
+    params(
+        ("id" = String, Path, description = "The issuer's id."),
+        ("kid" = String, Path, description = "The key id."),
+    ),
+    responses(
+        (status = 200, description = "Key revoked.", body = IssuerKeyResponse),
+        (status = 401, body = ApiErrorResponse),
+        (status = 404, body = ApiErrorResponse),
+        (status = 409, description = "Issuer changed.", body = ApiErrorResponse),
+        (status = 502, body = ApiErrorResponse),
+        (status = 503, body = ApiErrorResponse),
+    ),
+)]
+pub async fn revoke_issuer_key(
+    ctx: ServerContext,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path((id, kid)): Path<(String, String)>,
+) -> AppResult<Json<IssuerKeyResponse>> {
+    let owner = Owner::github(user.gh_id);
+    let issuers = ctx.admin_api.issuers_of(&owner);
+    let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
+    let revoked = issuers
+        .revoke_key(&current, &kid)
+        .await?
+        .ok_or_else(errors::not_found)?;
+    info!(user.id, issuer.id = %id, key.id = %kid, "revoked issuer key");
+    Ok(Json(revoked.into()))
 }
 
 /// Keeps one of the signed-in user's issuers active for another sandbox lifetime.

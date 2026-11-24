@@ -74,7 +74,11 @@ impl From<AdminApiError> for BoxedAppError {
             return service_unavailable();
         }
         match error.code() {
-            Some(ErrorCode::IssuerNotFound) => not_found(),
+            Some(ErrorCode::IssuerNotFound | ErrorCode::KeyNotFound) => not_found(),
+            Some(ErrorCode::KeyLimitReached) => custom(
+                ApiErrorCode::KeyLimitReached,
+                "This issuer has reached its key limit. A free slot is needed to add a key before revoking the old one.",
+            ),
             Some(ErrorCode::KeyMaterialInUse) => custom(
                 ApiErrorCode::KeyMaterialInUse,
                 "This public key is already registered, maybe for an issuer you deleted, since \
@@ -246,6 +250,12 @@ mod tests {
                 ErrorCode::IssuerNotFound,
                 StatusCode::NOT_FOUND,
                 "not_found",
+            ),
+            (ErrorCode::KeyNotFound, StatusCode::NOT_FOUND, "not_found"),
+            (
+                ErrorCode::KeyLimitReached,
+                StatusCode::CONFLICT,
+                "key_limit_reached",
             ),
             (
                 ErrorCode::KeyMaterialInUse,

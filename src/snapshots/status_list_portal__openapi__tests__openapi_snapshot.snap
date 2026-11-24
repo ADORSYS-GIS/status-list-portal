@@ -308,6 +308,191 @@ expression: openapi
         }
       }
     },
+    "/api/v1/issuers/{id}/keys": {
+      "post": {
+        "tags": [
+          "issuers"
+        ],
+        "summary": "Adds an active key to one of the signed-in user's issuers.",
+        "operationId": "add_issuer_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The issuer's id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewIssuerKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Key added.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuerKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Key limit, key already used, or issuer changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid or private key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/issuers/{id}/keys/{kid}/revoke": {
+      "post": {
+        "tags": [
+          "issuers"
+        ],
+        "summary": "Permanently revokes one key of the signed-in user's issuer.",
+        "operationId": "revoke_issuer_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The issuer's id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kid",
+            "in": "path",
+            "description": "The key id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuerKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Issuer changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/issuers/{id}/renew": {
       "post": {
         "tags": [
@@ -772,6 +957,7 @@ expression: openapi
           "sandbox_issuer_limit_reached",
           "issuer_registration_in_progress",
           "key_material_in_use",
+          "key_limit_reached",
           "invalid_public_key",
           "private_key_submitted",
           "invalid_display_name",
@@ -877,6 +1063,7 @@ expression: openapi
           "created_at",
           "expires_at",
           "keys",
+          "usage",
           "management_url",
           "audience"
         ],
@@ -918,7 +1105,7 @@ expression: openapi
             "items": {
               "$ref": "#/components/schemas/IssuerKeyResponse"
             },
-            "description": "Keys that may sign the issuer's management tokens, newest first."
+            "description": "Every key, including revoked keys, newest first."
           },
           "management_url": {
             "type": "string",
@@ -928,6 +1115,10 @@ expression: openapi
           "state": {
             "$ref": "#/components/schemas/IssuerState",
             "description": "Only `active` issuers can write status lists. Deleted issuers are `suspended`."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/KeyUsageResponse",
+            "description": "Key use counted against this tier's limit."
           }
         }
       },
@@ -947,6 +1138,28 @@ expression: openapi
           "reserved",
           "revoked"
         ]
+      },
+      "KeyUsageResponse": {
+        "type": "object",
+        "required": [
+          "keys",
+          "keys_limit"
+        ],
+        "properties": {
+          "keys": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "keys_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "MeResponse": {
         "type": "object",
@@ -980,6 +1193,22 @@ expression: openapi
             "description": "Whether the user accepted the current terms of use. Registering an issuer needs it."
           }
         }
+      },
+      "NewIssuerKeyRequest": {
+        "type": "object",
+        "required": [
+          "alg",
+          "public_key"
+        ],
+        "properties": {
+          "alg": {
+            "$ref": "#/components/schemas/SigningAlgorithm"
+          },
+          "public_key": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
       },
       "NewIssuerRequest": {
         "type": "object",

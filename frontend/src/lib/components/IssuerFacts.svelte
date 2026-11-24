@@ -5,9 +5,9 @@
 
   import CopyButton from './CopyButton.svelte';
 
-  let { issuer }: { issuer: Issuer } = $props();
+  let { issuer, selectedKid }: { issuer: Issuer; selectedKid?: string } = $props();
 
-  let key = $derived(signingKey(issuer));
+  let key = $derived(signingKey(issuer, selectedKid) ?? signingKey(issuer));
   /** What a developer copies into their tokens and requests. */
   let copyable = $derived([
     { label: 'Issuer id (iss)', value: issuer.id },
