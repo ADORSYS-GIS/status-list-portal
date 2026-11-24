@@ -13,16 +13,21 @@
   let { onkey }: { onkey: (publicJwk: string) => void } = $props();
 
   let pair = $state<KeyPair | null>(null);
+  let making = $state(false);
   let failed = $state(false);
   let saved = $state(false);
   let firstDownload = $state<HTMLButtonElement>();
 
   async function make() {
+    // A second pair would replace the first after its private key may have been saved.
+    making = true;
     try {
       pair = await makeKeyPair();
     } catch {
       failed = true;
       return;
+    } finally {
+      making = false;
     }
     // The button that had focus is gone; the next step is saving the key.
     await tick();
@@ -76,7 +81,7 @@
         : 'The public key goes into the form once you have saved the private key.'}
     </p>
   {:else}
-    <button type="button" class="button" onclick={make}>
+    <button type="button" class="button" onclick={make} disabled={making}>
       <Icon name="key" /> Make an ES256 key pair in this browser
     </button>
     {#if failed}
