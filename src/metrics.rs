@@ -31,6 +31,7 @@ pub struct Metrics {
     /// The scheme browsers reach the portal with. A proxy may forward requests over plain
     /// HTTP, so the request itself cannot tell.
     url_scheme: &'static str,
+    rate_limited: Counter<u64>,
 }
 
 /// How a sign-in with GitHub ended.
@@ -44,6 +45,8 @@ pub enum SignInOutcome {
     Expired,
     /// The GitHub account has no verified primary email.
     NoVerifiedEmail,
+    /// Too many sign-ins came from the client's network in a short time.
+    RateLimited,
     /// GitHub or the database could not be reached, or GitHub refused the OAuth app.
     Failed,
 }
@@ -96,6 +99,11 @@ impl Metrics {
                 .u64_counter("portal.sandbox.refusals")
                 .with_description("Issuers that a sandbox limit refused, by limit.")
                 .with_unit("{refusal}")
+                .build(),
+            rate_limited: meter
+                .u64_counter("portal.rate_limited")
+                .with_description("Requests that a rate limit refused, by action.")
+                .with_unit("{request}")
                 .build(),
         }
     }
@@ -180,6 +188,7 @@ impl Metrics {
             SignInOutcome::Denied => "denied",
             SignInOutcome::Expired => "expired",
             SignInOutcome::NoVerifiedEmail => "no_verified_email",
+            SignInOutcome::RateLimited => "rate_limited",
             SignInOutcome::Failed => "failed",
         };
         self.sign_ins
@@ -203,6 +212,15 @@ impl Metrics {
         };
         self.sandbox_refusals
             .add(1, &[KeyValue::new("portal.sandbox.limit", limit)]);
+    }
+}
+
+impl Metrics {
+    /// Counts a request that the rate limit of `action` refused. `action` is one of a fixed
+    /// set of names: `register`, `renew`, `delete` and `sign_in`.
+    pub(crate) fn rate_limited(&self, action: &'static str) {
+        self.rate_limited
+            .add(1, &[KeyValue::new("portal.rate_limit.action", action)]);
     }
 }
 

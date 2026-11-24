@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use axum::Router;
+use axum::extract::connect_info::MockConnectInfo;
 use axum::response::IntoResponse;
 use axum_extra::extract::PrivateCookieJar;
 use axum_extra::extract::cookie::Cookie;
@@ -12,6 +13,7 @@ use http::header::SET_COOKIE;
 use secrecy::SecretString;
 use status_list_portal::admin_api::SigningAlgorithm;
 use status_list_portal::auth::Session;
+use status_list_portal::client_address::TrustedProxies;
 use status_list_portal::config::{self, Config, PublicOrigin, SessionKey};
 use status_list_portal::models::{NewUser, TermsAcceptance, User};
 use status_list_portal::util::logging::LogFormat;
@@ -28,6 +30,10 @@ pub const ORIGIN: &str = "https://portal.example.com";
 pub const MANAGEMENT_URL: &str = "https://status.example.com";
 pub const TERMS_VERSION: &str = "2026-10-22";
 
+/// Where every request seems to come from, unless it names a client forwarded by a trusted
+/// proxy.
+pub const PEER: SocketAddr =
+    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 40000);
 /// Nothing listens on port 1, so connections are refused at once.
 const UNREACHABLE_DATABASE_URL: &str = "postgres://portal@127.0.0.1:1/portal";
 /// What the app signs its admin tokens as, and with.
@@ -65,6 +71,8 @@ impl TestApp {
         TestAppBuilder {
             unreachable_database: false,
             sandbox: config::Sandbox::default(),
+            rate_limits: config::RateLimits::default(),
+            trusted_proxies: TrustedProxies::default(),
             frontend: false,
         }
     }
@@ -161,6 +169,8 @@ impl TestApp {
 pub struct TestAppBuilder {
     unreachable_database: bool,
     sandbox: config::Sandbox,
+    rate_limits: config::RateLimits,
+    trusted_proxies: TrustedProxies,
     frontend: bool,
 }
 
@@ -186,6 +196,22 @@ impl TestAppBuilder {
         Self { sandbox, ..self }
     }
 
+    /// Limits requests as `rate_limits` says, instead of with the defaults.
+    pub fn with_rate_limits(self, rate_limits: config::RateLimits) -> Self {
+        Self {
+            rate_limits,
+            ..self
+        }
+    }
+
+    /// Trusts `X-Forwarded-For` from [`PEER`], as from a proxy.
+    pub fn behind_a_proxy(self) -> Self {
+        Self {
+            trusted_proxies: TrustedProxies::parse(&PEER.ip().to_string()).unwrap(),
+            ..self
+        }
+    }
+
     /// Builds the app and returns it with a user who is not signed in.
     pub async fn empty(self) -> (TestApp, MockAnonymousUser) {
         let (test_db, database_url) = if self.unreachable_database {
@@ -203,6 +229,7 @@ impl TestAppBuilder {
 
         let mut config = Config {
             sandbox: self.sandbox,
+            rate_limits: self.rate_limits,
             ..simple_config(
                 database_url,
                 &github_url,
@@ -213,13 +240,14 @@ impl TestAppBuilder {
         if self.frontend {
             config.server.frontend_dir = Some(FRONTEND_DIR.into());
         }
+        config.server.trusted_proxies = self.trusted_proxies;
         let metrics = MetricsRecorder::new();
         let mut ctx = ServerContext::from_config(config, &metrics.meter())
             .expect("failed to build the server context");
         ctx.start_readiness()
             .expect("failed to start database readiness for the test server");
         let app = TestApp(Arc::new(TestAppInner {
-            router: build_handler(ctx.clone()),
+            router: build_handler(ctx.clone()).layer(MockConnectInfo(PEER)),
             github,
             admin_api,
             ctx,
@@ -245,6 +273,7 @@ fn simple_config(
             bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
             origin: PublicOrigin::parse(ORIGIN).expect("the origin is valid"),
             frontend_dir: None,
+            trusted_proxies: TrustedProxies::default(),
         },
         database: config::Database {
             url: SecretString::from(database_url),
@@ -271,6 +300,7 @@ fn simple_config(
             audience: MANAGEMENT_URL.to_string(),
         },
         sandbox: config::Sandbox::default(),
+        rate_limits: config::RateLimits::default(),
         terms: config::Terms {
             version: TERMS_VERSION.to_string(),
             url: Url::parse(&format!("{ORIGIN}/terms")).expect("the URL is valid"),

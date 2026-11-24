@@ -13,6 +13,7 @@ mod migrations;
 mod not_found;
 mod otlp;
 mod pool;
+mod rate_limits;
 mod registrations;
 mod session;
 mod telemetry;

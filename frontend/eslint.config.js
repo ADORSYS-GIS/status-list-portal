@@ -5,7 +5,15 @@ import globals from 'globals';
 import ts from 'typescript-eslint';
 
 export default defineConfig(
-  { ignores: ['build/', '.svelte-kit/', 'src/lib/api/schema.ts'] },
+  {
+    ignores: [
+      'build/',
+      '.svelte-kit/',
+      'test-results/',
+      'playwright-report/',
+      'src/lib/api/schema.ts',
+    ],
+  },
   js.configs.recommended,
   ts.configs.recommended,
   svelte.configs.recommended,

@@ -3,7 +3,7 @@
 use anyhow::Context;
 use opentelemetry::metrics::Meter;
 use status_list_portal::config::Config;
-use status_list_portal::{ServerContext, build_handler};
+use status_list_portal::{Env, ServerContext, serve};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tracing::{info, warn};
@@ -11,6 +11,13 @@ use tracing::{info, warn};
 /// Serves requests until SIGTERM or Ctrl+C. Migrations run in a separate job.
 /// Records metrics with `meter`.
 pub async fn run(config: Config, meter: &Meter) -> anyhow::Result<()> {
+    if config.env == Env::Production && config.server.trusted_proxies.is_empty() {
+        // Production needs HTTPS, which the server leaves to a proxy.
+        warn!(
+            "APP_SERVER__TRUSTED_PROXIES is empty: behind a proxy, every client shares the \
+             proxy's sign-in rate limit"
+        );
+    }
     let bind_address = config.server.bind_address;
     let mut ctx = ServerContext::from_config(config, meter)?;
 
@@ -21,8 +28,7 @@ pub async fn run(config: Config, meter: &Meter) -> anyhow::Result<()> {
     ctx.start_readiness()?;
 
     info!(%bind_address, "listening");
-    axum::serve(listener, build_handler(ctx))
-        .with_graceful_shutdown(shutdown_signal(terminate))
+    serve(listener, ctx, shutdown_signal(terminate))
         .await
         .context("server error")
 }

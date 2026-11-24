@@ -10,6 +10,10 @@
 node_modules/
 /frontend/build/
 /frontend/.svelte-kit/
+/frontend/test-results/
+/frontend/playwright-report/
+# A real GitHub session from the end-to-end tests.
+/frontend/e2e/.auth/
 
 # macOS
 **/.DS_Store

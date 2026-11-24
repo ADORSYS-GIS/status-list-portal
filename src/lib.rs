@@ -6,6 +6,7 @@
 
 pub mod admin_api;
 pub mod auth;
+pub mod client_address;
 pub mod config;
 pub mod controllers;
 pub mod db;
@@ -14,6 +15,7 @@ pub mod metrics;
 pub mod middleware;
 pub mod models;
 pub mod openapi;
+pub mod rate_limiter;
 mod router;
 pub mod sandbox;
 /// Diesel table definitions generated from the database migrations.
@@ -24,7 +26,10 @@ pub mod util;
 
 pub use crate::server::{ServerContext, ServerContextInner};
 
+use std::net::SocketAddr;
+
 use serde::Deserialize;
+use tokio::net::TcpListener;
 
 /// Where the server runs. Some settings have safe defaults only outside production.
 ///
@@ -52,10 +57,25 @@ impl Env {
     }
 }
 
-/// Builds the router with every route and middleware.
+/// Builds the router with every route and middleware. Serve it with each connection's peer
+/// address, as [`serve`] does: the sign-in callback answers 500 without one.
 pub fn build_handler(ctx: ServerContext) -> axum::Router {
     let origin = ctx.config.server.origin.clone();
     let metrics = ctx.metrics.clone();
     let frontend = ctx.frontend.clone();
     middleware::apply_middleware(router::build_router(ctx), &origin, metrics, frontend)
+}
+
+/// Serves requests on `listener` until `shutdown` completes, then lets the requests in
+/// progress finish. Each request knows its peer's address: the client's, or that of the proxy
+/// that forwards for it.
+pub async fn serve(
+    listener: TcpListener,
+    ctx: ServerContext,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    let service = build_handler(ctx).into_make_service_with_connect_info::<SocketAddr>();
+    axum::serve(listener, service)
+        .with_graceful_shutdown(shutdown)
+        .await
 }
