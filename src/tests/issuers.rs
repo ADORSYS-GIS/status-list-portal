@@ -49,9 +49,7 @@ async fn adding_a_key_uses_the_owner_version_and_public_jwk() {
         "public_key": public_jwk_json(),
     });
     Mock::given(method("POST"))
-        .and(path(
-            format!("{ISSUER_URL}").replace("/api/v1", "/admin/v1") + "/keys",
-        ))
+        .and(path(ISSUER_URL.replace("/api/v1", "/admin/v1") + "/keys"))
         .and(header("if-issuer-version", "7"))
         .and(body_json(
             json!({ "alg": "ES256", "public_key": public_jwk_json() }),

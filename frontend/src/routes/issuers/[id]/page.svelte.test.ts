@@ -33,11 +33,15 @@ function issuer(keys = 1, limit: number | null = 2) {
   };
 }
 
+function pageData(keys = 1, limit: number | null = 2) {
+  return { issuer: issuer(keys, limit), user: null, terms: null };
+}
+
 beforeEach(() => post.mockReset());
 
 test('a pasted public key can be added while the old key stays available', async () => {
   post.mockResolvedValue({ data: { kid: 'key-2', alg: 'ES256', state: 'active' } });
-  const screen = await render(Page, { data: { issuer: issuer() } });
+  const screen = await render(Page, { data: pageData() });
   await screen
     .getByLabelText('Public key (JWK)')
     .fill('{"kty":"EC","crv":"P-256","x":"AAAA","y":"BBBB"}');
@@ -52,7 +56,7 @@ test('a pasted public key can be added while the old key stays available', async
 });
 
 test('the tier limit blocks adding a key', async () => {
-  const screen = await render(Page, { data: { issuer: issuer(2, 2) } });
+  const screen = await render(Page, { data: pageData(2, 2) });
   await expect.element(screen.getByText(/The key limit is reached/)).toBeVisible();
   await expect
     .element(screen.getByRole('button', { name: 'Add public key' }))
@@ -61,7 +65,7 @@ test('the tier limit blocks adding a key', async () => {
 
 test('revoking the last active key requires confirmation', async () => {
   post.mockResolvedValue({ data: { kid: 'key-1', alg: 'ES256', state: 'revoked' } });
-  const screen = await render(Page, { data: { issuer: issuer(1) } });
+  const screen = await render(Page, { data: pageData(1) });
   await screen.getByRole('button', { name: 'Revoke', exact: true }).click();
   expect(post).not.toHaveBeenCalled();
   await expect.element(screen.getByText(/will no longer be able to write/)).toBeVisible();
