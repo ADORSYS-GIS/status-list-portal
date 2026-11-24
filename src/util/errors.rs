@@ -20,7 +20,7 @@ use tracing::{error, warn};
 
 use crate::admin_api::{AdminApiError, ErrorCode};
 
-pub use json::{ApiErrorCode, ApiErrorResponse, custom};
+pub use json::{ApiErrorCode, ApiErrorResponse, custom, too_many_requests};
 
 pub type BoxedAppError = Box<dyn AppError>;
 pub type AppResult<T> = Result<T, BoxedAppError>;

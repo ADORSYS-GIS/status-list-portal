@@ -1,11 +1,12 @@
 /** Why the last sign-in failed, as the backend reports it in the home page's `sign_in_error`. */
-export type SignInError = 'denied' | 'expired' | 'no_verified_email' | 'unavailable';
+export type SignInError = 'denied' | 'expired' | 'no_verified_email' | 'too_many' | 'unavailable';
 
 export const SIGN_IN_ERRORS: Record<SignInError, string> = {
   denied: 'Signing in was cancelled on GitHub.',
   expired: 'This sign-in expired or was already used. Please sign in again.',
   no_verified_email:
     'Signing in needs a verified primary email on your GitHub account. Add one, then sign in again.',
+  too_many: 'Too many sign-ins came from your network in a short time. Please try again later.',
   unavailable: 'Signing in is not available right now. Please try again later.',
 };
 

@@ -25,6 +25,7 @@ use crate::auth::AuthenticatedUser;
 use crate::config::{self, PublicOrigin};
 use crate::controllers::registration::RegistrationResponse;
 use crate::metrics::RegistrationOutcome;
+use crate::rate_limiter::LimitedAction;
 use crate::sandbox;
 use crate::server::ServerContext;
 use crate::util::errors::{self, ApiErrorCode, ApiErrorResponse, AppResult};
@@ -197,6 +198,7 @@ impl NewIssuerRequest {
         (status = 403, description = "The current terms are not accepted, or the account registered as many issuers as it may.", body = ApiErrorResponse),
         (status = 409, description = "The account has as many active issuers as allowed, or the key is registered already.", body = ApiErrorResponse),
         (status = 422, description = "The display name or the public key cannot be used.", body = ApiErrorResponse),
+        (status = 429, description = "Too many registrations in a short time.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds until the user may try again."))),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
         (status = 503, description = "sandbox_issuer_limit_reached, issuer_registration_in_progress, or service_unavailable.", body = ApiErrorResponse),
     ),
@@ -209,6 +211,11 @@ pub async fn create_issuer(
     let mut conn = ctx.db.get().await?;
     sandbox::ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
     let new_issuer = request.into_new_issuer(sandbox::expiry(&ctx.config.sandbox))?;
+    // Only a registration the developer may make counts. A full sandbox or a failing
+    // Status List Server still costs a token, so that retries cannot hammer either.
+    ctx.rate_limiter
+        .check(&mut conn, user.id, LimitedAction::Register)
+        .await?;
 
     if ctx.config.sandbox.manual_approval {
         let registration = sandbox::request(&ctx, &mut conn, &user, &new_issuer).await?;
@@ -272,6 +279,7 @@ pub async fn get_issuer(
         (status = 403, description = "The current terms are not accepted.", body = ApiErrorResponse),
         (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
         (status = 409, description = "The issuer is deleted, the account has as many active issuers as allowed, or the issuer changed while this request ran.", body = ApiErrorResponse),
+        (status = 429, description = "Too many renewals in a short time.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds until the user may try again."))),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
         (status = 503, description = "sandbox_issuer_limit_reached, issuer_registration_in_progress, or service_unavailable.", body = ApiErrorResponse),
     ),
@@ -285,6 +293,9 @@ pub async fn renew_issuer(
     // issuer needs one again, for the lock.
     let mut conn = ctx.db.get().await?;
     sandbox::ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
+    ctx.rate_limiter
+        .check(&mut conn, user.id, LimitedAction::Renew)
+        .await?;
     drop(conn);
     let owner = Owner::github(user.gh_id);
     let issuers = ctx.admin_api.issuers_of(&owner);
@@ -330,6 +341,7 @@ pub async fn renew_issuer(
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
         (status = 409, description = "The issuer changed while this request ran.", body = ApiErrorResponse),
+        (status = 429, description = "Too many deletions in a short time.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds until the user may try again."))),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
     ),
 )]
@@ -338,6 +350,12 @@ pub async fn delete_issuer(
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<String>,
 ) -> AppResult<StatusCode> {
+    // The connection goes back to the pool before the admin API is called.
+    let mut conn = ctx.db.get().await?;
+    ctx.rate_limiter
+        .check(&mut conn, user.id, LimitedAction::Delete)
+        .await?;
+    drop(conn);
     let owner = Owner::github(user.gh_id);
     let issuers = ctx.admin_api.issuers_of(&owner);
     let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
