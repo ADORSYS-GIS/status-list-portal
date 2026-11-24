@@ -268,26 +268,33 @@ jobs:
       # certificates and frontend path. In production, plaintext reaches only a local database.
       - name: Check that it serves the portal
         run: |
+          secrets="$RUNNER_TEMP/secrets"
+          mkdir "$secrets"
+          echo 'postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable' > "$secrets/database-url"
+          openssl rand -hex 64 > "$secrets/session-key"
+          cp test_data/admin-keys/es256.pem "$secrets/admin-key.pem"
           cat > "$RUNNER_TEMP/portal.env" <<EOF
           APP_SERVER__ORIGIN=http://localhost:8080
-          APP_DATABASE__URL=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
-          APP_SESSION__KEY=$(openssl rand -hex 64)
+          APP_DATABASE__URL_FILE=/run/secrets/portal/database-url
+          APP_SESSION__KEY_FILE=/run/secrets/portal/session-key
           APP_GITHUB__CLIENT_ID=ci
           APP_GITHUB__CLIENT_SECRET=ci
           APP_ADMIN_API__URL=http://localhost:8002
           APP_ADMIN_API__PRINCIPAL=portal
           APP_ADMIN_API__AUDIENCE=status-list-server
           APP_ADMIN_API__KEY_ID=ci
-          APP_ADMIN_API__SIGNING_KEY_FILE=/run/secrets/admin-key.pem
+          APP_ADMIN_API__SIGNING_KEY_FILE=/run/secrets/portal/admin-key.pem
           APP_MANAGEMENT_API__URL=https://status.example.com
           APP_MANAGEMENT_API__AUDIENCE=https://status.example.com
           APP_TERMS__VERSION=ci
           APP_TERMS__URL=https://example.com/terms
           EOF
-          docker run --rm --network host --env-file "$RUNNER_TEMP/portal.env" status-list-portal migrate
+          # The migration job gets only its database URL, as docs/deployment.md has it.
+          docker run --rm --network host --volume "$secrets:/run/secrets/portal:ro" \
+            --env APP_DATABASE__URL_FILE=/run/secrets/portal/database-url \
+            status-list-portal migrate
           docker run --detach --name portal --network host --env-file "$RUNNER_TEMP/portal.env" \
-            --volume "$PWD/test_data/admin-keys/es256.pem:/run/secrets/admin-key.pem:ro" \
-            status-list-portal
+            --volume "$secrets:/run/secrets/portal:ro" status-list-portal
           for _ in $(seq 30); do
             curl --fail --silent --output /dev/null http://localhost:8080/health/ready && break
             sleep 1
