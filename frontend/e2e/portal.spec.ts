@@ -3,7 +3,7 @@
  * own, with stand-ins for GitHub and the admin API (`fakes.ts`).
  */
 
-import { createPublicKey } from 'node:crypto';
+import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
@@ -180,9 +180,13 @@ test('a key pair made in the browser never leaves it', async ({ page }, testInfo
       expect(request, 'a request carried the private key').not.toContain(secret);
     }
   }
-  const registered = (await heldIssuer(name)).keys[0].public_key;
-  const fromPem = createPublicKey(pem).export({ format: 'jwk' });
-  for (const key of [fromPem, jwk]) {
-    expect({ x: key.x, y: key.y }).toEqual({ x: registered.x, y: registered.y });
+  // Signing tests the private halves: the public point each file also holds would match anyway.
+  const registered = createPublicKey({
+    key: (await heldIssuer(name)).keys[0].public_key,
+    format: 'jwk',
+  });
+  const data = Buffer.from('a management token');
+  for (const key of [createPrivateKey(pem), createPrivateKey({ key: jwk, format: 'jwk' })]) {
+    expect(verify('sha256', data, registered, sign('sha256', data, key))).toBe(true);
   }
 });
