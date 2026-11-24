@@ -35,14 +35,14 @@ config = { version = "0.15", default-features = false }
 deadpool = { version = "0.13", default-features = false, features = ["managed", "rt_tokio_1"] }
 derive_more = { version = "2.1", features = ["deref", "display"] }
 diesel = { version = "2.3", features = ["postgres_backend", "serde_json", "time"] }
-diesel-async = { version = "0.9", features = ["deadpool", "migrations", "postgres"] }
+diesel-async = { version = "0.10", features = ["deadpool", "migrations", "postgres"] }
 diesel_migrations = "2.3"
 dotenvy = "0.15"
 hex = "0.4"
 http = "1.5"
 ipnet = "2.12"
 json-subscriber = { version = "0.3.1", features = ["tracing-opentelemetry-0-34"] }
-jsonwebtoken = { version = "11.1", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "12.0", features = ["aws_lc_rs"] }
 oauth2 = "5.0"
 opentelemetry = {
   version = "0.33",
