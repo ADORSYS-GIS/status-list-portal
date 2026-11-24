@@ -160,6 +160,26 @@ expression: openapi
               }
             }
           },
+          "429": {
+            "description": "Too many registrations in a short time.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds until the user may try again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "502": {
             "description": "The Status List Server did not complete the request.",
             "content": {
@@ -287,6 +307,26 @@ expression: openapi
           },
           "409": {
             "description": "The issuer changed while this request ran.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many deletions in a short time.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds until the user may try again."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -563,6 +603,26 @@ expression: openapi
               }
             }
           },
+          "429": {
+            "description": "Too many renewals in a short time.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds until the user may try again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "502": {
             "description": "The Status List Server did not complete the request.",
             "content": {
@@ -822,7 +882,7 @@ expression: openapi
         ],
         "responses": {
           "303": {
-            "description": "Redirects to the home page. After a failure, its `sign_in_error` parameter says why: `denied`, `expired`, `no_verified_email` or `unavailable`.",
+            "description": "Redirects to the home page. After a failure, its `sign_in_error` parameter says why: `denied`, `expired`, `no_verified_email`, `too_many` or `unavailable`.",
             "headers": {
               "location": {
                 "schema": {
@@ -972,6 +1032,7 @@ expression: openapi
           "body_read_failed",
           "unsupported_media_type",
           "payload_too_large",
+          "rate_limited",
           "bad_gateway",
           "service_unavailable",
           "request_timed_out",
@@ -1062,6 +1123,7 @@ expression: openapi
           "state",
           "created_at",
           "expires_at",
+          "expires_soon_from",
           "keys",
           "usage",
           "management_url",
@@ -1095,6 +1157,14 @@ expression: openapi
             "format": "date-time",
             "description": "When the issuer stops being active, unless it is renewed."
           },
+          "expires_soon_from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "From when the portal warns that the issuer expires soon: a week before `expires_at`, or\nthe last quarter of the sandbox lifetime when that is shorter. Renewing works at any\ntime. `null` when the issuer never expires."
+          },
           "id": {
             "type": "string",
             "description": "The `iss` of the issuer's management tokens.",
@@ -1105,7 +1175,7 @@ expression: openapi
             "items": {
               "$ref": "#/components/schemas/IssuerKeyResponse"
             },
-            "description": "Every key, including revoked keys, newest first."
+            "description": "Every key of the issuer, revoked ones included, newest first. Only `active` keys may\nsign its management tokens."
           },
           "management_url": {
             "type": "string",
@@ -1117,8 +1187,8 @@ expression: openapi
             "description": "Only `active` issuers can write status lists. Deleted issuers are `suspended`."
           },
           "usage": {
-            "$ref": "#/components/schemas/KeyUsageResponse",
-            "description": "Key use counted against this tier's limit."
+            "$ref": "#/components/schemas/IssuerUsageResponse",
+            "description": "What the issuer uses of its tier's limits."
           }
         }
       },
@@ -1131,17 +1201,12 @@ expression: openapi
           "expired"
         ]
       },
-      "KeyState": {
-        "type": "string",
-        "enum": [
-          "active",
-          "reserved",
-          "revoked"
-        ]
-      },
-      "KeyUsageResponse": {
+      "IssuerUsageResponse": {
         "type": "object",
+        "description": "What the issuer uses of its tier's limits.",
         "required": [
+          "lists",
+          "lists_limit",
           "keys",
           "keys_limit"
         ],
@@ -1149,6 +1214,8 @@ expression: openapi
           "keys": {
             "type": "integer",
             "format": "int32",
+            "description": "Keys that are not revoked.",
+            "example": 1,
             "minimum": 0
           },
           "keys_limit": {
@@ -1157,9 +1224,33 @@ expression: openapi
               "null"
             ],
             "format": "int32",
+            "description": "Most keys the issuer may have that are not revoked. `null` when there is no limit.",
+            "example": 5,
+            "minimum": 0
+          },
+          "lists": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Status lists the issuer holds.",
+            "example": 3,
+            "minimum": 0
+          },
+          "lists_limit": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Most status lists the issuer may hold.",
+            "example": 10,
             "minimum": 0
           }
         }
+      },
+      "KeyState": {
+        "type": "string",
+        "enum": [
+          "active",
+          "reserved",
+          "revoked"
+        ]
       },
       "MeResponse": {
         "type": "object",

@@ -60,8 +60,9 @@ function issuer(alg: SigningAlgorithm): Issuer {
     state: 'active',
     created_at: null,
     expires_at: null,
+    expires_soon_from: null,
     keys: [{ kid: 'the-kid', alg, state: 'active' }],
-    usage: { keys: 1, keys_limit: 2 },
+    usage: { lists: 0, lists_limit: 10, keys: 1, keys_limit: null },
     management_url: 'https://status.example.com',
     audience: 'https://status.example.com',
   };

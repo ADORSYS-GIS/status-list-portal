@@ -7,6 +7,7 @@ use crate::db;
 use crate::github::GitHub;
 use crate::metrics::Metrics;
 use crate::middleware::Frontend;
+use crate::rate_limiter::RateLimiter;
 use axum::extract::{FromRef, FromRequestParts, State};
 use axum_extra::extract::cookie::Key;
 use derive_more::Deref;
@@ -21,6 +22,7 @@ pub struct ServerContextInner {
     pub github: GitHub,
     pub admin_api: AdminApi,
     pub metrics: Metrics,
+    pub rate_limiter: RateLimiter,
     /// The built frontend, when the server serves it.
     pub frontend: Option<Arc<Frontend>>,
 }
@@ -43,6 +45,7 @@ impl ServerContext {
         metrics.track_db_pool(&db);
         let github = GitHub::new(&config.github, &config.server.origin)?;
         let admin_api = AdminApi::new(&config.admin_api, meter)?;
+        let rate_limiter = RateLimiter::new(config.rate_limits, metrics.clone());
         let frontend = match &config.server.frontend_dir {
             Some(dir) => Some(Arc::new(Frontend::load(dir)?)),
             None => None,
@@ -54,6 +57,7 @@ impl ServerContext {
             github,
             admin_api,
             metrics,
+            rate_limiter,
             frontend,
         }))
     }

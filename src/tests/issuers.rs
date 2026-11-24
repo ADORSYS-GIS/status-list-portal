@@ -1,3 +1,5 @@
+use std::num::NonZeroU16;
+
 use diesel::QueryResult;
 use diesel_async::AsyncConnection;
 use http::{Method, StatusCode};
@@ -27,12 +29,14 @@ fn shown_issuer_json() -> Value {
         "state": "active",
         "created_at": "2026-09-21T14:13:20Z",
         "expires_at": "2026-10-21T14:13:20Z",
+        // A week before, as the default sandbox lifetime is a month.
+        "expires_soon_from": "2026-10-14T14:13:20Z",
         "keys": [{
             "kid": "QoRTRSkzlInq0eOmPqJwmZ5OS9pxkN_SIf5KgZP2F8M",
             "alg": "ES256",
             "state": "active",
         }],
-        "usage": { "keys": 1, "keys_limit": null },
+        "usage": { "lists": 3, "lists_limit": 10, "keys": 1, "keys_limit": null },
         "management_url": MANAGEMENT_URL,
         "audience": MANAGEMENT_URL,
     })
@@ -294,6 +298,57 @@ async fn users_get_their_own_issuer() {
 
     assert_snapshot!(response.status(), @"200 OK");
     assert_eq!(response.json(), shown_issuer_json());
+}
+
+#[tokio::test]
+async fn a_limit_on_keys_is_shown() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_user("octocat").await;
+    let mut issuer = own_issuer_json(&user);
+    issuer["usage"] = json!({ "lists": 0, "lists_limit": 10, "keys": 2, "keys_limit": 5 });
+    admin_api_holds(app.admin_api(), &issuer).await;
+
+    let response = user.get(ISSUER_URL).await;
+
+    assert_snapshot!(response.status(), @"200 OK");
+    assert_eq!(
+        response.json()["usage"],
+        json!({ "lists": 0, "lists_limit": 10, "keys": 2, "keys_limit": 5 })
+    );
+}
+
+#[tokio::test]
+async fn a_short_lifetime_is_warned_about_in_its_last_quarter() {
+    let (app, _anon) = TestApp::init()
+        .with_sandbox(config::Sandbox {
+            lifetime_days: NonZeroU16::new(4).unwrap(),
+            ..config::Sandbox::default()
+        })
+        .empty()
+        .await;
+    let user = app.db_new_user("octocat").await;
+    admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
+
+    let response = user.get(ISSUER_URL).await;
+
+    assert_snapshot!(response.status(), @"200 OK");
+    // A day before `expires_at`, not a week: the whole lifetime is four days.
+    assert_eq!(response.json()["expires_soon_from"], "2026-10-20T14:13:20Z");
+}
+
+#[tokio::test]
+async fn an_issuer_that_never_expires_needs_no_renewing() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_user("octocat").await;
+    let mut issuer = own_issuer_json(&user);
+    issuer["expires_at"] = Value::Null;
+    admin_api_holds(app.admin_api(), &issuer).await;
+
+    let response = user.get(ISSUER_URL).await;
+
+    assert_snapshot!(response.status(), @"200 OK");
+    assert_eq!(response.json()["expires_at"], Value::Null);
+    assert_eq!(response.json()["expires_soon_from"], Value::Null);
 }
 
 #[tokio::test]
@@ -642,10 +697,12 @@ async fn renewing_keeps_an_issuer_active_for_another_lifetime() {
     let (app, _anon) = TestApp::init().empty().await;
     let user = app.db_new_registrant("octocat").await;
     admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
+    let mut renewed = own_issuer_json(&user);
+    renewed["usage"] = json!({ "lists": 4, "lists_limit": 10, "keys": 1, "keys_limit": null });
     Mock::given(method("PATCH"))
         .and(path(issuer_path(&own_issuer_json(&user))))
         .and(header("if-issuer-version", "7"))
-        .respond_with(issuer_response(200, "8", &own_issuer_json(&user)))
+        .respond_with(issuer_response(200, "8", &renewed))
         .expect(1)
         .mount(app.admin_api())
         .await;
@@ -653,6 +710,8 @@ async fn renewing_keeps_an_issuer_active_for_another_lifetime() {
     let response = user.post(&format!("{ISSUER_URL}/renew"), &json!({})).await;
 
     assert_snapshot!(response.status(), @"200 OK");
+    // The usage is the renewed issuer's, as the admin API returns it.
+    assert_eq!(response.json()["usage"], renewed["usage"]);
     let patch = &requests_with_method(app.admin_api(), "PATCH").await[0];
     assert_one_lifetime(&serde_json::from_slice(&patch.body).unwrap());
 }

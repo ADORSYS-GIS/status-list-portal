@@ -22,12 +22,13 @@ function issuer(keys = 1, limit: number | null = 2) {
     state: 'active' as const,
     created_at: null,
     expires_at: null,
+    expires_soon_from: null,
     keys: Array.from({ length: keys }, (_, index) => ({
       kid: `key-${index + 1}`,
       alg: 'ES256' as const,
       state: 'active' as const,
     })),
-    usage: { keys, keys_limit: limit },
+    usage: { lists: 0, lists_limit: 10, keys, keys_limit: limit },
     management_url: 'https://status.example.com',
     audience: 'https://status.example.com',
   };

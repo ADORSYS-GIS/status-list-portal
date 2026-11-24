@@ -1,6 +1,15 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
+    rate_limit_buckets (user_id, action) {
+        user_id -> Int8,
+        action -> Varchar,
+        tokens -> Int4,
+        last_refill -> Timestamptz,
+    }
+}
+
+diesel::table! {
     registrations (id) {
         id -> Int8,
         user_id -> Int8,
@@ -35,7 +44,13 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(rate_limit_buckets -> users (user_id));
 diesel::joinable!(registrations -> users (user_id));
 diesel::joinable!(terms_acceptances -> users (user_id));
 
-diesel::allow_tables_to_appear_in_same_query!(registrations, terms_acceptances, users,);
+diesel::allow_tables_to_appear_in_same_query!(
+    rate_limit_buckets,
+    registrations,
+    terms_acceptances,
+    users,
+);

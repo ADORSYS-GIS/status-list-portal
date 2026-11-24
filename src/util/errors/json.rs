@@ -4,6 +4,7 @@ use axum::Json;
 use axum::response::{IntoResponse, Response};
 use derive_more::Display;
 use http::StatusCode;
+use http::header::RETRY_AFTER;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -81,6 +82,8 @@ pub enum ApiErrorCode {
     UnsupportedMediaType,
     /// The request body exceeds the size limit.
     PayloadTooLarge,
+    /// Too many requests of this kind in a short time. `Retry-After` says when to try again.
+    RateLimited,
     /// The Status List Server did not complete the request.
     BadGateway,
     /// A dependency is temporarily unavailable.
@@ -117,6 +120,7 @@ impl ApiErrorCode {
             InvalidJson | InvalidQuery | BodyReadFailed => StatusCode::BAD_REQUEST,
             UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            RateLimited => StatusCode::TOO_MANY_REQUESTS,
             BadGateway => StatusCode::BAD_GATEWAY,
             SandboxIssuerLimitReached
             | IssuerRegistrationInProgress
@@ -164,6 +168,39 @@ struct CustomApiError {
 impl AppError for CustomApiError {
     fn response(&self) -> Response {
         json_error(self.code, &self.detail)
+    }
+}
+
+/// Too many requests in a short time: `429 Too Many Requests`, with `Retry-After` saying in how
+/// many seconds to try again.
+pub fn too_many_requests(detail: &'static str, retry_after: time::Duration) -> BoxedAppError {
+    Box::new(TooManyRequests {
+        detail,
+        retry_after,
+    })
+}
+
+#[derive(Debug, Display)]
+#[display("{detail}")]
+struct TooManyRequests {
+    detail: &'static str,
+    retry_after: time::Duration,
+}
+
+impl AppError for TooManyRequests {
+    fn response(&self) -> Response {
+        // Rounded up, so that a client that waits as long finds a token.
+        let whole = self.retry_after.whole_seconds();
+        let seconds = if self.retry_after > time::Duration::seconds(whole) {
+            whole + 1
+        } else {
+            whole
+        };
+        let detail = format!("{} Please try again later.", self.detail);
+        let code = ApiErrorCode::RateLimited;
+        let body = Json(ApiErrorResponse::new(code, detail));
+        let retry_after = [(RETRY_AFTER, seconds.max(1).to_string())];
+        (code.status(), retry_after, body).into_response()
     }
 }
 
@@ -274,6 +311,7 @@ mod tests {
                 "payload_too_large",
                 StatusCode::PAYLOAD_TOO_LARGE,
             ),
+            (RateLimited, "rate_limited", StatusCode::TOO_MANY_REQUESTS),
             (BadGateway, "bad_gateway", StatusCode::BAD_GATEWAY),
             (
                 ServiceUnavailable,

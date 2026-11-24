@@ -1,0 +1,21 @@
+# Only what the image's build needs. Secrets, local settings and build output stay out.
+*
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!migrations/
+!src/
+!package.json
+!bun.lock
+!frontend/
+**/node_modules/
+frontend/build/
+frontend/.svelte-kit/
+# A saved GitHub session, and test traces that hold cookies and request bodies.
+frontend/e2e/.auth/
+frontend/test-results/
+frontend/playwright-report/
+**/.env
+**/.env.*
+**/*.pem
+**/*.key

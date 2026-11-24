@@ -295,7 +295,7 @@ export interface components {
          *     New codes may be added. Clients must handle an unknown code as they would its HTTP status.
          * @enum {string}
          */
-        ApiErrorCode: "unauthorized" | "not_found" | "method_not_allowed" | "cross_origin_forbidden" | "terms_not_accepted" | "terms_changed" | "registration_limit_reached" | "active_issuer_limit_reached" | "sandbox_issuer_limit_reached" | "issuer_registration_in_progress" | "key_material_in_use" | "key_limit_reached" | "invalid_public_key" | "private_key_submitted" | "invalid_display_name" | "issuer_changed" | "issuer_not_renewable" | "registration_being_decided" | "registration_already_decided" | "invalid_rejection_reason" | "invalid_json" | "invalid_request_body" | "invalid_query" | "body_read_failed" | "unsupported_media_type" | "payload_too_large" | "bad_gateway" | "service_unavailable" | "request_timed_out" | "internal_error";
+        ApiErrorCode: "unauthorized" | "not_found" | "method_not_allowed" | "cross_origin_forbidden" | "terms_not_accepted" | "terms_changed" | "registration_limit_reached" | "active_issuer_limit_reached" | "sandbox_issuer_limit_reached" | "issuer_registration_in_progress" | "key_material_in_use" | "key_limit_reached" | "invalid_public_key" | "private_key_submitted" | "invalid_display_name" | "issuer_changed" | "issuer_not_renewable" | "registration_being_decided" | "registration_already_decided" | "invalid_rejection_reason" | "invalid_json" | "invalid_request_body" | "invalid_query" | "body_read_failed" | "unsupported_media_type" | "payload_too_large" | "rate_limited" | "bad_gateway" | "service_unavailable" | "request_timed_out" | "internal_error";
         ApiErrorDetail: {
             /** @description Stable machine-readable reason. Clients may branch on this value. */
             code: components["schemas"]["ApiErrorCode"];
@@ -337,11 +337,21 @@ export interface components {
              */
             expires_at: string | null;
             /**
+             * Format: date-time
+             * @description From when the portal warns that the issuer expires soon: a week before `expires_at`, or
+             *     the last quarter of the sandbox lifetime when that is shorter. Renewing works at any
+             *     time. `null` when the issuer never expires.
+             */
+            expires_soon_from: string | null;
+            /**
              * @description The `iss` of the issuer's management tokens.
              * @example 6f1c2a9e-0b7d-4c1e-9a53-2f8d7e4b1c00
              */
             id: string;
-            /** @description Every key, including revoked keys, newest first. */
+            /**
+             * @description Every key of the issuer, revoked ones included, newest first. Only `active` keys may
+             *     sign its management tokens.
+             */
             keys: components["schemas"]["IssuerKeyResponse"][];
             /**
              * @description Where the issuer's management tokens go.
@@ -350,22 +360,43 @@ export interface components {
             management_url: string;
             /** @description Only `active` issuers can write status lists. Deleted issuers are `suspended`. */
             state: components["schemas"]["IssuerState"];
-            /** @description Key use counted against this tier's limit. */
-            usage: components["schemas"]["KeyUsageResponse"];
+            /** @description What the issuer uses of its tier's limits. */
+            usage: components["schemas"]["IssuerUsageResponse"];
         };
         /**
          * @description Only `active` issuers can write status lists.
          * @enum {string}
          */
         IssuerState: "active" | "suspended" | "expired";
+        /** @description What the issuer uses of its tier's limits. */
+        IssuerUsageResponse: {
+            /**
+             * Format: int32
+             * @description Keys that are not revoked.
+             * @example 1
+             */
+            keys: number;
+            /**
+             * Format: int32
+             * @description Most keys the issuer may have that are not revoked. `null` when there is no limit.
+             * @example 5
+             */
+            keys_limit: number | null;
+            /**
+             * Format: int32
+             * @description Status lists the issuer holds.
+             * @example 3
+             */
+            lists: number;
+            /**
+             * Format: int32
+             * @description Most status lists the issuer may hold.
+             * @example 10
+             */
+            lists_limit: number;
+        };
         /** @enum {string} */
         KeyState: "active" | "reserved" | "revoked";
-        KeyUsageResponse: {
-            /** Format: int32 */
-            keys: number;
-            /** Format: int32 */
-            keys_limit: number | null;
-        };
         MeResponse: {
             /**
              * @description Verified primary email on GitHub.
@@ -569,6 +600,17 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
+            /** @description Too many registrations in a short time. */
+            429: {
+                headers: {
+                    /** @description Seconds until the user may try again. */
+                    "retry-after"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
             /** @description The Status List Server did not complete the request. */
             502: {
                 headers: {
@@ -679,6 +721,17 @@ export interface operations {
             /** @description The issuer changed while this request ran. */
             409: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Too many deletions in a short time. */
+            429: {
+                headers: {
+                    /** @description Seconds until the user may try again. */
+                    "retry-after"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -890,6 +943,17 @@ export interface operations {
             /** @description The issuer is deleted, the account has as many active issuers as allowed, or the issuer changed while this request ran. */
             409: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Too many renewals in a short time. */
+            429: {
+                headers: {
+                    /** @description Seconds until the user may try again. */
+                    "retry-after"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -1115,7 +1179,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirects to the home page. After a failure, its `sign_in_error` parameter says why: `denied`, `expired`, `no_verified_email` or `unavailable`. */
+            /** @description Redirects to the home page. After a failure, its `sign_in_error` parameter says why: `denied`, `expired`, `no_verified_email`, `too_many` or `unavailable`. */
             303: {
                 headers: {
                     location?: string;
@@ -1209,7 +1273,7 @@ type ReadonlyArray<T> = [
 ] extends [
     unknown[]
 ] ? Readonly<Exclude<T, undefined>> : Readonly<Exclude<T, undefined>[]>;
-export const apiErrorCodeValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["ApiErrorCode"]> = ["unauthorized", "not_found", "method_not_allowed", "cross_origin_forbidden", "terms_not_accepted", "terms_changed", "registration_limit_reached", "active_issuer_limit_reached", "sandbox_issuer_limit_reached", "issuer_registration_in_progress", "key_material_in_use", "key_limit_reached", "invalid_public_key", "private_key_submitted", "invalid_display_name", "issuer_changed", "issuer_not_renewable", "registration_being_decided", "registration_already_decided", "invalid_rejection_reason", "invalid_json", "invalid_request_body", "invalid_query", "body_read_failed", "unsupported_media_type", "payload_too_large", "bad_gateway", "service_unavailable", "request_timed_out", "internal_error"];
+export const apiErrorCodeValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["ApiErrorCode"]> = ["unauthorized", "not_found", "method_not_allowed", "cross_origin_forbidden", "terms_not_accepted", "terms_changed", "registration_limit_reached", "active_issuer_limit_reached", "sandbox_issuer_limit_reached", "issuer_registration_in_progress", "key_material_in_use", "key_limit_reached", "invalid_public_key", "private_key_submitted", "invalid_display_name", "issuer_changed", "issuer_not_renewable", "registration_being_decided", "registration_already_decided", "invalid_rejection_reason", "invalid_json", "invalid_request_body", "invalid_query", "body_read_failed", "unsupported_media_type", "payload_too_large", "rate_limited", "bad_gateway", "service_unavailable", "request_timed_out", "internal_error"];
 export const issuerStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["IssuerState"]> = ["active", "suspended", "expired"];
 export const keyStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["KeyState"]> = ["active", "reserved", "revoked"];
 export const registrationStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["RegistrationState"]> = ["pending", "approved", "rejected"];

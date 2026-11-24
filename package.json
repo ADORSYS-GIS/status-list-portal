@@ -13,7 +13,8 @@
     "lint": "bun --bun run --cwd frontend lint",
     "playwright": "bun --bun run --cwd frontend playwright",
     "preview": "bun --bun run --cwd frontend preview",
-    "test": "bun --bun run --cwd frontend test"
+    "test": "bun --bun run --cwd frontend test",
+    "test:e2e": "bun --bun run --cwd frontend test:e2e"
   },
   "packageManager": "bun@1.4.4"
 }

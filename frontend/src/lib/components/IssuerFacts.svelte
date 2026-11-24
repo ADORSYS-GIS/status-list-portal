@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { Issuer } from '#lib/api/index.ts';
-  import { expiryText, formatDateTime } from '#lib/format.ts';
+  import { formatDateTime, usageText } from '#lib/format.ts';
   import { signingKey } from '#lib/keys.ts';
 
   import CopyButton from './CopyButton.svelte';
+  import Expiry from './Expiry.svelte';
 
   let { issuer, selectedKid }: { issuer: Issuer; selectedKid?: string } = $props();
 
@@ -33,7 +34,15 @@
   </div>
   <div class="fact">
     <dt>Expires</dt>
-    <dd>{expiryText(issuer.expires_at)}</dd>
+    <dd><Expiry {issuer} /></dd>
+  </div>
+  <div class="fact">
+    <dt>Status lists</dt>
+    <dd>{usageText(issuer.usage.lists, issuer.usage.lists_limit)}</dd>
+  </div>
+  <div class="fact">
+    <dt>Keys in use</dt>
+    <dd>{usageText(issuer.usage.keys, issuer.usage.keys_limit)}</dd>
   </div>
   {#if issuer.created_at}
     <div class="fact">
