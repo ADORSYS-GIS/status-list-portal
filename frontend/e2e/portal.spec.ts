@@ -44,13 +44,18 @@ async function publicKey(): Promise<string> {
   return JSON.stringify({ kty, crv, x, y });
 }
 
-/** Fills in the registration form, from the list of issuers, and sends it. */
-async function register(page: Page, name: string, key: string) {
+/**
+ * Fills in the registration form, from the list of issuers, and sends it. The form asks for
+ * the terms until the account has accepted them.
+ */
+async function register(page: Page, name: string, key: string, { termsAccepted = false } = {}) {
   await page.getByRole('link', { name: 'Register an issuer' }).click();
   await page.getByLabel('Display name').fill(name);
   await page.getByLabel('Public key').fill(key);
   const terms = page.getByLabel('I have read and accept the terms of use');
-  if (await terms.isVisible()) {
+  if (termsAccepted) {
+    await expect(terms).toBeHidden();
+  } else {
     await terms.check();
   }
   await page.getByRole('button', { name: 'Register issuer' }).click();
@@ -124,7 +129,7 @@ test('a key registers one issuer only', async ({ page }, testInfo) => {
     .getByRole('link', { name: 'Issuers' })
     .click();
 
-  await register(page, `Second ${testInfo.testId}`, key);
+  await register(page, `Second ${testInfo.testId}`, key, { termsAccepted: true });
 
   await expect(
     page.getByText('This public key is already registered, maybe for an issuer you deleted'),
