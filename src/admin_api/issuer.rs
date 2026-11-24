@@ -134,6 +134,11 @@ impl Owner {
     pub fn github(id: i64) -> Self {
         Self(format!("github|{id}"))
     }
+
+    /// The GitHub account's numeric id, if a GitHub account owns the issuer.
+    pub fn github_id(&self) -> Option<i64> {
+        self.0.strip_prefix("github|")?.parse().ok()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

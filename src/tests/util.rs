@@ -1,4 +1,5 @@
 pub mod admin_api;
+pub mod mailpit;
 pub mod telemetry;
 mod test_app;
 mod test_db;
@@ -15,6 +16,18 @@ use http::header::{AsHeaderName, CONTENT_TYPE, COOKIE, SET_COOKIE};
 use http::{HeaderMap, Method, Request, StatusCode};
 use status_list_portal::models::User;
 use tower::ServiceExt;
+
+/// A test setting, from the environment or from `.env`. Reading `.env` leaves the process
+/// environment alone, which other test threads may be reading.
+pub fn test_setting(name: &str) -> Option<String> {
+    std::env::var(name).ok().or_else(|| {
+        dotenvy::dotenv_iter()
+            .ok()?
+            .map(|item| item.expect(".env is malformed"))
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value)
+    })
+}
 
 /// A response with its body read.
 pub struct Response {

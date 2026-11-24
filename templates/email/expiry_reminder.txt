@@ -1,0 +1,23 @@
+{% extends "email/layout.txt" %}
+
+{%- block content -%}
+Your sandbox issuer expires {{ email.when }}
+
+{{ email.issuer_name }} stops being active on {{ email.expires }}.
+Renew it before then to keep it working.
+
+Issuer:     {{ email.issuer_name }}
+Issuer ID:  {{ email.issuer_id }}
+Expires:    {{ email.expires }}
+
+Renew the issuer: {{ email.issuer_url }}
+
+Once it has expired, renewing it brings it back only while the sandbox has
+room for it. If you no longer need the issuer, you can ignore this email.
+{%- endblock -%}
+
+{%- block reason -%}
+You get this email because you registered this issuer on the Status List
+Portal, which sends reminders to your GitHub account's primary email. The
+portal emails you only about your issuers.
+{%- endblock -%}

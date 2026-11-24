@@ -1,0 +1,33 @@
+{% extends "email/layout.html" %}
+
+{% block title %}Your sandbox issuer expires {{ email.when }}{% endblock %}
+
+{% block preheader %}{{ email.issuer_name }} stops being active on {{ email.expires }}. Renew it in the portal to keep it working.{% endblock %}
+
+{% block content %}
+            <h1 class="text" style="margin: 0 0 16px; color: #101828; font-size: 22px; line-height: 30px; font-weight: 600;">Your sandbox issuer expires {{ email.when }}</h1>
+            <p class="text" style="margin: 0 0 24px; color: #101828;"><strong>{{ email.issuer_name }}</strong> stops being active on <strong>{{ email.expires }}</strong>. Renew it before then to keep it working.</p>
+            <table role="presentation" class="facts" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f1f5f9; border-radius: 6px; margin: 0 0 24px;">
+              <tr>
+                <td style="padding: 16px 16px 4px;">
+                  <p class="muted" style="margin: 0; color: #475569; font-size: 13px; line-height: 20px;">Issuer</p>
+                  <p class="text" style="margin: 0 0 12px; color: #101828; font-size: 15px; line-height: 22px;">{{ email.issuer_name }}</p>
+                  <p class="muted" style="margin: 0; color: #475569; font-size: 13px; line-height: 20px;">Issuer ID</p>
+                  <p class="text" style="margin: 0 0 12px; color: #101828; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 20px; word-break: break-all;">{{ email.issuer_id }}</p>
+                  <p class="muted" style="margin: 0; color: #475569; font-size: 13px; line-height: 20px;">Expires</p>
+                  <p class="text" style="margin: 0 0 12px; color: #101828; font-size: 15px; line-height: 22px;">{{ email.expires }}</p>
+                </td>
+              </tr>
+            </table>
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 24px;">
+              <tr>
+                <td class="button" style="background-color: #144587; border-radius: 6px;">
+                  <a href="{{ email.issuer_url }}" class="button-label" style="display: inline-block; padding: 12px 24px; color: #ffffff; font-size: 16px; line-height: 24px; font-weight: 600; text-decoration: none;">Renew the issuer</a>
+                </td>
+              </tr>
+            </table>
+            <p class="muted" style="margin: 0 0 16px; color: #475569; font-size: 14px; line-height: 22px;">Once it has expired, renewing it brings it back only while the sandbox has room for it. If you no longer need the issuer, you can ignore this email.</p>
+            <p class="muted" style="margin: 0; color: #475569; font-size: 13px; line-height: 20px;">If the button does not work, open <a href="{{ email.issuer_url }}" class="link" style="color: #144587; word-break: break-all;">{{ email.issuer_url }}</a></p>
+{% endblock %}
+
+{% block reason %}You get this email because you registered this issuer on the Status List Portal, which sends reminders to your GitHub account's primary email. The portal emails you only about your issuers.{% endblock %}

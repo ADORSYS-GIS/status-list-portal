@@ -228,19 +228,7 @@ fn name_prefix() -> &'static str {
 }
 
 fn server_url() -> Url {
-    let url = std::env::var(URL_VARIABLE)
-        .ok()
-        .or_else(url_from_dotenv)
+    let url = super::test_setting(URL_VARIABLE)
         .unwrap_or_else(|| panic!("{URL_VARIABLE} must be set, in the environment or in .env"));
     Url::parse(&url).unwrap_or_else(|_| panic!("{URL_VARIABLE} is not a valid URL"))
-}
-
-/// Reads the URL from `.env` without changing the process environment, which other test
-/// threads may be reading.
-fn url_from_dotenv() -> Option<String> {
-    dotenvy::dotenv_iter()
-        .ok()?
-        .map(|item| item.expect(".env is malformed"))
-        .find(|(key, _)| key == URL_VARIABLE)
-        .map(|(_, value)| value)
 }

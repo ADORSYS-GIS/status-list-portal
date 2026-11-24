@@ -53,6 +53,18 @@ impl User {
             .await
     }
 
+    /// The accounts of these GitHub account ids that ever signed in.
+    pub async fn find_by_github_ids(
+        conn: &mut AsyncPgConnection,
+        gh_ids: &[i64],
+    ) -> QueryResult<Vec<User>> {
+        users::table
+            .filter(users::gh_id.eq_any(gh_ids))
+            .select(User::as_select())
+            .load(conn)
+            .await
+    }
+
     /// Ends every session of the account, if `epoch` is still current. A stale epoch
     /// changes nothing, so an old cookie cannot sign anyone out.
     pub async fn end_sessions(

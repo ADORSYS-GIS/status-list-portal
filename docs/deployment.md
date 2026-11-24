@@ -137,7 +137,7 @@ spec:
         defaultMode: 0440
 ```
 
-Restrict the network too, such as with a NetworkPolicy: only the ingress controller needs to reach the portal, since a client that connects directly bypasses the proxy's timeouts. The portal needs only its database, the Status List Server's admin API, GitHub, and the OpenTelemetry Collector if it exports telemetry.
+Restrict the network too, such as with a NetworkPolicy: only the ingress controller needs to reach the portal, since a client that connects directly bypasses the proxy's timeouts. The portal needs only its database, the Status List Server's admin API, GitHub, and the OpenTelemetry Collector if it exports telemetry. The reminder job needs the database, the admin API and the SMTP server.
 
 ## Behind a proxy
 
@@ -266,6 +266,70 @@ Registering, renewing and deleting issuers are limited per developer, in the dat
 Finishing a sign-in is limited per client network: an IPv4 address, or an IPv6 /64. Only sign-ins that started on the portal count. Each replica counts on its own, so with three replicas a network may sign in up to three times as often. A replica counts up to 10,000 networks at once; to count another, it forgets the one it counted longest ago, which only gives that network its full allowance back. No limit counts all networks together: anyone could use it up and lock everyone out. A client with many networks shows up as many `sign_in` refusals in `portal.rate_limited`: alert on those.
 
 `.env.template` lists the defaults and their settings. The limits slow down one developer or one network. Someone with many GitHub accounts could still take the sandbox's places one account at a time; if that happens, `APP_SANDBOX__MANUAL_APPROVAL` puts every registration in front of an operator.
+
+## Expiry reminders
+
+`portal send-reminders` emails developers whose sandbox issuers expire within 7 days, and again within a day. Run it every hour as a CronJob; the server sends no email. A reminder goes out once per issuer, window and expiry date, so a rerun or an overlapping run sends nothing twice, and a renewed issuer is reminded again before its new expiry. A delivery that fails for a reason that may pass, a connection error, a timeout or an SMTP 4xx answer, is tried again by the next runs, an hour apart, 4 tries in all. An SMTP 5xx answer, such as for an unknown mailbox, gives it up at once. A run exits with an error when it gives a reminder up, or cannot reach the database, the admin API or the SMTP server. The `reminders` table keeps each reminder's tries and the SMTP server's last answer, which logs leave out since it can name the recipient.
+
+Besides the database and admin API settings, and `APP_SERVER__ORIGIN`, which the emails link to, the job reads:
+
+| Setting | Example |
+| --- | --- |
+| `APP_EMAIL__SMTP_URL_FILE` | a file holding `smtp://user:password@smtp.eu.mailgun.org:587?tls=required` |
+| `APP_EMAIL__FROM` | `Status List Portal <noreply@portal.example.com>` |
+| `APP_EMAIL__REPLY_TO` | optional |
+
+`smtps://` connects over TLS, and `?tls=required` upgrades the connection with STARTTLS. Production refuses SMTP in the clear unless the server listens on loopback. Any provider that takes SMTP works, and changing provider changes these settings only. With Mailgun, use the sending domain's SMTP credentials and turn off its open and click tracking, which would add a tracking pixel and rewrite every link. Publish the SPF, DKIM and DMARC records the provider gives for the sender's domain, or mailboxes may take the emails for spam. The emails show the wordmark at `APP_SERVER__ORIGIN/email/adorsys-logo.png`, which the server serves with the frontend.
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: status-list-portal-reminders
+spec:
+  schedule: "17 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      # The next run retries what failed; restarting at once would only spend tries.
+      backoffLimit: 0
+      activeDeadlineSeconds: 1800
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          # The server's pod and container security contexts apply here too.
+          containers:
+            - name: send-reminders
+              image: status-list-portal
+              args: [send-reminders]
+              env:
+                - name: APP_SERVER__ORIGIN
+                  value: https://portal.example.com
+                - name: APP_DATABASE__URL_FILE
+                  value: /run/secrets/portal-reminders/database-url
+                - name: APP_ADMIN_API__URL
+                  value: http://status-list-server-admin:8002
+                - name: APP_ADMIN_API__SIGNING_KEY_FILE
+                  value: /run/secrets/portal-reminders/admin-key.pem
+                # ... the other APP_ADMIN_API__* settings, as the server has them.
+                - name: APP_EMAIL__SMTP_URL_FILE
+                  value: /run/secrets/portal-reminders/smtp-url
+                - name: APP_EMAIL__FROM
+                  value: Status List Portal <noreply@portal.example.com>
+              volumeMounts:
+                - name: secrets
+                  mountPath: /run/secrets/portal-reminders
+                  readOnly: true
+          volumes:
+            # Only what the job reads: the server's database URL, its admin key and the
+            # SMTP URL. The session key and the GitHub secret stay with the server.
+            - name: secrets
+              secret:
+                secretName: status-list-portal-reminders
+                defaultMode: 0440
+```
 
 ## Telemetry
 

@@ -66,8 +66,17 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      mailpit:
+        image: axllent/mailpit:v1.34.0
+        env:
+          MP_ENABLE_CHAOS: "true"
+        ports:
+          - 1025:1025
+          - 8025:8025
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/portal_test
+      TEST_SMTP_URL: smtp://localhost:1025
+      TEST_MAILPIT_URL: http://localhost:8025
     steps:
       - name: Fetch Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

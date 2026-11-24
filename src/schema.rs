@@ -24,6 +24,21 @@ diesel::table! {
 }
 
 diesel::table! {
+    reminders (id) {
+        id -> Int8,
+        issuer_id -> Varchar,
+        window_days -> Int2,
+        expires_at -> Timestamptz,
+        user_id -> Int8,
+        attempts -> Int2,
+        created_at -> Timestamptz,
+        sent_at -> Nullable<Timestamptz>,
+        gave_up_at -> Nullable<Timestamptz>,
+        last_error -> Nullable<Varchar>,
+    }
+}
+
+diesel::table! {
     terms_acceptances (user_id, terms_version) {
         user_id -> Int8,
         terms_version -> Varchar,
@@ -46,11 +61,13 @@ diesel::table! {
 
 diesel::joinable!(rate_limit_buckets -> users (user_id));
 diesel::joinable!(registrations -> users (user_id));
+diesel::joinable!(reminders -> users (user_id));
 diesel::joinable!(terms_acceptances -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     rate_limit_buckets,
     registrations,
+    reminders,
     terms_acceptances,
     users,
 );

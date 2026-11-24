@@ -1,0 +1,5 @@
+{% block content %}{% endblock %}
+
+--
+{% block reason %}{% endblock %}
+Status List Portal by adorsys: {{ layout.origin }}
