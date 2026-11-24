@@ -15,6 +15,9 @@
     children: Snippet;
   } = $props();
 
+  // Unique to each dialog, so that a page with several names each by its own title.
+  const id = $props.id();
+
   let dialog: HTMLDialogElement;
 
   /** Opens the dialog. It keeps focus inside until it closes, then gives focus back. */
@@ -28,8 +31,8 @@
   }
 </script>
 
-<dialog bind:this={dialog} aria-labelledby="confirm-title">
-  <h2 id="confirm-title">{title}</h2>
+<dialog bind:this={dialog} aria-labelledby="{id}-title">
+  <h2 id="{id}-title">{title}</h2>
   {@render children()}
   <div class="actions">
     <button type="button" class="button" onclick={() => dialog.close()}>{cancelLabel}</button>
