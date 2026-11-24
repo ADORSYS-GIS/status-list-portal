@@ -98,10 +98,17 @@ pub struct MigrationConfig {
     pub database: Database,
 }
 
+/// The only secret the migration job needs: the other secrets' files need not be mounted.
+const MIGRATION_SECRETS: [&str; 1] = ["database.url"];
+
 impl MigrationConfig {
-    /// Reads the database settings as [`Config::from_environment`] does, secret files included.
+    /// Reads the database settings as [`Config::from_environment`] does.
     pub fn from_environment() -> Result<Self, ConfigError> {
-        load(process_vars())
+        Self::from_vars(process_vars())
+    }
+
+    fn from_vars(vars: HashMap<String, String>) -> Result<Self, ConfigError> {
+        load(vars, &MIGRATION_SECRETS)
     }
 }
 
@@ -382,7 +389,7 @@ impl Config {
 
     /// Reads the configuration from `vars`, as if they were the process environment.
     fn from_vars(vars: HashMap<String, String>) -> Result<Self, ConfigError> {
-        load::<Self>(vars)?.refuse_stand_ins()
+        load::<Self>(vars, &secret_files::SECRET_SETTINGS)?.refuse_stand_ins()
     }
 
     /// Refuses, in production, a stand-in for GitHub: end-to-end tests sign in through one.
@@ -408,13 +415,16 @@ fn process_vars() -> HashMap<String, String> {
         .collect()
 }
 
-/// Reads settings from `vars`, as if they were the process environment, and from the secret
-/// files they name.
-fn load<T: DeserializeOwned>(vars: HashMap<String, String>) -> Result<T, ConfigError> {
+/// Reads settings from `vars`, as if they were the process environment, and from the files
+/// they name for `secrets`.
+fn load<T: DeserializeOwned>(
+    vars: HashMap<String, String>,
+    secrets: &[&'static str],
+) -> Result<T, ConfigError> {
     let defaults = ::config::Config::try_from(&Defaults {
         rate_limits: RateLimits::default(),
     })?;
-    let builder = secret_files::read(&vars)?
+    let builder = secret_files::read(&vars, secrets)?
         .into_iter()
         .try_fold(::config::Config::builder(), |builder, (setting, value)| {
             builder.set_override(setting, value)
@@ -422,7 +432,7 @@ fn load<T: DeserializeOwned>(vars: HashMap<String, String>) -> Result<T, ConfigE
     // The `_FILE` variables are read above; as settings, they would be unknown.
     let vars = vars
         .into_iter()
-        .filter(|(name, _)| !secret_files::is_file_variable(name))
+        .filter(|(name, _)| !secret_files::is_file_variable(name, secrets))
         .collect();
     builder
         .add_source(defaults)
@@ -602,7 +612,7 @@ mod tests {
             ),
             ("APP_LOG_FORMAT".to_owned(), "json".to_owned()),
         ];
-        let config: MigrationConfig = super::load(vars.into_iter().collect()).unwrap();
+        let config = MigrationConfig::from_vars(vars.into_iter().collect()).unwrap();
         assert_eq!(config.env, Env::Production);
         assert_eq!(config.log_format, LogFormat::Json);
         assert_eq!(config.database.url.expose_secret(), DATABASE_URL);
@@ -759,8 +769,28 @@ mod tests {
             file.to_str().unwrap().to_owned(),
         )];
 
-        let config: Result<MigrationConfig, _> = super::load(vars.into_iter().collect());
+        let config = MigrationConfig::from_vars(vars.into_iter().collect());
         std::fs::remove_file(&file).unwrap();
+
+        assert_eq!(config.unwrap().database.url.expose_secret(), DATABASE_URL);
+    }
+
+    #[test]
+    fn the_migration_job_needs_no_other_secret_file() {
+        let vars = [
+            ("APP_DATABASE__URL", DATABASE_URL),
+            ("APP_SESSION__KEY_FILE", "/nonexistent/session-key"),
+            (
+                "APP_GITHUB__CLIENT_SECRET_FILE",
+                "/nonexistent/client-secret",
+            ),
+        ];
+
+        let config = MigrationConfig::from_vars(
+            vars.into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect(),
+        );
 
         assert_eq!(config.unwrap().database.url.expose_secret(), DATABASE_URL);
     }

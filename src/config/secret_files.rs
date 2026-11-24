@@ -8,16 +8,19 @@ use std::collections::HashMap;
 use ::config::ConfigError;
 
 /// The settings whose values may come from a file, by path.
-const SECRET_SETTINGS: [&str; 3] = ["database.url", "session.key", "github.client_secret"];
+pub(super) const SECRET_SETTINGS: [&str; 3] =
+    ["database.url", "session.key", "github.client_secret"];
 
-/// The values that `_FILE` variables in `vars` point to, by setting path. A file's final line
-/// break is dropped, since `echo` and most editors add one.
+/// The values that the `_FILE` variables of `settings` in `vars` point to, by setting path. A
+/// file's final line break is dropped, since `echo` and most editors add one.
 pub(super) fn read(
     vars: &HashMap<String, String>,
+    settings: &[&'static str],
 ) -> Result<Vec<(&'static str, String)>, ConfigError> {
     let set = |name: &str| vars.get(name).filter(|value| !value.is_empty());
-    SECRET_SETTINGS
-        .into_iter()
+    settings
+        .iter()
+        .copied()
         .filter_map(|setting| {
             let variable = variable(setting);
             let file_variable = format!("{variable}_FILE");
@@ -36,11 +39,11 @@ pub(super) fn read(
         .collect()
 }
 
-/// Whether `name` is the `_FILE` variable of a secret setting, such as
+/// Whether `name` is the `_FILE` variable of one of `settings`, such as
 /// `APP_SESSION__KEY_FILE`.
-pub(super) fn is_file_variable(name: &str) -> bool {
-    SECRET_SETTINGS
-        .into_iter()
+pub(super) fn is_file_variable(name: &str, settings: &[&str]) -> bool {
+    settings
+        .iter()
         .any(|setting| name.strip_suffix("_FILE") == Some(variable(setting).as_str()))
 }
 
@@ -114,7 +117,7 @@ mod tests {
             ("APP_DATABASE__URL_FILE", &url.path()),
         ]);
 
-        let values = read(&with_files).unwrap();
+        let values = read(&with_files, &SECRET_SETTINGS).unwrap();
 
         assert_eq!(
             values,
@@ -132,7 +135,7 @@ mod tests {
             ("APP_SESSION__KEY", "0123abcd"),
             ("APP_SESSION__KEY_FILE", ""),
         ]);
-        assert_eq!(read(&without_files).unwrap(), []);
+        assert_eq!(read(&without_files, &SECRET_SETTINGS).unwrap(), []);
     }
 
     #[test]
@@ -143,7 +146,7 @@ mod tests {
             ("APP_SESSION__KEY_FILE", &key.path()),
         ]);
 
-        let error = read(&both).unwrap_err();
+        let error = read(&both, &SECRET_SETTINGS).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -155,11 +158,13 @@ mod tests {
     fn missing_and_empty_files_are_refused() {
         let empty = SecretFile::new("\n");
         let empty_file = vars(&[("APP_DATABASE__URL_FILE", &empty.path())]);
-        let error = read(&empty_file).unwrap_err().to_string();
+        let error = read(&empty_file, &SECRET_SETTINGS).unwrap_err().to_string();
         assert!(error.ends_with("is empty"), "{error}");
 
         let missing_file = vars(&[("APP_DATABASE__URL_FILE", "/nonexistent/secret")]);
-        let error = read(&missing_file).unwrap_err().to_string();
+        let error = read(&missing_file, &SECRET_SETTINGS)
+            .unwrap_err()
+            .to_string();
         assert!(
             error.starts_with("APP_DATABASE__URL_FILE: cannot read /nonexistent/secret"),
             "{error}"
@@ -168,9 +173,12 @@ mod tests {
 
     #[test]
     fn only_secret_settings_have_file_variables() {
-        assert!(is_file_variable("APP_SESSION__KEY_FILE"));
-        assert!(is_file_variable("APP_DATABASE__URL_FILE"));
-        assert!(!is_file_variable("APP_SESSION__KEY"));
-        assert!(!is_file_variable("APP_SERVER__ORIGIN_FILE"));
+        assert!(is_file_variable("APP_SESSION__KEY_FILE", &SECRET_SETTINGS));
+        assert!(is_file_variable("APP_DATABASE__URL_FILE", &SECRET_SETTINGS));
+        assert!(!is_file_variable("APP_SESSION__KEY", &SECRET_SETTINGS));
+        assert!(!is_file_variable(
+            "APP_SERVER__ORIGIN_FILE",
+            &SECRET_SETTINGS
+        ));
     }
 }
