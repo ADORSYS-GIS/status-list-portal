@@ -24,6 +24,9 @@ RUN --mount=type=bind,source=package.json,target=package.json \
 # Each image cross-compiles to its musl target, which it sets in CARGO_BUILD_TARGET.
 FROM --platform=$BUILDPLATFORM blackdex/rust-musl:x86_64-musl@sha256:a0040208c797f80d7b3c0687eacac954cab160c536260bc70ded55844fb89ea1 AS backend-amd64
 FROM --platform=$BUILDPLATFORM blackdex/rust-musl:aarch64-musl@sha256:adb8580729a9151ea39a9e4890ba05caed3e24514ab9da376d2b7c5fae37de54 AS backend-arm64
+# jemalloc cannot probe the page size when cross-compiled. Built for 64 KiB pages, it runs on
+# every arm64 kernel, whose pages may be 4, 16 or 64 KiB.
+ENV JEMALLOC_SYS_WITH_LG_PAGE=16
 
 FROM backend-${TARGETARCH} AS backend
 ARG TARGETPLATFORM
