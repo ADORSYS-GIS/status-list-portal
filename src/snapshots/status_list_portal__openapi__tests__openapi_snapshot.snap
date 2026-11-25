@@ -229,7 +229,7 @@ expression: openapi
                 "schema": {
                   "type": "string"
                 },
-                "description": "The issuer version to send as If-Match when changing keys."
+                "description": "The issuer version to send as if-issuer-version when changing keys."
               }
             },
             "content": {

@@ -8,8 +8,8 @@
   import Notice from './Notice.svelte';
 
   /**
-   * Gets the public key once the private key is downloaded: an issuer registered with a key
-   * whose private half was never downloaded could never sign a token. Browsers cannot tell
+   * Gets the public key once the private key is downloaded: a key registered before its
+   * private half was downloaded could never sign a token. Browsers cannot tell
    * whether the file was then saved.
    */
   let { alg = 'ES256', onkey }: { alg?: SigningAlgorithm; onkey: (publicJwk: string) => void } =
@@ -95,7 +95,7 @@
     </p>
   {:else}
     <button type="button" class="button" onclick={make} disabled={making}>
-      <Icon name="key" /> Make an {alg} key pair in this browser
+      <Icon name="key" /> Make a key pair in this browser
     </button>
     {#if failed}
       <p class="field-error" role="alert">

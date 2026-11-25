@@ -38,10 +38,8 @@ export async function makeKeyPair(alg: SigningAlgorithm = 'ES256'): Promise<KeyP
     crypto.subtle.exportKey('pkcs8', privateKey),
   ]);
   const { kty, crv, x, y, n, e } = exportedPublic;
-  const publicMembers =
-    alg === 'PS256' ? { kty, n, e } : alg === 'EdDSA' ? { kty, crv, x } : { kty, crv, x, y };
   return {
-    publicJwk: JSON.stringify(publicMembers),
+    publicJwk: JSON.stringify({ kty, crv, x, y, n, e }),
     privateJwk: JSON.stringify(privateJwk),
     privatePem: pem('PRIVATE KEY', pkcs8),
   };

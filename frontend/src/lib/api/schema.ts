@@ -646,7 +646,7 @@ export interface operations {
             /** @description The issuer. */
             200: {
                 headers: {
-                    /** @description The issuer version to send as If-Match when changing keys. */
+                    /** @description The issuer version to send as if-issuer-version when changing keys. */
                     "issuer-version"?: string;
                     [name: string]: unknown;
                 };

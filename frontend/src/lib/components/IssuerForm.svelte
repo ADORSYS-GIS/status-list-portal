@@ -71,7 +71,6 @@
   function useGeneratedKey(publicJwk: string) {
     ownKey = { publicKey, alg };
     publicKey = publicJwk;
-    alg = 'ES256';
     generated = true;
   }
 
@@ -105,7 +104,13 @@
   <div class="field">
     <label for="alg">Algorithm</label>
     <p class="hint" id="alg-hint">The algorithm your issuer signs its tokens with.</p>
-    <select id="alg" bind:value={alg} disabled={generated} aria-describedby="alg-hint">
+    <select
+      id="alg"
+      bind:value={alg}
+      disabled={generated}
+      aria-describedby="alg-hint"
+      onchange={() => (generator += 1)}
+    >
       {#each SIGNING_ALGORITHMS as option (option)}
         <option value={option}>{ALGORITHM_LABELS[option]}</option>
       {/each}
@@ -138,7 +143,7 @@
   </div>
 
   {#key generator}
-    <KeyPairGenerator onkey={useGeneratedKey} />
+    <KeyPairGenerator {alg} onkey={useGeneratedKey} />
   {/key}
   <KeyPairHelp {alg} />
 

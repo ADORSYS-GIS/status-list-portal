@@ -9,9 +9,9 @@ mod public_key;
 use axum::Json;
 use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
+use http::HeaderMap;
 use http::StatusCode;
 use http::header::LOCATION;
-use http::{HeaderMap, HeaderName};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::{Duration, OffsetDateTime};
@@ -20,8 +20,8 @@ use url::Url;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::admin_api::{
-    ErrorCode, Issuer, IssuerChange, IssuerKey, IssuerState, IssuerUsage, KeyState, NewIssuer,
-    NewIssuerKey, Owner, RequestedState, SigningAlgorithm,
+    ErrorCode, IF_ISSUER_VERSION, ISSUER_VERSION, Issuer, IssuerChange, IssuerKey, IssuerState,
+    IssuerUsage, KeyState, NewIssuer, NewIssuerKey, Owner, RequestedState, SigningAlgorithm,
 };
 use crate::auth::AuthenticatedUser;
 use crate::config::{self, PublicOrigin};
@@ -34,7 +34,6 @@ use crate::util::errors::{self, ApiErrorCode, ApiErrorResponse, AppResult};
 use crate::util::{JsonBody, QueryParams};
 
 const DISPLAY_NAME_MAX_CHARS: usize = 100;
-const IF_ISSUER_VERSION: HeaderName = HeaderName::from_static("if-issuer-version");
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct IssuerResponse {
@@ -306,7 +305,7 @@ pub async fn create_issuer(
     tag = "issuers",
     params(("id" = String, Path, description = "The issuer's id.")),
     responses(
-        (status = 200, description = "The issuer.", body = IssuerResponse, headers(("issuer-version" = String, description = "The issuer version to send as If-Match when changing keys."))),
+        (status = 200, description = "The issuer.", body = IssuerResponse, headers(("issuer-version" = String, description = "The issuer version to send as if-issuer-version when changing keys."))),
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
@@ -316,7 +315,7 @@ pub async fn get_issuer(
     ctx: ServerContext,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<String>,
-) -> AppResult<([(&'static str, String); 1], Json<IssuerResponse>)> {
+) -> AppResult<([(http::HeaderName, String); 1], Json<IssuerResponse>)> {
     let owner = Owner::github(user.gh_id);
     let issuer = ctx
         .admin_api
@@ -326,7 +325,7 @@ pub async fn get_issuer(
         .ok_or_else(errors::not_found)?;
     let version = issuer.version().to_owned();
     Ok((
-        [("issuer-version", version)],
+        [(ISSUER_VERSION, version)],
         Json(IssuerResponse::new(
             issuer.into_issuer(),
             &ctx.config.management_api,

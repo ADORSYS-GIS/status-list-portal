@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { resolve } from '$app/paths';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
@@ -20,7 +21,7 @@
   let busy = $state(false);
   let failure = $state<string | null>(null);
   let confirmDelete: ConfirmDialog;
-  let selectedKid = $state('');
+  let selectedKid = $state(untrack(() => signingKey(data.issuer)?.kid ?? ''));
   let keyFileName = $state('private-key.json');
   let selectedKey = $derived(signingKey(issuer, selectedKid) ?? signingKey(issuer));
 

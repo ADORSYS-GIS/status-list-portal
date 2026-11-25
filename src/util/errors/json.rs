@@ -3,8 +3,8 @@ use std::borrow::Cow;
 use axum::Json;
 use axum::response::{IntoResponse, Response};
 use derive_more::Display;
-use http::StatusCode;
 use http::header::RETRY_AFTER;
+use http::{HeaderValue, StatusCode};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -203,10 +203,7 @@ struct ServiceUnavailable {
 impl AppError for ServiceUnavailable {
     fn response(&self) -> Response {
         let mut response = json_error(ApiErrorCode::ServiceUnavailable, "Service Unavailable");
-        if let Some(value) = self
-            .retry_after
-            .and_then(|seconds| seconds.to_string().parse().ok())
-        {
+        if let Some(value) = self.retry_after.map(HeaderValue::from) {
             response.headers_mut().insert(RETRY_AFTER, value);
         }
         response

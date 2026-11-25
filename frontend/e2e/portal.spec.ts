@@ -167,7 +167,7 @@ test('a developer adds a key, reaches the limit, and revokes the old key', async
   const before = await heldIssuer(name);
   const oldKid = before.keys[0].kid;
 
-  await page.getByRole('button', { name: 'Make an ES256 key pair in this browser' }).click();
+  await page.getByRole('button', { name: 'Make a key pair in this browser' }).click();
   const privateJwk: JsonWebKey = JSON.parse(await download(page, 'Download private-key.json'));
   const { kty, crv, x, y } = privateJwk;
   await expect(page.getByLabel('Public key (JWK)')).toHaveValue(JSON.stringify({ kty, crv, x, y }));
@@ -208,7 +208,7 @@ test('a key pair made in the browser never leaves it', async ({ page }, testInfo
   await page.getByRole('link', { name: 'Register an issuer' }).click();
   await page.getByLabel('Display name').fill(name);
 
-  await page.getByRole('button', { name: 'Make an ES256 key pair in this browser' }).click();
+  await page.getByRole('button', { name: 'Make a key pair in this browser' }).click();
   const pem = await download(page, 'Download private-key.pem');
   const jwk: JsonWebKey = JSON.parse(await download(page, 'Download private-key.json'));
   await submitRegistration(page);

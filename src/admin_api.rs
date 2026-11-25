@@ -50,9 +50,9 @@ const KEY_ID_MAX_CHARS: usize = 255;
 /// The most issuers the admin API returns in one page.
 const MAX_PAGE_SIZE: u8 = 100;
 /// The version of an issuer's writable state, on every response about one issuer.
-const ISSUER_VERSION: HeaderName = HeaderName::from_static("issuer-version");
+pub(crate) const ISSUER_VERSION: HeaderName = HeaderName::from_static("issuer-version");
 /// A change applies only while the issuer is at the version this names.
-const IF_ISSUER_VERSION: HeaderName = HeaderName::from_static("if-issuer-version");
+pub(crate) const IF_ISSUER_VERSION: HeaderName = HeaderName::from_static("if-issuer-version");
 /// The admin API's routes, as telemetry names its calls.
 const ISSUERS_ROUTE: &str = "/admin/v1/issuers";
 const ISSUER_ROUTE: &str = "/admin/v1/issuers/{id}";

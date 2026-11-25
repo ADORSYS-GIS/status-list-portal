@@ -22,10 +22,15 @@ const ALGORITHMS: Record<
   },
 };
 
-test('the public key holds its public members only', async () => {
-  const { publicJwk } = await makeKeyPair();
+test.each([
+  ['ES256', ['crv', 'kty', 'x', 'y']],
+  ['ES384', ['crv', 'kty', 'x', 'y']],
+  ['EdDSA', ['crv', 'kty', 'x']],
+  ['PS256', ['e', 'kty', 'n']],
+] as const)('the %s public key holds only its public members', async (alg, members) => {
+  const { publicJwk } = await makeKeyPair(alg);
 
-  expect(Object.keys(JSON.parse(publicJwk)).sort()).toEqual(['crv', 'kty', 'x', 'y']);
+  expect(Object.keys(JSON.parse(publicJwk)).sort()).toEqual(members);
 });
 
 test.each(['ES256', 'ES384', 'EdDSA', 'PS256'] as const)(

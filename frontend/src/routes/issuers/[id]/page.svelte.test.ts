@@ -57,6 +57,18 @@ test('a pasted public key can be added while the old key stays available', async
   await expect.element(screen.getByLabelText('Public key (JWK)')).toHaveValue('');
 });
 
+test('an added key does not change the example until selected', async () => {
+  const screen = await render(Page, { data: pageData() });
+  const updated = pageData(2);
+  updated.issuer.keys.reverse();
+
+  await screen.rerender({ data: updated });
+
+  expect(screen.getByText(/Example key:/).element().textContent).toContain('key-1');
+  await screen.getByRole('button', { name: 'Use in example: key key-2' }).click();
+  expect(screen.getByText(/Example key:/).element().textContent).toContain('key-2');
+});
+
 test('the tier limit blocks adding a key', async () => {
   const screen = await render(Page, { data: pageData(2, 2) });
   await expect.element(screen.getByText(/The key limit is reached/)).toBeVisible();
@@ -94,7 +106,7 @@ test('changing the algorithm keeps a pasted public key', async () => {
 
 test('changing the algorithm clears a generated public key', async () => {
   const screen = await render(Page, { data: pageData() });
-  await screen.getByRole('button', { name: 'Make an ES256 key pair in this browser' }).click();
+  await screen.getByRole('button', { name: 'Make a key pair in this browser' }).click();
   await expect.element(screen.getByLabelText('Public key (JWK)')).toHaveValue('');
   await screen.getByRole('button', { name: 'Download private-key.json' }).click();
   await expect.element(screen.getByLabelText('Public key (JWK)')).not.toHaveValue('');

@@ -68,7 +68,6 @@
       publicKeyField?.focus();
       return;
     }
-    if (atKeyLimit) return;
     await act(async () => {
       const { data: added, error } = await createApi().POST('/api/v1/issuers/{id}/keys', {
         params: { path: { id: issuer.id }, header: { 'if-issuer-version': issuerVersion } },
