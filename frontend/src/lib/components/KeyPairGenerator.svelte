@@ -12,6 +12,9 @@
    */
   let { onkey }: { onkey: (publicJwk: string) => void } = $props();
 
+  /** Some browsers read a download's URL after the click returns; FileSaver.js waits as long. */
+  const REVOKE_DELAY_MS = 40_000;
+
   let pair = $state<KeyPair | null>(null);
   let making = $state(false);
   let failed = $state(false);
@@ -42,8 +45,7 @@
     link.href = url;
     link.download = name;
     link.click();
-    // Revoked once the click has started the download, which needs the URL until then.
-    setTimeout(() => URL.revokeObjectURL(url));
+    setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
     if (pair && !saved) {
       saved = true;
       onkey(pair.publicJwk);
