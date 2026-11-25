@@ -182,6 +182,30 @@ test('a key registers one issuer only', async ({ page }, testInfo) => {
   await expectAccessible(page);
 });
 
+test('the keyboard skips to the content and works the delete dialog', async ({
+  page,
+}, testInfo) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: /^Try the Status List Server/ })).toBeVisible();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('link', { name: 'Skip to content' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('main')).toBeFocused();
+
+  const name = `Wallet ${testInfo.testId}`;
+  await signIn(page, accountFor(testInfo));
+  await register(page, name, await publicKey());
+  const remove = page.getByRole('button', { name: 'Delete issuer' });
+  await remove.focus();
+  await page.keyboard.press('Enter');
+
+  const confirm = page.getByRole('dialog', { name: `Delete ${name}?` });
+  await expect(confirm.getByRole('button', { name: 'Keep issuer' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(confirm).toBeHidden();
+  await expect(remove).toBeFocused();
+});
+
 for (const colorScheme of ['light', 'dark'] as const) {
   test.describe(`in the ${colorScheme} theme`, () => {
     test.use({ colorScheme });

@@ -16,12 +16,14 @@
 
   let main: HTMLElement;
 
-  afterNavigate(({ from, to }) => {
+  afterNavigate(({ to, type }) => {
     if (notices.current && notices.current.path !== to?.url.pathname) {
       notices.current = null;
     }
-    // Screen readers start reading the new page, rather than stay where the link was.
-    if (from) {
+    // Screen readers start reading the new page, rather than stay where the link was. The first
+    // load is a navigation too, with `from` set, so its type tells it apart: focus then stays
+    // at the top, where the skip link is.
+    if (type !== 'enter') {
       main.focus();
     }
   });
