@@ -15,7 +15,8 @@
     children: Snippet;
   } = $props();
 
-  // Unique to each dialog, so that a page with several names each by its own title.
+  // Unique to each dialog, so that on a page with several, each is named and described by its
+  // own title and text.
   const id = $props.id();
 
   let dialog: HTMLDialogElement;
@@ -31,9 +32,9 @@
   }
 </script>
 
-<dialog bind:this={dialog} aria-labelledby="{id}-title">
+<dialog bind:this={dialog} aria-labelledby="{id}-title" aria-describedby="{id}-body">
   <h2 id="{id}-title">{title}</h2>
-  {@render children()}
+  <div id="{id}-body">{@render children()}</div>
   <div class="actions">
     <button type="button" class="button" onclick={() => dialog.close()}>{cancelLabel}</button>
     <button type="button" class="button danger" onclick={confirm}>{confirmLabel}</button>

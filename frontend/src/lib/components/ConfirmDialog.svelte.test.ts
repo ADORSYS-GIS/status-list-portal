@@ -21,3 +21,13 @@ test('each dialog on a page is named by its own title', async () => {
 
   await expect.element(second.getByRole('dialog', { name: 'Revoke the key?' })).toBeVisible();
 });
+
+test('a dialog is described by its text', async () => {
+  const screen = await renderDialog('Delete the issuer?');
+
+  screen.component.open();
+
+  await expect
+    .element(screen.getByRole('dialog', { name: 'Delete the issuer?' }))
+    .toHaveAccessibleDescription('This cannot be undone.');
+});
