@@ -58,21 +58,22 @@
         receives it and cannot recover it. Keep it safe: it signs your issuer's tokens.
       </p>
     </Notice>
+    <!-- The JSON first: the token script on the issuer page reads it; the PEM is for other tools. -->
     <div class="downloads">
       <button
         bind:this={firstDownload}
         type="button"
         class="button"
-        onclick={() => save('private-key.pem', privatePem, 'application/x-pem-file')}
+        onclick={() => save('private-key.json', privateJwk, 'application/json')}
       >
-        <Icon name="arrow-down-tray" /> Download private-key.pem
+        <Icon name="arrow-down-tray" /> Download private-key.json
       </button>
       <button
         type="button"
         class="button"
-        onclick={() => save('private-key.json', privateJwk, 'application/json')}
+        onclick={() => save('private-key.pem', privatePem, 'application/x-pem-file')}
       >
-        <Icon name="arrow-down-tray" /> Download private-key.json
+        <Icon name="arrow-down-tray" /> Download private-key.pem
       </button>
     </div>
     <p class="hint" role="status">

@@ -56,7 +56,7 @@ test('a key pair made in the browser fills in the form once its private key is s
     .toBeVisible();
   await expect.element(screen.getByLabelText('Public key')).toHaveValue('');
   await expect
-    .element(screen.getByRole('button', { name: 'Download private-key.pem' }))
+    .element(screen.getByRole('button', { name: 'Download private-key.json' }))
     .toHaveFocus();
 
   await screen.getByRole('button', { name: 'Download private-key.pem' }).click();
