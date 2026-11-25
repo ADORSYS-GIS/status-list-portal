@@ -111,7 +111,7 @@ pub trait RequestHelper {
         let request = self
             .request_builder(Method::POST, path)
             .header(CONTENT_TYPE, "application/json")
-            .header("if-match", version)
+            .header("if-issuer-version", version)
             .body(Body::from(body.to_string()))
             .expect("invalid request");
         self.run(request).await

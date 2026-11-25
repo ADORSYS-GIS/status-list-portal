@@ -161,7 +161,7 @@ test('a developer adds a key, reaches the limit, and revokes the old key', async
   await expect(page.getByRole('button', { name: 'Add public key' })).toBeHidden();
 
   await page.getByRole('button', { name: `Revoke key ${oldKid}` }).click();
-  const confirm = page.getByRole('dialog', { name: 'Revoke this active key?' });
+  const confirm = page.getByRole('dialog', { name: `Revoke key ${oldKid}?` });
   await confirm.getByRole('button', { name: 'Revoke key' }).click();
   await expect(page.getByText('Key revoked. Tokens signed with it')).toBeVisible();
   const revoked = await heldIssuer(name);

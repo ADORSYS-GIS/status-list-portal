@@ -415,6 +415,9 @@ async function adminApi(request: IncomingMessage, response: ServerResponse) {
       if (!key) return refuse(response, 404, 'key_not_found');
       const body = await readJson(request);
       if (body?.state !== 'revoked') return refuse(response, ...malformed('state must be revoked'));
+      if (key.state === 'revoked') {
+        return send(response, 200, key, { 'issuer-version': String(stored.version) });
+      }
       if (key.state !== 'active') return refuse(response, 409, 'invalid_input');
       key.state = 'revoked';
       (stored.issuer.usage as Json).keys = Number((stored.issuer.usage as Json).keys) - 1;

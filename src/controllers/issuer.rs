@@ -9,9 +9,9 @@ mod public_key;
 use axum::Json;
 use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
-use http::HeaderMap;
 use http::StatusCode;
-use http::header::{IF_MATCH, LOCATION};
+use http::header::LOCATION;
+use http::{HeaderMap, HeaderName};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::{Duration, OffsetDateTime};
@@ -20,8 +20,8 @@ use url::Url;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::admin_api::{
-    Issuer, IssuerChange, IssuerKey, IssuerState, IssuerUsage, KeyState, NewIssuer, NewIssuerKey,
-    Owner, RequestedState, SigningAlgorithm,
+    ErrorCode, Issuer, IssuerChange, IssuerKey, IssuerState, IssuerUsage, KeyState, NewIssuer,
+    NewIssuerKey, Owner, RequestedState, SigningAlgorithm,
 };
 use crate::auth::AuthenticatedUser;
 use crate::config::{self, PublicOrigin};
@@ -34,6 +34,7 @@ use crate::util::errors::{self, ApiErrorCode, ApiErrorResponse, AppResult};
 use crate::util::{JsonBody, QueryParams};
 
 const DISPLAY_NAME_MAX_CHARS: usize = 100;
+const IF_ISSUER_VERSION: HeaderName = HeaderName::from_static("if-issuer-version");
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct IssuerResponse {
@@ -350,7 +351,7 @@ pub struct NewIssuerKeyRequest {
     tag = "issuers",
     params(
         ("id" = String, Path, description = "The issuer's id."),
-        ("if-match" = String, Header, description = "The issuer-version received when this page was loaded."),
+        ("if-issuer-version" = String, Header, description = "The issuer-version received when this page was loaded."),
     ),
     request_body = NewIssuerKeyRequest,
     responses(
@@ -358,9 +359,10 @@ pub struct NewIssuerKeyRequest {
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 403, description = "The current terms are not accepted.", body = ApiErrorResponse),
         (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
-        (status = 409, description = "key_limit_reached, key_material_in_use, issuer_changed, or issuer_not_renewable.", body = ApiErrorResponse),
+        (status = 409, description = "key_limit_reached, key_material_in_use, issuer_changed, or issuer_suspended.", body = ApiErrorResponse),
         (status = 422, description = "Invalid or private key.", body = ApiErrorResponse),
         (status = 429, description = "Too many key additions in a short time.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds until the user may try again."))),
+        (status = 428, description = "The if-issuer-version header is required.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
         (status = 503, description = "The admin API is temporarily unavailable or contended.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds to wait when supplied by the admin API."))),
     ),
@@ -372,34 +374,28 @@ pub async fn add_issuer_key(
     headers: HeaderMap,
     JsonBody(request): JsonBody<NewIssuerKeyRequest>,
 ) -> AppResult<(StatusCode, Json<IssuerKeyResponse>)> {
+    let observed_version = required_issuer_version(&headers)?;
+    let key = NewIssuerKey {
+        alg: request.alg,
+        public_key: public_key::parse(&request.public_key, request.alg)?,
+    };
     let mut conn = ctx.db.get().await?;
     sandbox::ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
     ctx.rate_limiter
         .check(&mut conn, user.id, LimitedAction::AddKey)
         .await?;
     drop(conn);
-    let key = NewIssuerKey {
-        alg: request.alg,
-        public_key: public_key::parse(&request.public_key, request.alg)?,
-    };
     let owner = Owner::github(user.gh_id);
     let issuers = ctx.admin_api.issuers_of(&owner);
     let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
     if current.state == IssuerState::Suspended {
         return Err(errors::custom(
-            ApiErrorCode::IssuerNotRenewable,
+            ApiErrorCode::IssuerSuspended,
             "This issuer is deleted or suspended, so it cannot accept a new key.",
         ));
     }
-    let existing = || {
-        current.keys.iter().find(|candidate| {
-            candidate.state == KeyState::Active
-                && candidate.alg == key.alg
-                && candidate.public_key == key.public_key
-        })
-    };
-    if !matches_issuer_version(&headers, &current) {
-        if let Some(added) = existing() {
+    if observed_version != current.version() {
+        if let Some(added) = active_match(&current.keys, &key) {
             return Ok((StatusCode::CREATED, Json(added.clone().into())));
         }
         return Err(issuer_changed());
@@ -407,16 +403,9 @@ pub async fn add_issuer_key(
     let added = match issuers.add_key(&current, &key).await {
         Ok(Some(added)) => added,
         Ok(None) => return Err(errors::not_found()),
-        Err(error) if error.code() == Some(crate::admin_api::ErrorCode::KeyMaterialInUse) => {
+        Err(error) if error.code() == Some(ErrorCode::KeyMaterialInUse) => {
             let reread = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
-            reread
-                .keys
-                .iter()
-                .find(|candidate| {
-                    candidate.state == KeyState::Active
-                        && candidate.alg == key.alg
-                        && candidate.public_key == key.public_key
-                })
+            active_match(&reread.keys, &key)
                 .cloned()
                 .ok_or_else(|| errors::BoxedAppError::from(error))?
         }
@@ -434,13 +423,14 @@ pub async fn add_issuer_key(
     params(
         ("id" = String, Path, description = "The issuer's id."),
         ("kid" = String, Path, description = "The key id."),
-        ("if-match" = String, Header, description = "The issuer-version received when this page was loaded."),
+        ("if-issuer-version" = String, Header, description = "The issuer-version received when this page was loaded."),
     ),
     responses(
         (status = 200, description = "Key revoked.", body = IssuerKeyResponse),
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 404, description = "The user has no issuer or key with this id.", body = ApiErrorResponse),
-        (status = 409, description = "issuer_changed: the page's issuer version is stale.", body = ApiErrorResponse),
+        (status = 409, description = "issuer_changed for a stale version, or key_not_active for a reserved key.", body = ApiErrorResponse),
+        (status = 428, description = "The if-issuer-version header is required.", body = ApiErrorResponse),
         (status = 429, description = "Too many key revocations in a short time.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds until the user may try again."))),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
         (status = 503, description = "The admin API is temporarily unavailable or contended.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds to wait when supplied by the admin API."))),
@@ -452,6 +442,7 @@ pub async fn revoke_issuer_key(
     Path((id, kid)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> AppResult<Json<IssuerKeyResponse>> {
+    let observed_version = required_issuer_version(&headers)?;
     let mut conn = ctx.db.get().await?;
     ctx.rate_limiter
         .check(&mut conn, user.id, LimitedAction::RevokeKey)
@@ -460,19 +451,22 @@ pub async fn revoke_issuer_key(
     let owner = Owner::github(user.gh_id);
     let issuers = ctx.admin_api.issuers_of(&owner);
     let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
-    if !matches_issuer_version(&headers, &current) {
-        return Err(issuer_changed());
-    }
     let key = current
         .keys
         .iter()
         .find(|key| key.kid == kid)
         .ok_or_else(errors::not_found)?;
+    if key.state == KeyState::Revoked {
+        return Ok(Json(key.clone().into()));
+    }
     if key.state != KeyState::Active {
         return Err(errors::custom(
-            ApiErrorCode::IssuerChanged,
-            "This key is not active. Reload the issuer before changing it.",
+            ApiErrorCode::KeyNotActive,
+            "Only active keys can be revoked. This reserved key needs operator action.",
         ));
+    }
+    if observed_version != current.version() {
+        return Err(issuer_changed());
     }
     let revoked = issuers
         .revoke_key(&current, &kid)
@@ -482,8 +476,24 @@ pub async fn revoke_issuer_key(
     Ok(Json(revoked.into()))
 }
 
-fn matches_issuer_version(headers: &HeaderMap, issuer: &crate::admin_api::OwnedIssuer) -> bool {
-    headers.get(IF_MATCH).and_then(|value| value.to_str().ok()) == Some(issuer.version())
+fn required_issuer_version(headers: &HeaderMap) -> AppResult<&str> {
+    headers
+        .get(IF_ISSUER_VERSION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            errors::custom(
+                ApiErrorCode::PreconditionRequired,
+                "Send the issuer version from the page as if-issuer-version.",
+            )
+        })
+}
+
+fn active_match<'a>(keys: &'a [IssuerKey], key: &NewIssuerKey) -> Option<&'a IssuerKey> {
+    keys.iter().find(|candidate| {
+        candidate.state == KeyState::Active
+            && candidate.alg == key.alg
+            && candidate.public_key == key.public_key
+    })
 }
 
 fn issuer_changed() -> errors::BoxedAppError {

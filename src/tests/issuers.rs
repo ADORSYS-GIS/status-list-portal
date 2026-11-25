@@ -223,6 +223,33 @@ async fn a_stale_page_cannot_revoke_another_tabs_last_key() {
 }
 
 #[tokio::test]
+async fn key_changes_require_the_page_issuer_version() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_registrant("octocat").await;
+    for (path, body) in [
+        (
+            format!("{ISSUER_URL}/keys"),
+            json!({ "alg": "ES256", "public_key": public_jwk_json() }),
+        ),
+        (format!("{ISSUER_URL}/keys/some-kid/revoke"), json!({})),
+    ] {
+        let response = user.post(&path, &body).await;
+        assert_eq!(response.status(), StatusCode::PRECONDITION_REQUIRED);
+        assert_eq!(
+            response.json()["errors"][0]["code"],
+            "precondition_required"
+        );
+    }
+    assert!(
+        app.admin_api()
+            .received_requests()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn suspended_issuers_cannot_gain_keys_but_terms_are_required() {
     let (app, _anon) = TestApp::init().empty().await;
     let user = app.db_new_user("octocat").await;
@@ -235,10 +262,7 @@ async fn suspended_issuers_cannot_gain_keys_but_terms_are_required() {
     app.accept_terms(user.user()).await;
     let suspended = user.post_key(&format!("{ISSUER_URL}/keys"), &body).await;
     assert_eq!(suspended.status(), StatusCode::CONFLICT);
-    assert_eq!(
-        suspended.json()["errors"][0]["code"],
-        "issuer_not_renewable"
-    );
+    assert_eq!(suspended.json()["errors"][0]["code"], "issuer_suspended");
     assert!(
         requests_with_method(app.admin_api(), "POST")
             .await
@@ -372,7 +396,7 @@ async fn a_key_used_elsewhere_is_a_conflict_and_admin_throttling_is_temporary() 
         .and(path(
             format!("{ISSUER_URL}/keys").replace("/api/v1", "/admin/v1"),
         ))
-        .respond_with(ResponseTemplate::new(429))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "4"))
         .mount(app.admin_api())
         .await;
     let throttled = user
@@ -384,6 +408,7 @@ async fn a_key_used_elsewhere_is_a_conflict_and_admin_throttling_is_temporary() 
         )
         .await;
     assert_eq!(throttled.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(throttled.header("retry-after"), Some("4"));
 }
 
 #[tokio::test]
@@ -412,6 +437,27 @@ async fn key_not_found_and_reserved_keys_are_not_revoked() {
         .post_key(&format!("{ISSUER_URL}/keys/{kid}/revoke"), &json!({}))
         .await;
     assert_eq!(reserved.status(), StatusCode::CONFLICT);
+    assert_eq!(reserved.json()["errors"][0]["code"], "key_not_active");
+    assert!(
+        reserved.json()["errors"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("reserved")
+    );
+    assert!(
+        requests_with_method(app.admin_api(), "PATCH")
+            .await
+            .is_empty()
+    );
+
+    app.admin_api().reset().await;
+    issuer["keys"][0]["state"] = json!("revoked");
+    admin_api_holds(app.admin_api(), &issuer).await;
+    let repeated = user
+        .post_key(&format!("{ISSUER_URL}/keys/{kid}/revoke"), &json!({}))
+        .await;
+    assert_eq!(repeated.status(), StatusCode::OK);
+    assert_eq!(repeated.json()["state"], "revoked");
     assert!(
         requests_with_method(app.admin_api(), "PATCH")
             .await

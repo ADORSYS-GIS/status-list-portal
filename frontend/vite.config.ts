@@ -59,11 +59,7 @@ export default defineConfig({
           name: 'browser',
           browser: {
             enabled: true,
-            provider: playwright({
-              launchOptions: process.env.PLAYWRIGHT_EXECUTABLE_PATH
-                ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH }
-                : undefined,
-            }),
+            provider: playwright(),
             instances: [{ browser: 'chromium', headless: true }],
           },
           include: ['src/**/*.svelte.test.ts'],

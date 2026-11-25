@@ -109,7 +109,7 @@ pub enum AdminApiError {
         /// Human-readable, for the logs; its wording is not part of the contract.
         description: Option<String>,
         /// How long the admin API asks us to wait before retrying.
-        retry_after: Option<String>,
+        retry_after: Option<u64>,
     },
     /// The admin API answered in a way its contract does not allow.
     #[error("the admin API sent {0}")]
@@ -117,7 +117,7 @@ pub enum AdminApiError {
     /// The admin API limits how often the portal may call it, and the portal called too
     /// often.
     #[error("the admin API is throttling the portal")]
-    Throttled,
+    Throttled { retry_after: Option<u64> },
     #[error("admin API request failed")]
     Request(#[source] reqwest::Error),
     #[error("failed to sign an admin token")]
@@ -569,9 +569,9 @@ impl AdminApiError {
         }
     }
 
-    pub fn retry_after(&self) -> Option<&str> {
+    pub fn retry_after(&self) -> Option<u64> {
         match self {
-            Self::Refused { retry_after, .. } => retry_after.as_deref(),
+            Self::Refused { retry_after, .. } | Self::Throttled { retry_after } => *retry_after,
             _ => None,
         }
     }
@@ -582,10 +582,10 @@ impl AdminApiError {
             .headers()
             .get(RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
+            .and_then(|value| value.parse::<u64>().ok());
         // The admin API's rate limiter answers before its handlers, without an error code.
         if status == StatusCode::TOO_MANY_REQUESTS {
-            return Self::Throttled;
+            return Self::Throttled { retry_after };
         }
         match response.json::<ErrorResponse>().await {
             Ok(body) => Self::Refused {

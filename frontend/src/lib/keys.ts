@@ -6,6 +6,13 @@
 
 import type { Issuer, SigningAlgorithm } from './api';
 
+export const ALGORITHM_LABELS: Record<SigningAlgorithm, string> = {
+  ES256: 'ES256: ECDSA on P-256, a good default',
+  ES384: 'ES384: ECDSA on P-384',
+  EdDSA: 'EdDSA: Ed25519',
+  PS256: 'PS256: RSA-PSS, 2048 bits or more',
+};
+
 /** Members that only private and symmetric keys have (RFC 7518 §6). */
 const PRIVATE_MEMBERS = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'];
 

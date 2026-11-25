@@ -374,7 +374,7 @@ expression: openapi
             }
           },
           {
-            "name": "if-match",
+            "name": "if-issuer-version",
             "in": "header",
             "description": "The issuer-version received when this page was loaded.",
             "required": true,
@@ -435,7 +435,7 @@ expression: openapi
             }
           },
           "409": {
-            "description": "key_limit_reached, key_material_in_use, issuer_changed, or issuer_not_renewable.",
+            "description": "key_limit_reached, key_material_in_use, issuer_changed, or issuer_suspended.",
             "content": {
               "application/json": {
                 "schema": {
@@ -446,6 +446,16 @@ expression: openapi
           },
           "422": {
             "description": "Invalid or private key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "The if-issuer-version header is required.",
             "content": {
               "application/json": {
                 "schema": {
@@ -534,7 +544,7 @@ expression: openapi
             }
           },
           {
-            "name": "if-match",
+            "name": "if-issuer-version",
             "in": "header",
             "description": "The issuer-version received when this page was loaded.",
             "required": true,
@@ -575,7 +585,17 @@ expression: openapi
             }
           },
           "409": {
-            "description": "issuer_changed: the page's issuer version is stale.",
+            "description": "issuer_changed for a stale version, or key_not_active for a reserved key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "The if-issuer-version header is required.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1127,6 +1147,9 @@ expression: openapi
           "invalid_display_name",
           "issuer_changed",
           "issuer_not_renewable",
+          "issuer_suspended",
+          "key_not_active",
+          "precondition_required",
           "registration_being_decided",
           "registration_already_decided",
           "invalid_rejection_reason",

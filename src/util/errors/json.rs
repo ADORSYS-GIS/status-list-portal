@@ -64,6 +64,12 @@ pub enum ApiErrorCode {
     IssuerChanged,
     /// The issuer cannot be renewed in its current state.
     IssuerNotRenewable,
+    /// A suspended issuer cannot gain keys.
+    IssuerSuspended,
+    /// Only an active key can be revoked by a developer.
+    KeyNotActive,
+    /// The request needs the issuer version previously returned to the client.
+    PreconditionRequired,
     /// Another decision is in progress for the registration.
     RegistrationBeingDecided,
     /// The registration has already been decided.
@@ -110,6 +116,8 @@ impl ApiErrorCode {
             | KeyLimitReached
             | IssuerChanged
             | IssuerNotRenewable
+            | IssuerSuspended
+            | KeyNotActive
             | RegistrationBeingDecided
             | RegistrationAlreadyDecided => StatusCode::CONFLICT,
             InvalidPublicKey
@@ -120,6 +128,7 @@ impl ApiErrorCode {
             InvalidJson | InvalidQuery | BodyReadFailed => StatusCode::BAD_REQUEST,
             UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            PreconditionRequired => StatusCode::PRECONDITION_REQUIRED,
             RateLimited => StatusCode::TOO_MANY_REQUESTS,
             BadGateway => StatusCode::BAD_GATEWAY,
             SandboxIssuerLimitReached
@@ -180,27 +189,23 @@ pub fn too_many_requests(detail: &'static str, retry_after: time::Duration) -> B
     })
 }
 
-/// A temporary admin API lock conflict, preserving its retry advice when present.
-pub fn temporarily_unavailable(retry_after: Option<String>) -> BoxedAppError {
-    Box::new(TemporarilyUnavailable { retry_after })
+/// A dependency failure, preserving its retry advice when present.
+pub fn service_unavailable(retry_after: Option<u64>) -> BoxedAppError {
+    Box::new(ServiceUnavailable { retry_after })
 }
 
 #[derive(Debug, Display)]
-#[display("the admin API is temporarily contended")]
-struct TemporarilyUnavailable {
-    retry_after: Option<String>,
+#[display("Service Unavailable")]
+struct ServiceUnavailable {
+    retry_after: Option<u64>,
 }
 
-impl AppError for TemporarilyUnavailable {
+impl AppError for ServiceUnavailable {
     fn response(&self) -> Response {
-        let mut response = json_error(
-            ApiErrorCode::ServiceUnavailable,
-            "The Status List Server is busy. Please try again later.",
-        );
+        let mut response = json_error(ApiErrorCode::ServiceUnavailable, "Service Unavailable");
         if let Some(value) = self
             .retry_after
-            .as_deref()
-            .and_then(|value| value.parse().ok())
+            .and_then(|seconds| seconds.to_string().parse().ok())
         {
             response.headers_mut().insert(RETRY_AFTER, value);
         }
@@ -305,6 +310,13 @@ mod tests {
                 IssuerNotRenewable,
                 "issuer_not_renewable",
                 StatusCode::CONFLICT,
+            ),
+            (IssuerSuspended, "issuer_suspended", StatusCode::CONFLICT),
+            (KeyNotActive, "key_not_active", StatusCode::CONFLICT),
+            (
+                PreconditionRequired,
+                "precondition_required",
+                StatusCode::PRECONDITION_REQUIRED,
             ),
             (
                 RegistrationBeingDecided,

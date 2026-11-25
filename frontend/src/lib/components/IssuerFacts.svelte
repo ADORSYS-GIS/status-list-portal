@@ -1,14 +1,11 @@
 <script lang="ts">
   import type { Issuer } from '#lib/api/index.ts';
   import { formatDateTime, usageText } from '#lib/format.ts';
-  import { signingKey } from '#lib/keys.ts';
 
   import CopyButton from './CopyButton.svelte';
   import Expiry from './Expiry.svelte';
 
-  let { issuer, selectedKid }: { issuer: Issuer; selectedKid?: string } = $props();
-
-  let key = $derived(signingKey(issuer, selectedKid) ?? signingKey(issuer));
+  let { issuer, key }: { issuer: Issuer; key?: Issuer['keys'][number] } = $props();
   /** What a developer copies into their tokens and requests. */
   let copyable = $derived([
     { label: 'Issuer id (iss)', value: issuer.id },

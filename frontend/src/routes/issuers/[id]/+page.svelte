@@ -1,27 +1,16 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
   import { resolve } from '$app/paths';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
-  import {
-    createApi,
-    errorMessage,
-    SIGNING_ALGORITHMS,
-    type SigningAlgorithm,
-  } from '#lib/api/index.ts';
+  import { createApi, errorMessage } from '#lib/api/index.ts';
   import CodeBlock from '#lib/components/CodeBlock.svelte';
   import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
   import Icon from '#lib/components/Icon.svelte';
   import IssuerFacts from '#lib/components/IssuerFacts.svelte';
+  import IssuerKeys from '#lib/components/IssuerKeys.svelte';
   import Notice from '#lib/components/Notice.svelte';
   import StateBadge from '#lib/components/StateBadge.svelte';
-  import {
-    browserKeyPair,
-    publicKeyProblem,
-    publishCommands,
-    signingKey,
-    tokenScript,
-  } from '#lib/keys.ts';
+  import { publishCommands, signingKey, tokenScript } from '#lib/keys.ts';
   import { flash } from '#lib/notices.svelte.ts';
 
   let { data } = $props();
@@ -31,24 +20,9 @@
   let busy = $state(false);
   let failure = $state<string | null>(null);
   let confirmDelete: ConfirmDialog;
-  let confirmRevoke: ConfirmDialog;
-  let revokeKid = $state('');
   let selectedKid = $state('');
   let keyFileName = $state('private-key.json');
-  let generatedFiles = $state<Record<string, string>>({});
-  let generatedFileName = $state('');
-  let alg = $state<SigningAlgorithm>(untrack(() => signingKey(data.issuer)?.alg ?? 'ES256'));
-  let publicKey = $state('');
-  let generated = $state(false);
-  let keyError = $state<string | null>(null);
   let selectedKey = $derived(signingKey(issuer, selectedKid) ?? signingKey(issuer));
-  let lastActiveRevoke = $derived(issuer.keys.filter((key) => key.state === 'active').length === 1);
-  $effect(() => {
-    if (!selectedKid && selectedKey) selectedKid = selectedKey.kid;
-  });
-  let atKeyLimit = $derived(
-    issuer.usage.keys_limit !== null && issuer.usage.keys >= issuer.usage.keys_limit,
-  );
 
   let path = $derived({ params: { path: { id: issuer.id } } });
 
@@ -73,86 +47,6 @@
       }
       flash('/issuers', 'success', `${name} is deleted. Its tokens are no longer accepted.`);
       await goto(resolve('/issuers'), { invalidateAll: true });
-    });
-  }
-
-  async function generate() {
-    keyError = null;
-    try {
-      const pair = await browserKeyPair(alg);
-      const filename = `private-key-${crypto.randomUUID()}.json`;
-      const blob = new Blob([JSON.stringify(pair.privateKey)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      publicKey = JSON.stringify(pair.publicKey, null, 2);
-      generatedFileName = filename;
-      generated = true;
-    } catch {
-      keyError = 'Your browser could not make this key pair. Paste a public key instead.';
-    }
-  }
-
-  async function addKey(event: SubmitEvent) {
-    event.preventDefault();
-    keyError = publicKeyProblem(publicKey);
-    if (keyError || atKeyLimit) return;
-    await act(async () => {
-      const { data: added, error } = await createApi().POST('/api/v1/issuers/{id}/keys', {
-        params: { path: { id: issuer.id }, header: { 'if-match': data.issuerVersion } },
-        body: { alg, public_key: JSON.parse(publicKey) },
-      });
-      if (error) {
-        failure = errorMessage(error);
-        return;
-      }
-      if (generated && added) generatedFiles[added.kid] = generatedFileName;
-      if (!selectedKey && added) selectKey(added.kid);
-      publicKey = '';
-      generated = false;
-      flash(
-        page.url.pathname,
-        'success',
-        'Key added. Move your signers to it and verify a write before revoking the old key.',
-      );
-      await invalidateAll();
-    });
-  }
-
-  function selectKey(kid: string) {
-    selectedKid = kid;
-    keyFileName = generatedFiles[kid] ?? 'private-key.json';
-  }
-
-  function askToRevoke(kid: string) {
-    revokeKid = kid;
-    confirmRevoke.open();
-  }
-
-  async function revokeKey() {
-    const kid = revokeKid;
-    await act(async () => {
-      const { error } = await createApi().POST('/api/v1/issuers/{id}/keys/{kid}/revoke', {
-        params: { path: { id: issuer.id, kid }, header: { 'if-match': data.issuerVersion } },
-      });
-      if (error) {
-        failure = errorMessage(error);
-        return;
-      }
-      if (selectedKid === kid) {
-        const other = issuer.keys.find((key) => key.state === 'active' && key.kid !== kid);
-        if (other) selectKey(other.kid);
-        else selectedKid = '';
-      }
-      flash(
-        page.url.pathname,
-        'success',
-        'Key revoked. Tokens signed with it are no longer accepted.',
-      );
-      await invalidateAll();
     });
   }
 
@@ -184,92 +78,10 @@
   <Notice kind="error"><p>{failure}</p></Notice>
 {/if}
 
-<IssuerFacts {issuer} selectedKid={selectedKey?.kid} />
+<IssuerFacts {issuer} key={selectedKey} />
 
 {#if issuer.state !== 'suspended'}
-  <section aria-labelledby="keys">
-    <h2 id="keys">Signing keys</h2>
-    <p>Revoked keys do not use a slot.</p>
-    <ol class="key-list">
-      {#each issuer.keys as key (key.kid)}
-        <li>
-          <span class="mono">{key.kid}</span> · {key.alg} · {key.state}
-          {#if key.state === 'active'}
-            <button
-              type="button"
-              aria-label="Use key {key.kid} in example"
-              onclick={() => selectKey(key.kid)}
-              disabled={busy}>Use in example</button
-            >
-          {/if}
-          {#if key.state === 'active'}
-            <button
-              type="button"
-              aria-label="Revoke key {key.kid}"
-              onclick={() => askToRevoke(key.kid)}
-              disabled={busy}>Revoke</button
-            >
-          {/if}
-        </li>
-      {/each}
-    </ol>
-    {#if atKeyLimit}
-      <Notice kind="info"
-        ><p>
-          The key limit is reached. Keep a working key active while freeing a slot; rotation without
-          a spare slot would interrupt writes.
-        </p></Notice
-      >
-    {:else}
-      <form onsubmit={addKey}>
-        <h3>Add a key</h3>
-        <label for="key-alg">Algorithm</label>
-        <select
-          id="key-alg"
-          bind:value={alg}
-          onchange={() => {
-            publicKey = '';
-            generated = false;
-            generatedFileName = '';
-            keyError = null;
-          }}
-        >
-          {#each SIGNING_ALGORITHMS as algorithm (algorithm)}<option value={algorithm}
-              >{algorithm}</option
-            >{/each}
-        </select>
-        <button type="button" onclick={generate} disabled={busy}
-          >Make a key pair in this browser</button
-        >
-        <label for="new-public-key">Public key (JWK)</label>
-        <textarea
-          id="new-public-key"
-          bind:value={publicKey}
-          oninput={() => {
-            generated = false;
-            keyError = null;
-          }}
-          aria-invalid={keyError ? 'true' : undefined}></textarea>
-        {#if keyError}<p class="field-error">{keyError}</p>{/if}
-        {#if generated}
-          <p>
-            Save the downloaded <code>{generatedFileName}</code> before adding this key. Its private half
-            stays in your browser and the downloaded file.
-          </p>
-        {/if}
-        <button type="submit" class="button" disabled={busy || !publicKey.trim()}
-          >Add public key</button
-        >
-      </form>
-    {/if}
-    <h3>Rotate without interrupting writes</h3>
-    <ol>
-      <li>Add the new public key while the old key remains active.</li>
-      <li>Put the new private key on every signer and select its key id for tokens.</li>
-      <li>Verify a status list write with the new key on the sandbox.</li>
-      <li>After all signers have switched, revoke the old key.</li>
-    </ol>
-  </section>
+  <IssuerKeys {issuer} issuerVersion={data.issuerVersion} bind:selectedKid bind:keyFileName />
 
   {#if selectedKey}
     <section aria-labelledby="publish">
@@ -326,22 +138,6 @@
   </p>
 </ConfirmDialog>
 
-<ConfirmDialog
-  bind:this={confirmRevoke}
-  title={lastActiveRevoke ? 'Revoke the last active key?' : 'Revoke this active key?'}
-  confirmLabel="Revoke key"
-  onconfirm={revokeKey}
->
-  {#if lastActiveRevoke}
-    <p>This issuer will no longer be able to write status lists until you add a new key.</p>
-  {:else}
-    <p>
-      Tokens signed with this key will stop working immediately. Switch every signer before revoking
-      it.
-    </p>
-  {/if}
-</ConfirmDialog>
-
 <style>
   .heading {
     display: flex;
@@ -364,20 +160,5 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-3);
-  }
-  .key-list li {
-    margin-bottom: var(--space-3);
-    overflow-wrap: anywhere;
-  }
-  .key-list button {
-    margin-left: var(--space-3);
-  }
-  form {
-    display: grid;
-    gap: var(--space-3);
-    max-width: 36rem;
-  }
-  textarea {
-    min-height: 8rem;
   }
 </style>

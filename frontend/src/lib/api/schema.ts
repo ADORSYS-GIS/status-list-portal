@@ -295,7 +295,7 @@ export interface components {
          *     New codes may be added. Clients must handle an unknown code as they would its HTTP status.
          * @enum {string}
          */
-        ApiErrorCode: "unauthorized" | "not_found" | "method_not_allowed" | "cross_origin_forbidden" | "terms_not_accepted" | "terms_changed" | "registration_limit_reached" | "active_issuer_limit_reached" | "sandbox_issuer_limit_reached" | "issuer_registration_in_progress" | "key_material_in_use" | "key_limit_reached" | "invalid_public_key" | "private_key_submitted" | "invalid_display_name" | "issuer_changed" | "issuer_not_renewable" | "registration_being_decided" | "registration_already_decided" | "invalid_rejection_reason" | "invalid_json" | "invalid_request_body" | "invalid_query" | "body_read_failed" | "unsupported_media_type" | "payload_too_large" | "rate_limited" | "bad_gateway" | "service_unavailable" | "request_timed_out" | "internal_error";
+        ApiErrorCode: "unauthorized" | "not_found" | "method_not_allowed" | "cross_origin_forbidden" | "terms_not_accepted" | "terms_changed" | "registration_limit_reached" | "active_issuer_limit_reached" | "sandbox_issuer_limit_reached" | "issuer_registration_in_progress" | "key_material_in_use" | "key_limit_reached" | "invalid_public_key" | "private_key_submitted" | "invalid_display_name" | "issuer_changed" | "issuer_not_renewable" | "issuer_suspended" | "key_not_active" | "precondition_required" | "registration_being_decided" | "registration_already_decided" | "invalid_rejection_reason" | "invalid_json" | "invalid_request_body" | "invalid_query" | "body_read_failed" | "unsupported_media_type" | "payload_too_large" | "rate_limited" | "bad_gateway" | "service_unavailable" | "request_timed_out" | "internal_error";
         ApiErrorDetail: {
             /** @description Stable machine-readable reason. Clients may branch on this value. */
             code: components["schemas"]["ApiErrorCode"];
@@ -756,7 +756,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description The issuer-version received when this page was loaded. */
-                "if-match": string;
+                "if-issuer-version": string;
             };
             path: {
                 /** @description The issuer's id. */
@@ -806,7 +806,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
-            /** @description key_limit_reached, key_material_in_use, issuer_changed, or issuer_not_renewable. */
+            /** @description key_limit_reached, key_material_in_use, issuer_changed, or issuer_suspended. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -817,6 +817,15 @@ export interface operations {
             };
             /** @description Invalid or private key. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The if-issuer-version header is required. */
+            428: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -862,7 +871,7 @@ export interface operations {
             query?: never;
             header: {
                 /** @description The issuer-version received when this page was loaded. */
-                "if-match": string;
+                "if-issuer-version": string;
             };
             path: {
                 /** @description The issuer's id. */
@@ -901,8 +910,17 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
-            /** @description issuer_changed: the page's issuer version is stale. */
+            /** @description issuer_changed for a stale version, or key_not_active for a reserved key. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The if-issuer-version header is required. */
+            428: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1324,7 +1342,7 @@ type ReadonlyArray<T> = [
 ] extends [
     unknown[]
 ] ? Readonly<Exclude<T, undefined>> : Readonly<Exclude<T, undefined>[]>;
-export const apiErrorCodeValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["ApiErrorCode"]> = ["unauthorized", "not_found", "method_not_allowed", "cross_origin_forbidden", "terms_not_accepted", "terms_changed", "registration_limit_reached", "active_issuer_limit_reached", "sandbox_issuer_limit_reached", "issuer_registration_in_progress", "key_material_in_use", "key_limit_reached", "invalid_public_key", "private_key_submitted", "invalid_display_name", "issuer_changed", "issuer_not_renewable", "registration_being_decided", "registration_already_decided", "invalid_rejection_reason", "invalid_json", "invalid_request_body", "invalid_query", "body_read_failed", "unsupported_media_type", "payload_too_large", "rate_limited", "bad_gateway", "service_unavailable", "request_timed_out", "internal_error"];
+export const apiErrorCodeValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["ApiErrorCode"]> = ["unauthorized", "not_found", "method_not_allowed", "cross_origin_forbidden", "terms_not_accepted", "terms_changed", "registration_limit_reached", "active_issuer_limit_reached", "sandbox_issuer_limit_reached", "issuer_registration_in_progress", "key_material_in_use", "key_limit_reached", "invalid_public_key", "private_key_submitted", "invalid_display_name", "issuer_changed", "issuer_not_renewable", "issuer_suspended", "key_not_active", "precondition_required", "registration_being_decided", "registration_already_decided", "invalid_rejection_reason", "invalid_json", "invalid_request_body", "invalid_query", "body_read_failed", "unsupported_media_type", "payload_too_large", "rate_limited", "bad_gateway", "service_unavailable", "request_timed_out", "internal_error"];
 export const issuerStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["IssuerState"]> = ["active", "suspended", "expired"];
 export const keyStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["KeyState"]> = ["active", "reserved", "revoked"];
 export const registrationStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["RegistrationState"]> = ["pending", "approved", "rejected"];

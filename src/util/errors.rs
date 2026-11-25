@@ -63,20 +63,20 @@ impl From<serde_json::Error> for BoxedAppError {
 impl From<PoolError> for BoxedAppError {
     fn from(error: PoolError) -> Self {
         error!(error.message = %describe(&error), "no database connection");
-        service_unavailable()
+        service_unavailable(None)
     }
 }
 
 impl From<AdminApiError> for BoxedAppError {
     fn from(error: AdminApiError) -> Self {
-        if matches!(error, AdminApiError::Throttled) {
+        if matches!(error, AdminApiError::Throttled { .. }) {
             warn!(error.message = %describe(&error), "the admin API is unavailable");
-            return service_unavailable();
+            return service_unavailable(error.retry_after());
         }
         match error.code() {
             Some(ErrorCode::WriteContention) => {
                 warn!(error.message = %describe(&error), "the admin API is contended");
-                json::temporarily_unavailable(error.retry_after().map(str::to_owned))
+                service_unavailable(error.retry_after())
             }
             Some(ErrorCode::IssuerNotFound | ErrorCode::KeyNotFound) => not_found(),
             Some(ErrorCode::KeyLimitReached) => custom(
@@ -100,7 +100,7 @@ impl From<AdminApiError> for BoxedAppError {
             ),
             Some(ErrorCode::ServiceUnavailable) => {
                 warn!(error.message = %describe(&error), "the admin API is unavailable");
-                service_unavailable()
+                service_unavailable(error.retry_after())
             }
             _ => {
                 error!(error.message = %describe(&error), "admin API call failed");
@@ -139,8 +139,8 @@ pub fn method_not_allowed() -> BoxedAppError {
     custom(ApiErrorCode::MethodNotAllowed, "Method Not Allowed")
 }
 
-pub fn service_unavailable() -> BoxedAppError {
-    custom(ApiErrorCode::ServiceUnavailable, "Service Unavailable")
+pub fn service_unavailable(retry_after: Option<u64>) -> BoxedAppError {
+    json::service_unavailable(retry_after)
 }
 
 /// An internal error described by a message that is logged and never shown to the user.
@@ -196,7 +196,7 @@ mod tests {
             StatusCode::METHOD_NOT_ALLOWED
         );
         assert_eq!(
-            service_unavailable().response().status(),
+            service_unavailable(None).response().status(),
             StatusCode::SERVICE_UNAVAILABLE
         );
     }

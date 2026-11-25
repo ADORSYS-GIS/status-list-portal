@@ -50,7 +50,7 @@ test('a pasted public key can be added while the old key stays available', async
   expect(post).toHaveBeenCalledWith(
     '/api/v1/issuers/{id}/keys',
     expect.objectContaining({
-      params: { path: { id: 'issuer-1' }, header: { 'if-match': '7' } },
+      params: { path: { id: 'issuer-1' }, header: { 'if-issuer-version': '7' } },
       body: { alg: 'ES256', public_key: { kty: 'EC', crv: 'P-256', x: 'AAAA', y: 'BBBB' } },
     }),
   );
@@ -73,7 +73,7 @@ test('revoking the last active key requires confirmation', async () => {
   await expect.element(screen.getByText(/will no longer be able to write/)).toBeVisible();
   await screen.getByRole('button', { name: 'Revoke key' }).click();
   expect(post).toHaveBeenCalledWith('/api/v1/issuers/{id}/keys/{kid}/revoke', {
-    params: { path: { id: 'issuer-1', kid: 'key-1' }, header: { 'if-match': '7' } },
+    params: { path: { id: 'issuer-1', kid: 'key-1' }, header: { 'if-issuer-version': '7' } },
   });
 });
 
@@ -82,14 +82,32 @@ test('revoking one of two active keys also requires confirmation', async () => {
   const screen = await render(Page, { data: pageData(2) });
   await screen.getByRole('button', { name: 'Revoke key key-1' }).click();
   expect(post).not.toHaveBeenCalled();
-  await expect
-    .element(screen.getByRole('dialog', { name: 'Revoke this active key?' }))
-    .toBeVisible();
+  await expect.element(screen.getByRole('dialog', { name: 'Revoke key key-1?' })).toBeVisible();
 });
 
-test('changing the algorithm clears a generated or pasted public key', async () => {
+test('changing the algorithm keeps a pasted public key', async () => {
   const screen = await render(Page, { data: pageData() });
   await screen.getByLabelText('Public key (JWK)').fill('{"kty":"EC"}');
   await screen.getByLabelText('Algorithm').selectOptions('ES384');
+  await expect.element(screen.getByLabelText('Public key (JWK)')).toHaveValue('{"kty":"EC"}');
+});
+
+test('changing the algorithm clears a generated public key', async () => {
+  const screen = await render(Page, { data: pageData() });
+  await screen.getByRole('button', { name: 'Make a key pair in this browser' }).click();
+  await expect.element(screen.getByLabelText('Public key (JWK)')).not.toHaveValue('');
+  await screen.getByLabelText('Algorithm').selectOptions('ES384');
   await expect.element(screen.getByLabelText('Public key (JWK)')).toHaveValue('');
+});
+
+test('invalid key input is described and focused', async () => {
+  const screen = await render(Page, { data: pageData() });
+  const field = screen.getByLabelText('Public key (JWK)');
+  await field.fill('not JSON');
+  await screen.getByRole('button', { name: 'Add public key' }).click();
+  await expect.element(field).toHaveAttribute('aria-invalid', 'true');
+  await expect
+    .element(field)
+    .toHaveAttribute('aria-describedby', 'new-public-key-hint new-public-key-error');
+  expect(document.activeElement?.id).toBe('new-public-key');
 });
