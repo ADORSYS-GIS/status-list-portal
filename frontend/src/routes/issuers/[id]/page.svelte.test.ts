@@ -94,7 +94,9 @@ test('changing the algorithm keeps a pasted public key', async () => {
 
 test('changing the algorithm clears a generated public key', async () => {
   const screen = await render(Page, { data: pageData() });
-  await screen.getByRole('button', { name: 'Make a key pair in this browser' }).click();
+  await screen.getByRole('button', { name: 'Make an ES256 key pair in this browser' }).click();
+  await expect.element(screen.getByLabelText('Public key (JWK)')).toHaveValue('');
+  await screen.getByRole('button', { name: 'Download private-key.json' }).click();
   await expect.element(screen.getByLabelText('Public key (JWK)')).not.toHaveValue('');
   await screen.getByLabelText('Algorithm').selectOptions('ES384');
   await expect.element(screen.getByLabelText('Public key (JWK)')).toHaveValue('');

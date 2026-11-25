@@ -9,10 +9,12 @@
     type Issuer,
     type SigningAlgorithm,
   } from '#lib/api/index.ts';
-  import { ALGORITHM_LABELS, browserKeyPair, publicKeyProblem, signingKey } from '#lib/keys.ts';
+  import { ALGORITHM_LABELS, publicKeyProblem, signingKey } from '#lib/keys.ts';
   import { flash } from '#lib/notices.svelte.ts';
 
   import ConfirmDialog from './ConfirmDialog.svelte';
+  import KeyPairGenerator from './KeyPairGenerator.svelte';
+  import KeyPairHelp from './KeyPairHelp.svelte';
   import Notice from './Notice.svelte';
 
   let {
@@ -31,11 +33,11 @@
   let failure = $state<string | null>(null);
   let confirmRevoke: ConfirmDialog;
   let revokeKid = $state('');
-  let generatedFiles = $state<Record<string, string>>({});
-  let generatedFileName = $state('');
   let alg = $state<SigningAlgorithm>(untrack(() => signingKey(issuer)?.alg ?? 'ES256'));
   let publicKey = $state('');
   let generated = $state(false);
+  let generator = $state(0);
+  let ownKey = { publicKey: '', alg: 'ES256' as SigningAlgorithm };
   let keyError = $state<string | null>(null);
   let publicKeyField = $state<HTMLTextAreaElement>();
   let lastActiveRevoke = $derived(issuer.keys.filter((key) => key.state === 'active').length === 1);
@@ -43,24 +45,19 @@
     issuer.usage.keys_limit !== null && issuer.usage.keys >= issuer.usage.keys_limit,
   );
 
-  async function generate() {
+  function useGeneratedKey(publicJwk: string) {
     keyError = null;
-    try {
-      const pair = await browserKeyPair(alg);
-      const filename = `private-key-${crypto.randomUUID()}.json`;
-      const blob = new Blob([JSON.stringify(pair.privateKey)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      publicKey = JSON.stringify(pair.publicKey, null, 2);
-      generatedFileName = filename;
-      generated = true;
-    } catch {
-      keyError = 'Your browser could not make this key pair. Paste a public key instead.';
-    }
+    ownKey = { publicKey, alg };
+    publicKey = publicJwk;
+    generated = true;
+  }
+
+  function useOwnKey() {
+    ({ publicKey, alg } = ownKey);
+    generated = false;
+    generator += 1;
+    keyError = null;
+    void tick().then(() => publicKeyField?.focus());
   }
 
   async function addKey(event: SubmitEvent) {
@@ -81,10 +78,10 @@
         failure = errorMessage(error);
         return;
       }
-      if (generated && added) generatedFiles[added.kid] = generatedFileName;
       if (!signingKey(issuer) && added) selectKey(added.kid);
       publicKey = '';
       generated = false;
+      generator += 1;
       flash(
         page.url.pathname,
         'success',
@@ -96,7 +93,7 @@
 
   function selectKey(kid: string) {
     selectedKid = kid;
-    keyFileName = generatedFiles[kid] ?? 'private-key.json';
+    keyFileName = 'private-key.json';
   }
 
   function askToRevoke(kid: string) {
@@ -189,8 +186,8 @@
             if (generated) {
               publicKey = '';
               generated = false;
-              generatedFileName = '';
             }
+            generator += 1;
             keyError = null;
           }}
         >
@@ -199,17 +196,6 @@
           {/each}
         </select>
       </div>
-      <p class="hint" id="generate-key-hint">
-        Save the downloaded private key. It is the only copy; the browser cannot restore it after
-        this page closes.
-      </p>
-      <button
-        type="button"
-        class="button"
-        onclick={generate}
-        disabled={busy}
-        aria-describedby="generate-key-hint">Make a key pair in this browser</button
-      >
       <div class="field">
         <label for="new-public-key">Public key (JWK)</label>
         <p class="hint" id="new-public-key-hint">Paste only the public key as a JSON Web Key.</p>
@@ -218,21 +204,19 @@
           bind:this={publicKeyField}
           bind:value={publicKey}
           rows="6"
+          readonly={generated}
           spellcheck="false"
-          oninput={() => {
-            generated = false;
-            keyError = null;
-          }}
+          oninput={() => (keyError = null)}
           aria-invalid={keyError ? 'true' : undefined}
           aria-describedby="new-public-key-hint{keyError ? ' new-public-key-error' : ''}"
         ></textarea>
         {#if keyError}<p class="field-error" id="new-public-key-error">{keyError}</p>{/if}
+        {#if generated}
+          <button type="button" class="button" onclick={useOwnKey}>Use your own key instead</button>
+        {/if}
       </div>
-      {#if generated}
-        <p>
-          Keep the downloaded <code>{generatedFileName}</code> safe. It holds the only private half.
-        </p>
-      {/if}
+      {#key generator}<KeyPairGenerator {alg} onkey={useGeneratedKey} />{/key}
+      <KeyPairHelp {alg} />
       <button type="submit" class="button" disabled={busy || !publicKey.trim()}
         >Add public key</button
       >

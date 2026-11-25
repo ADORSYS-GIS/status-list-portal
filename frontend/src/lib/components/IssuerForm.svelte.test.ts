@@ -45,6 +45,67 @@ test('a private key never leaves the form', async () => {
   await expect.element(screen.getByLabelText('Public key')).toHaveFocus();
 });
 
+test('a key pair made in the browser fills in the form once its private key is downloaded', async () => {
+  const { screen, onsubmit } = await renderForm();
+  await screen.getByLabelText('Algorithm').selectOptions('ES384');
+
+  await screen.getByRole('button', { name: 'Make an ES256 key pair in this browser' }).click();
+
+  await expect
+    .element(screen.getByText('Your private key exists only in the files you download here.'))
+    .toBeVisible();
+  await expect.element(screen.getByLabelText('Public key')).toHaveValue('');
+  await expect
+    .element(screen.getByRole('button', { name: 'Download private-key.json' }))
+    .toHaveFocus();
+  for (const name of ['Download private-key.json', 'Download private-key.pem']) {
+    await expect
+      .element(screen.getByRole('button', { name }))
+      .toHaveAccessibleDescription(/exists only in the files you download here/);
+  }
+
+  await screen.getByRole('button', { name: 'Download private-key.pem' }).click();
+  await screen.getByLabelText('Display name').fill('Acme Wallet Issuer');
+  await screen.getByRole('button', { name: 'Register issuer' }).click();
+
+  expect(onsubmit).toHaveBeenCalledOnce();
+  const [{ alg, publicKey }] = onsubmit.mock.calls[0];
+  expect(alg).toBe('ES256');
+  expect(JSON.parse(publicKey)).not.toHaveProperty('d');
+});
+
+test('a key pair made in the browser stays in the form until the developer uses their own key', async () => {
+  const { screen } = await renderForm();
+  await screen.getByRole('button', { name: 'Make an ES256 key pair in this browser' }).click();
+  await screen.getByRole('button', { name: 'Download private-key.json' }).click();
+  await expect.element(screen.getByLabelText('Public key')).toHaveAttribute('readonly');
+  await expect.element(screen.getByLabelText('Algorithm')).toBeDisabled();
+
+  await screen.getByRole('button', { name: 'Use your own key instead' }).click();
+
+  await expect.element(screen.getByLabelText('Public key')).toHaveValue('');
+  await expect.element(screen.getByLabelText('Public key')).not.toHaveAttribute('readonly');
+  await expect.element(screen.getByLabelText('Public key')).toHaveFocus();
+  await expect.element(screen.getByLabelText('Algorithm')).toBeEnabled();
+  await expect
+    .element(screen.getByRole('button', { name: 'Make an ES256 key pair in this browser' }))
+    .toBeVisible();
+});
+
+test('going back to their own key brings back what the developer had entered', async () => {
+  const { screen } = await renderForm();
+  await screen.getByLabelText('Algorithm').selectOptions('ES384');
+  await screen.getByLabelText('Public key').fill(PUBLIC_KEY);
+  await screen.getByRole('button', { name: 'Make an ES256 key pair in this browser' }).click();
+  await screen.getByRole('button', { name: 'Download private-key.json' }).click();
+  await expect.element(screen.getByLabelText('Public key')).not.toHaveValue(PUBLIC_KEY);
+
+  await screen.getByRole('button', { name: 'Use your own key instead' }).click();
+
+  await expect.element(screen.getByLabelText('Public key')).toHaveValue(PUBLIC_KEY);
+  await expect.element(screen.getByLabelText('Algorithm')).toHaveValue('ES384');
+});
+
 test('an empty form points at the first field to fix', async () => {
   const { screen, onsubmit } = await renderForm();
 

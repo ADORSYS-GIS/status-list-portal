@@ -124,31 +124,6 @@ console.log(\`\${input}.\${Buffer.from(signature).toString('base64url')}\`);
 `;
 }
 
-/** Makes a key pair locally. The private JWK must be downloaded and is never sent to the portal. */
-export async function browserKeyPair(
-  alg: SigningAlgorithm,
-): Promise<{ publicKey: JsonWebKey; privateKey: JsonWebKey }> {
-  const parameters: Record<SigningAlgorithm, EcKeyGenParams | RsaHashedKeyGenParams | Algorithm> = {
-    ES256: { name: 'ECDSA', namedCurve: 'P-256' },
-    ES384: { name: 'ECDSA', namedCurve: 'P-384' },
-    EdDSA: { name: 'Ed25519' },
-    PS256: {
-      name: 'RSA-PSS',
-      hash: 'SHA-256',
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-    },
-  };
-  const pair = (await crypto.subtle.generateKey(parameters[alg], true, [
-    'sign',
-    'verify',
-  ])) as CryptoKeyPair;
-  return {
-    publicKey: await crypto.subtle.exportKey('jwk', pair.publicKey),
-    privateKey: await crypto.subtle.exportKey('jwk', pair.privateKey),
-  };
-}
-
 /** Shell commands that publish a status list with one valid entry, as `issuer`. */
 export function publishCommands(issuer: Issuer): string {
   return `TOKEN=$(node mint-token.mjs)

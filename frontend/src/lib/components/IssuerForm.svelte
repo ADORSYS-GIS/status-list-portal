@@ -12,6 +12,7 @@
   import { SIGNING_ALGORITHMS, type SigningAlgorithm, type Terms } from '#lib/api/index.ts';
   import { ALGORITHM_LABELS, publicKeyProblem } from '#lib/keys.ts';
 
+  import KeyPairGenerator from './KeyPairGenerator.svelte';
   import KeyPairHelp from './KeyPairHelp.svelte';
 
   const DISPLAY_NAME_MAX = 100;
@@ -31,10 +32,17 @@
   let alg = $state<SigningAlgorithm>('ES256');
   let publicKey = $state('');
   let acceptTerms = $state(false);
+  // A key made here stays as made: its downloaded private half signs for nothing else.
+  let generated = $state(false);
+  // Changing it remounts the generator, which drops the key pair it holds.
+  let generator = $state(0);
+  // What a key made here replaced, so that going back to their own key loses nothing.
+  let ownKey: { publicKey: string; alg: SigningAlgorithm } = { publicKey: '', alg: 'ES256' };
   // Shown once a submit fails, then kept up to date as the fields change.
   let submitted = $state(false);
   const errors = $derived(submitted ? check() : {});
   let form: HTMLFormElement;
+  let publicKeyField: HTMLTextAreaElement;
 
   function check(): { displayName?: string; publicKey?: string; terms?: string } {
     const name = displayName.trim();
@@ -59,6 +67,22 @@
     }
     onsubmit({ displayName: displayName.trim(), alg, publicKey });
   }
+
+  function useGeneratedKey(publicJwk: string) {
+    ownKey = { publicKey, alg };
+    publicKey = publicJwk;
+    alg = 'ES256';
+    generated = true;
+  }
+
+  async function useOwnKey() {
+    ({ publicKey, alg } = ownKey);
+    generated = false;
+    generator += 1;
+    // The button that had focus is gone; the next step is pasting a key.
+    await tick();
+    publicKeyField.focus();
+  }
 </script>
 
 <form bind:this={form} onsubmit={submit} novalidate>
@@ -81,7 +105,7 @@
   <div class="field">
     <label for="alg">Algorithm</label>
     <p class="hint" id="alg-hint">The algorithm your issuer signs its tokens with.</p>
-    <select id="alg" bind:value={alg} aria-describedby="alg-hint">
+    <select id="alg" bind:value={alg} disabled={generated} aria-describedby="alg-hint">
       {#each SIGNING_ALGORITHMS as option (option)}
         <option value={option}>{ALGORITHM_LABELS[option]}</option>
       {/each}
@@ -95,8 +119,10 @@
     </p>
     <textarea
       id="public-key"
+      bind:this={publicKeyField}
       bind:value={publicKey}
       rows="6"
+      readonly={generated}
       spellcheck="false"
       placeholder={'{"kty":"EC","crv":"P-256","x":"…","y":"…"}'}
       aria-invalid={errors.publicKey ? 'true' : undefined}
@@ -104,8 +130,16 @@
     {#if errors.publicKey}
       <p class="field-error" id="public-key-error">{errors.publicKey}</p>
     {/if}
+    {#if generated}
+      <button type="button" class="button own-key" onclick={useOwnKey}>
+        Use your own key instead
+      </button>
+    {/if}
   </div>
 
+  {#key generator}
+    <KeyPairGenerator onkey={useGeneratedKey} />
+  {/key}
   <KeyPairHelp {alg} />
 
   {#if !termsAccepted}
@@ -137,6 +171,10 @@
 <style>
   form {
     max-width: 40rem;
+  }
+
+  .own-key {
+    justify-self: start;
   }
 
   .checkbox {
