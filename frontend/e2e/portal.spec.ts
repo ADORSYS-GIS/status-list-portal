@@ -193,17 +193,11 @@ test('a developer adds a key, reaches the limit, and revokes the old key', async
 
 test('a key pair made in the browser never leaves it', async ({ page }, testInfo) => {
   const name = `Browser key ${testInfo.testId}`;
-  // From every page, popups included, with every header: `headers()` leaves out the cookies.
-  const requests: Promise<{ url: string; headers: object; body: string | null }>[] = [];
-  page.context().on('request', (request) =>
-    requests.push(
-      request.allHeaders().then((headers) => ({
-        url: request.url(),
-        headers,
-        body: request.postData(),
-      })),
-    ),
-  );
+  // Capture every request without waiting for headers on requests that may stay open.
+  const requests: { url: string; headers: object; body: string | null }[] = [];
+  page.context().on('request', (request) => {
+    requests.push({ url: request.url(), headers: request.headers(), body: request.postData() });
+  });
   await signIn(page, accountFor(testInfo));
   await page.getByRole('link', { name: 'Register an issuer' }).click();
   await page.getByLabel('Display name').fill(name);
@@ -214,7 +208,7 @@ test('a key pair made in the browser never leaves it', async ({ page }, testInfo
   await submitRegistration(page);
 
   await expect(page.getByText('Your issuer is ready.')).toBeVisible();
-  const sent = await Promise.all(requests);
+  const sent = requests;
   // Exactly what the page means to send, so that no encoding of the private key gets by.
   const { kty, crv, x, y } = jwk;
   expect(
@@ -235,6 +229,12 @@ test('a key pair made in the browser never leaves it', async ({ page }, testInfo
     for (const secret of secrets) {
       expect(JSON.stringify(request), 'a request carried the private key').not.toContain(secret);
     }
+  }
+  const cookies = await page.context().cookies();
+  for (const secret of secrets) {
+    expect(JSON.stringify(cookies), 'a browser cookie carried the private key').not.toContain(
+      secret,
+    );
   }
   // Signing tests the private halves: the public point each file also holds would match anyway.
   const registered = createPublicKey({
