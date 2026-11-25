@@ -1,4 +1,3 @@
-// @ts-expect-error ESLint 10 does not provide a declaration for this config-only package.
 import js from '@eslint/js';
 import svelte from 'eslint-plugin-svelte';
 import { defineConfig } from 'eslint/config';
