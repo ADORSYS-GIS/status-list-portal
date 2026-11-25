@@ -224,6 +224,14 @@ expression: openapi
         "responses": {
           "200": {
             "description": "The issuer.",
+            "headers": {
+              "issuer-version": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The issuer version to send as if-issuer-version when changing keys."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -337,6 +345,307 @@ expression: openapi
           },
           "502": {
             "description": "The Status List Server did not complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/issuers/{id}/keys": {
+      "post": {
+        "tags": [
+          "issuers"
+        ],
+        "summary": "Adds an active key to one of the signed-in user's issuers.",
+        "operationId": "add_issuer_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The issuer's id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "if-issuer-version",
+            "in": "header",
+            "description": "The issuer-version received when this page was loaded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewIssuerKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Key added.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuerKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The current terms are not accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The user has no issuer with this id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "key_limit_reached, key_material_in_use, issuer_changed, or issuer_suspended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid or private key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "The if-issuer-version header is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many key additions in a short time.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds until the user may try again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The Status List Server did not complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The admin API is temporarily unavailable or contended.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds to wait when supplied by the admin API."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/issuers/{id}/keys/{kid}/revoke": {
+      "post": {
+        "tags": [
+          "issuers"
+        ],
+        "summary": "Permanently revokes one key of the signed-in user's issuer.",
+        "operationId": "revoke_issuer_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The issuer's id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kid",
+            "in": "path",
+            "description": "The key id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "if-issuer-version",
+            "in": "header",
+            "description": "The issuer-version received when this page was loaded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Key revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuerKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The user has no issuer or key with this id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "issuer_changed for a stale version, or key_not_active for a reserved key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "The if-issuer-version header is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many key revocations in a short time.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds until the user may try again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The Status List Server did not complete the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The admin API is temporarily unavailable or contended.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds to wait when supplied by the admin API."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -832,11 +1141,15 @@ expression: openapi
           "sandbox_issuer_limit_reached",
           "issuer_registration_in_progress",
           "key_material_in_use",
+          "key_limit_reached",
           "invalid_public_key",
           "private_key_submitted",
           "invalid_display_name",
           "issuer_changed",
           "issuer_not_renewable",
+          "issuer_suspended",
+          "key_not_active",
+          "precondition_required",
           "registration_being_decided",
           "registration_already_decided",
           "invalid_rejection_reason",
@@ -1098,6 +1411,22 @@ expression: openapi
             "description": "Whether the user accepted the current terms of use. Registering an issuer needs it."
           }
         }
+      },
+      "NewIssuerKeyRequest": {
+        "type": "object",
+        "required": [
+          "alg",
+          "public_key"
+        ],
+        "properties": {
+          "alg": {
+            "$ref": "#/components/schemas/SigningAlgorithm"
+          },
+          "public_key": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
       },
       "NewIssuerRequest": {
         "type": "object",

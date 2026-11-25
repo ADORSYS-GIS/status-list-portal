@@ -10,14 +10,15 @@ mod token;
 
 pub use issuer::{
     Issuer, IssuerChange, IssuerKey, IssuerPage, IssuerQuery, IssuerSource, IssuerState,
-    IssuerTier, IssuerUsage, KeyState, KeyType, NewIssuer, Owner, PublicJwk, RequestedState,
-    SigningAlgorithm, UnknownAlgorithm,
+    IssuerTier, IssuerUsage, KeyState, KeyType, NewIssuer, NewIssuerKey, Owner, PublicJwk,
+    RequestedState, SigningAlgorithm, UnknownAlgorithm,
 };
 
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use derive_more::{Deref, Display};
+use http::header::RETRY_AFTER;
 use http::{HeaderName, StatusCode};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Histogram, Meter};
@@ -44,15 +45,19 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 /// The contract's `maxLength` for an issuer id. A longer one cannot exist.
 const ISSUER_ID_MAX_CHARS: usize = 255;
+/// The contract's `maxLength` for a key id.
+const KEY_ID_MAX_CHARS: usize = 255;
 /// The most issuers the admin API returns in one page.
 const MAX_PAGE_SIZE: u8 = 100;
 /// The version of an issuer's writable state, on every response about one issuer.
-const ISSUER_VERSION: HeaderName = HeaderName::from_static("issuer-version");
+pub(crate) const ISSUER_VERSION: HeaderName = HeaderName::from_static("issuer-version");
 /// A change applies only while the issuer is at the version this names.
-const IF_ISSUER_VERSION: HeaderName = HeaderName::from_static("if-issuer-version");
+pub(crate) const IF_ISSUER_VERSION: HeaderName = HeaderName::from_static("if-issuer-version");
 /// The admin API's routes, as telemetry names its calls.
 const ISSUERS_ROUTE: &str = "/admin/v1/issuers";
 const ISSUER_ROUTE: &str = "/admin/v1/issuers/{id}";
+const ISSUER_KEYS_ROUTE: &str = "/admin/v1/issuers/{id}/keys";
+const ISSUER_KEY_ROUTE: &str = "/admin/v1/issuers/{id}/keys/{kid}";
 
 /// Client of the admin API, signed in as the portal's admin principal.
 pub struct AdminApi {
@@ -82,6 +87,10 @@ pub struct OwnedIssuer {
 }
 
 impl OwnedIssuer {
+    pub fn version(&self) -> &str {
+        &self.version.0
+    }
+
     pub fn into_issuer(self) -> Issuer {
         self.issuer
     }
@@ -99,6 +108,8 @@ pub enum AdminApiError {
         code: ErrorCode,
         /// Human-readable, for the logs; its wording is not part of the contract.
         description: Option<String>,
+        /// How long the admin API asks us to wait before retrying.
+        retry_after: Option<u64>,
     },
     /// The admin API answered in a way its contract does not allow.
     #[error("the admin API sent {0}")]
@@ -106,7 +117,7 @@ pub enum AdminApiError {
     /// The admin API limits how often the portal may call it, and the portal called too
     /// often.
     #[error("the admin API is throttling the portal")]
-    Throttled,
+    Throttled { retry_after: Option<u64> },
     #[error("admin API request failed")]
     Request(#[source] reqwest::Error),
     #[error("failed to sign an admin token")]
@@ -137,6 +148,7 @@ pub enum ErrorCode {
     DynamicIssuersDisabled,
     KeyLimitReached,
     KeyMaterialInUse,
+    WriteContention,
     PreconditionFailed,
     PayloadTooLarge,
     InvalidPublicJwk,
@@ -288,10 +300,68 @@ impl AdminApi {
         self.found(request).await
     }
 
+    async fn add_key(
+        &self,
+        id: &str,
+        version: &IssuerVersion,
+        key: &NewIssuerKey,
+    ) -> Result<Option<IssuerKey>, AdminApiError> {
+        let Some(mut url) = self.issuer_url(id) else {
+            return Ok(None);
+        };
+        url.path_segments_mut()
+            .expect("issuer URL has a path")
+            .push("keys");
+        let request = self
+            .http
+            .post(url)
+            .header(IF_ISSUER_VERSION, &version.0)
+            .json(key);
+        match self.send(ISSUER_KEYS_ROUTE, request).await {
+            Ok(response) => Ok(Some(with_version(response).await?.0)),
+            Err(error) if error.code() == Some(ErrorCode::IssuerNotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn revoke_key(
+        &self,
+        id: &str,
+        kid: &str,
+        version: &IssuerVersion,
+    ) -> Result<Option<IssuerKey>, AdminApiError> {
+        if !valid_path_segment(kid, KEY_ID_MAX_CHARS) {
+            return Ok(None);
+        }
+        let Some(mut url) = self.issuer_url(id) else {
+            return Ok(None);
+        };
+        url.path_segments_mut()
+            .expect("issuer URL has a path")
+            .extend(["keys", kid]);
+        let request = self
+            .http
+            .patch(url)
+            .header(IF_ISSUER_VERSION, &version.0)
+            .json(&serde_json::json!({ "state": "revoked" }));
+        match self.send(ISSUER_KEY_ROUTE, request).await {
+            Ok(response) => Ok(Some(with_version(response).await?.0)),
+            Err(error)
+                if matches!(
+                    error.code(),
+                    Some(ErrorCode::IssuerNotFound | ErrorCode::KeyNotFound)
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// `None` for an id that one URL path segment cannot hold.
     fn issuer_url(&self, id: &str) -> Option<Url> {
         // A path segment drops `.` and `..`, which would leave the issuer's URL.
-        if matches!(id, "" | "." | "..") || id.chars().count() > ISSUER_ID_MAX_CHARS {
+        if !valid_path_segment(id, ISSUER_ID_MAX_CHARS) {
             return None;
         }
         let mut url = self.issuers_url.clone();
@@ -393,6 +463,11 @@ impl AdminApi {
     }
 }
 
+/// Rejects segments that a URL parser would remove, or that exceed the contract's limit.
+fn valid_path_segment(segment: &str, max_chars: usize) -> bool {
+    !matches!(segment, "" | "." | "..") && segment.chars().count() <= max_chars
+}
+
 impl OwnedIssuers<'_> {
     /// One page of the account's issuers. `cursor` is the previous page's `next_cursor`.
     pub async fn list(&self, cursor: Option<&str>) -> Result<IssuerPage, AdminApiError> {
@@ -456,6 +531,30 @@ impl OwnedIssuers<'_> {
         Ok(updated.map(|(issuer, _)| issuer))
     }
 
+    pub async fn add_key(
+        &self,
+        current: &OwnedIssuer,
+        key: &NewIssuerKey,
+    ) -> Result<Option<IssuerKey>, AdminApiError> {
+        if !self.owns(current) {
+            return Ok(None);
+        }
+        self.api.add_key(&current.id, &current.version, key).await
+    }
+
+    pub async fn revoke_key(
+        &self,
+        current: &OwnedIssuer,
+        kid: &str,
+    ) -> Result<Option<IssuerKey>, AdminApiError> {
+        if !self.owns(current) {
+            return Ok(None);
+        }
+        self.api
+            .revoke_key(&current.id, kid, &current.version)
+            .await
+    }
+
     fn owns(&self, issuer: &Issuer) -> bool {
         issuer.owner.as_ref() == Some(self.owner)
     }
@@ -470,17 +569,30 @@ impl AdminApiError {
         }
     }
 
+    pub fn retry_after(&self) -> Option<u64> {
+        match self {
+            Self::Refused { retry_after, .. } | Self::Throttled { retry_after } => *retry_after,
+            _ => None,
+        }
+    }
+
     async fn from_response(response: Response) -> Self {
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
         // The admin API's rate limiter answers before its handlers, without an error code.
         if status == StatusCode::TOO_MANY_REQUESTS {
-            return Self::Throttled;
+            return Self::Throttled { retry_after };
         }
         match response.json::<ErrorResponse>().await {
             Ok(body) => Self::Refused {
                 status,
                 code: body.error,
                 description: body.error_description,
+                retry_after,
             },
             Err(_) => Self::Unexpected(format!("{status} without an error code")),
         }

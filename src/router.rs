@@ -21,6 +21,8 @@ pub(crate) fn openapi_router() -> OpenApiRouter<ServerContext> {
         .routes(routes!(issuer::list_issuers, issuer::create_issuer))
         .routes(routes!(issuer::get_issuer, issuer::delete_issuer))
         .routes(routes!(issuer::renew_issuer))
+        .routes(routes!(issuer::add_issuer_key))
+        .routes(routes!(issuer::revoke_issuer_key))
         .routes(routes!(registration::list_registrations))
         .routes(routes!(registration::withdraw_registration))
 }

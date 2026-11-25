@@ -1,18 +1,14 @@
 <script lang="ts">
   import type { Issuer } from '#lib/api/index.ts';
   import { formatDateTime, usageText } from '#lib/format.ts';
-  import { signingKey } from '#lib/keys.ts';
 
   import CopyButton from './CopyButton.svelte';
   import Expiry from './Expiry.svelte';
 
-  let { issuer }: { issuer: Issuer } = $props();
-
-  let key = $derived(signingKey(issuer));
+  let { issuer, key }: { issuer: Issuer; key?: Issuer['keys'][number] } = $props();
   /** What a developer copies into their tokens and requests. */
   let copyable = $derived([
     { label: 'Issuer id (iss)', value: issuer.id },
-    { label: 'Key id (kid)', value: key?.kid ?? '' },
     { label: 'Audience (aud)', value: issuer.audience },
     { label: 'Management API', value: issuer.management_url },
   ]);
@@ -29,8 +25,19 @@
     </div>
   {/each}
   <div class="fact">
+    <dt>Key id (kid)</dt>
+    <dd>
+      {#if key}
+        <span class="mono value">{key.kid}</span>
+        <CopyButton text={key.kid} label="Key id (kid)" />
+      {:else}
+        No active key
+      {/if}
+    </dd>
+  </div>
+  <div class="fact">
     <dt>Algorithm (alg)</dt>
-    <dd><span class="mono">{key?.alg}</span></dd>
+    <dd><span class="mono">{key?.alg ?? 'No active key'}</span></dd>
   </div>
   <div class="fact">
     <dt>Expires</dt>

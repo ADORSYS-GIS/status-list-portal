@@ -48,6 +48,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/issuers/{id}/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adds an active key to one of the signed-in user's issuers. */
+        post: operations["add_issuer_key"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/issuers/{id}/keys/{kid}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Permanently revokes one key of the signed-in user's issuer. */
+        post: operations["revoke_issuer_key"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/issuers/{id}/renew": {
         parameters: {
             query?: never;
@@ -261,7 +295,7 @@ export interface components {
          *     New codes may be added. Clients must handle an unknown code as they would its HTTP status.
          * @enum {string}
          */
-        ApiErrorCode: "unauthorized" | "not_found" | "method_not_allowed" | "cross_origin_forbidden" | "terms_not_accepted" | "terms_changed" | "registration_limit_reached" | "active_issuer_limit_reached" | "sandbox_issuer_limit_reached" | "issuer_registration_in_progress" | "key_material_in_use" | "invalid_public_key" | "private_key_submitted" | "invalid_display_name" | "issuer_changed" | "issuer_not_renewable" | "registration_being_decided" | "registration_already_decided" | "invalid_rejection_reason" | "invalid_json" | "invalid_request_body" | "invalid_query" | "body_read_failed" | "unsupported_media_type" | "payload_too_large" | "rate_limited" | "bad_gateway" | "service_unavailable" | "request_timed_out" | "internal_error";
+        ApiErrorCode: "unauthorized" | "not_found" | "method_not_allowed" | "cross_origin_forbidden" | "terms_not_accepted" | "terms_changed" | "registration_limit_reached" | "active_issuer_limit_reached" | "sandbox_issuer_limit_reached" | "issuer_registration_in_progress" | "key_material_in_use" | "key_limit_reached" | "invalid_public_key" | "private_key_submitted" | "invalid_display_name" | "issuer_changed" | "issuer_not_renewable" | "issuer_suspended" | "key_not_active" | "precondition_required" | "registration_being_decided" | "registration_already_decided" | "invalid_rejection_reason" | "invalid_json" | "invalid_request_body" | "invalid_query" | "body_read_failed" | "unsupported_media_type" | "payload_too_large" | "rate_limited" | "bad_gateway" | "service_unavailable" | "request_timed_out" | "internal_error";
         ApiErrorDetail: {
             /** @description Stable machine-readable reason. Clients may branch on this value. */
             code: components["schemas"]["ApiErrorCode"];
@@ -381,6 +415,10 @@ export interface components {
             name: string | null;
             /** @description Whether the user accepted the current terms of use. Registering an issuer needs it. */
             terms_accepted: boolean;
+        };
+        NewIssuerKeyRequest: {
+            alg: components["schemas"]["SigningAlgorithm"];
+            public_key: Record<string, never>;
         };
         /** @description A sandbox issuer to register. */
         NewIssuerRequest: {
@@ -608,6 +646,8 @@ export interface operations {
             /** @description The issuer. */
             200: {
                 headers: {
+                    /** @description The issuer version to send as if-issuer-version when changing keys. */
+                    "issuer-version"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -703,6 +743,216 @@ export interface operations {
             /** @description The Status List Server did not complete the request. */
             502: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    add_issuer_key: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The issuer-version received when this page was loaded. */
+                "if-issuer-version": string;
+            };
+            path: {
+                /** @description The issuer's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewIssuerKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Key added. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuerKeyResponse"];
+                };
+            };
+            /** @description Not signed in. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The current terms are not accepted. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The user has no issuer with this id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description key_limit_reached, key_material_in_use, issuer_changed, or issuer_suspended. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Invalid or private key. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The if-issuer-version header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Too many key additions in a short time. */
+            429: {
+                headers: {
+                    /** @description Seconds until the user may try again. */
+                    "retry-after"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The Status List Server did not complete the request. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The admin API is temporarily unavailable or contended. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait when supplied by the admin API. */
+                    "retry-after"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    revoke_issuer_key: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The issuer-version received when this page was loaded. */
+                "if-issuer-version": string;
+            };
+            path: {
+                /** @description The issuer's id. */
+                id: string;
+                /** @description The key id. */
+                kid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Key revoked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuerKeyResponse"];
+                };
+            };
+            /** @description Not signed in. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The user has no issuer or key with this id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description issuer_changed for a stale version, or key_not_active for a reserved key. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The if-issuer-version header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Too many key revocations in a short time. */
+            429: {
+                headers: {
+                    /** @description Seconds until the user may try again. */
+                    "retry-after"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The Status List Server did not complete the request. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The admin API is temporarily unavailable or contended. */
+            503: {
+                headers: {
+                    /** @description Seconds to wait when supplied by the admin API. */
+                    "retry-after"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -1092,7 +1342,7 @@ type ReadonlyArray<T> = [
 ] extends [
     unknown[]
 ] ? Readonly<Exclude<T, undefined>> : Readonly<Exclude<T, undefined>[]>;
-export const apiErrorCodeValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["ApiErrorCode"]> = ["unauthorized", "not_found", "method_not_allowed", "cross_origin_forbidden", "terms_not_accepted", "terms_changed", "registration_limit_reached", "active_issuer_limit_reached", "sandbox_issuer_limit_reached", "issuer_registration_in_progress", "key_material_in_use", "invalid_public_key", "private_key_submitted", "invalid_display_name", "issuer_changed", "issuer_not_renewable", "registration_being_decided", "registration_already_decided", "invalid_rejection_reason", "invalid_json", "invalid_request_body", "invalid_query", "body_read_failed", "unsupported_media_type", "payload_too_large", "rate_limited", "bad_gateway", "service_unavailable", "request_timed_out", "internal_error"];
+export const apiErrorCodeValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["ApiErrorCode"]> = ["unauthorized", "not_found", "method_not_allowed", "cross_origin_forbidden", "terms_not_accepted", "terms_changed", "registration_limit_reached", "active_issuer_limit_reached", "sandbox_issuer_limit_reached", "issuer_registration_in_progress", "key_material_in_use", "key_limit_reached", "invalid_public_key", "private_key_submitted", "invalid_display_name", "issuer_changed", "issuer_not_renewable", "issuer_suspended", "key_not_active", "precondition_required", "registration_being_decided", "registration_already_decided", "invalid_rejection_reason", "invalid_json", "invalid_request_body", "invalid_query", "body_read_failed", "unsupported_media_type", "payload_too_large", "rate_limited", "bad_gateway", "service_unavailable", "request_timed_out", "internal_error"];
 export const issuerStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["IssuerState"]> = ["active", "suspended", "expired"];
 export const keyStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["KeyState"]> = ["active", "reserved", "revoked"];
 export const registrationStateValues: ReadonlyArray<FlattenedDeepRequired<components>["schemas"]["RegistrationState"]> = ["pending", "approved", "rejected"];

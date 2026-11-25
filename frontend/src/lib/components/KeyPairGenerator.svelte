@@ -2,16 +2,18 @@
   import { tick } from 'svelte';
 
   import { makeKeyPair, type KeyPair } from '#lib/key-pair.ts';
+  import type { SigningAlgorithm } from '#lib/api/index.ts';
 
   import Icon from './Icon.svelte';
   import Notice from './Notice.svelte';
 
   /**
-   * Gets the public key once the private key is downloaded: an issuer registered with a key
-   * whose private half was never downloaded could never sign a token. Browsers cannot tell
+   * Gets the public key once the private key is downloaded: a key registered before its
+   * private half was downloaded could never sign a token. Browsers cannot tell
    * whether the file was then saved.
    */
-  let { onkey }: { onkey: (publicJwk: string) => void } = $props();
+  let { alg = 'ES256', onkey }: { alg?: SigningAlgorithm; onkey: (publicJwk: string) => void } =
+    $props();
 
   /** Some browsers read a download's URL after the click returns; FileSaver.js waits as long. */
   const REVOKE_DELAY_MS = 40_000;
@@ -28,7 +30,7 @@
     // A second pair would replace the first after its private key may have been downloaded.
     making = true;
     try {
-      pair = await makeKeyPair();
+      pair = await makeKeyPair(alg);
     } catch {
       failed = true;
       return;
@@ -93,7 +95,7 @@
     </p>
   {:else}
     <button type="button" class="button" onclick={make} disabled={making}>
-      <Icon name="key" /> Make an ES256 key pair in this browser
+      <Icon name="key" /> Make a key pair in this browser
     </button>
     {#if failed}
       <p class="field-error" role="alert">

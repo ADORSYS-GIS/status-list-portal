@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest';
 
 import type { Issuer, SigningAlgorithm } from './api';
 import { makeKeyPair } from './key-pair';
-import { keyPairScript, publicKeyProblem, publishCommands, tokenScript } from './keys';
+import { keyPairScript, publicKeyProblem, publishCommands, signingKey, tokenScript } from './keys';
 
 const run = promisify(execFile);
 
@@ -139,3 +139,28 @@ test('publishing goes to the management API with a token', () => {
   );
   expect(commands).toContain('Authorization: Bearer $TOKEN');
 });
+
+test('overlapping keys remain independently selectable for the token example', () => {
+  const current = issuer('ES256');
+  current.keys.unshift({ kid: 'new-kid', alg: 'ES384', state: 'active' });
+  expect(signingKey(current, 'the-kid')?.kid).toBe('the-kid');
+  const oldScript = tokenScript(current, 'the-kid');
+  expect(oldScript).toContain('"kid":"the-kid"');
+  expect(oldScript).toContain("namedCurve: 'P-256'");
+  const newScript = tokenScript(current, 'new-kid', 'private-key-new.json');
+  expect(newScript).toContain('"kid":"new-kid"');
+  expect(newScript).toContain('private-key-new.json');
+  expect(newScript).toContain("namedCurve: 'P-384'");
+  current.keys[1].state = 'revoked';
+  expect(signingKey(current, 'the-kid')).toBeUndefined();
+});
+
+test.each(['ES256', 'ES384', 'EdDSA', 'PS256'] as const)(
+  'a %s browser key pair exposes only its public half for registration',
+  async (alg) => {
+    const pair = await makeKeyPair(alg);
+    expect(publicKeyProblem(pair.publicJwk)).toBeNull();
+    expect(JSON.parse(pair.privateJwk)).toHaveProperty('d');
+    expect(JSON.parse(pair.publicJwk)).not.toHaveProperty('d');
+  },
+);

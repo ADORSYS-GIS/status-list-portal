@@ -10,19 +10,12 @@
   import { tick } from 'svelte';
 
   import { SIGNING_ALGORITHMS, type SigningAlgorithm, type Terms } from '#lib/api/index.ts';
-  import { publicKeyProblem } from '#lib/keys.ts';
+  import { ALGORITHM_LABELS, publicKeyProblem } from '#lib/keys.ts';
 
   import KeyPairGenerator from './KeyPairGenerator.svelte';
   import KeyPairHelp from './KeyPairHelp.svelte';
 
   const DISPLAY_NAME_MAX = 100;
-  const ALGORITHM_LABELS: Record<SigningAlgorithm, string> = {
-    ES256: 'ES256: ECDSA on P-256, a good default',
-    ES384: 'ES384: ECDSA on P-384',
-    EdDSA: 'EdDSA: Ed25519',
-    PS256: 'PS256: RSA-PSS, 2048 bits or more',
-  };
-
   let {
     terms,
     termsAccepted,
@@ -78,7 +71,6 @@
   function useGeneratedKey(publicJwk: string) {
     ownKey = { publicKey, alg };
     publicKey = publicJwk;
-    alg = 'ES256';
     generated = true;
   }
 
@@ -112,7 +104,13 @@
   <div class="field">
     <label for="alg">Algorithm</label>
     <p class="hint" id="alg-hint">The algorithm your issuer signs its tokens with.</p>
-    <select id="alg" bind:value={alg} disabled={generated} aria-describedby="alg-hint">
+    <select
+      id="alg"
+      bind:value={alg}
+      disabled={generated}
+      aria-describedby="alg-hint"
+      onchange={() => (generator += 1)}
+    >
       {#each SIGNING_ALGORITHMS as option (option)}
         <option value={option}>{ALGORITHM_LABELS[option]}</option>
       {/each}
@@ -145,7 +143,7 @@
   </div>
 
   {#key generator}
-    <KeyPairGenerator onkey={useGeneratedKey} />
+    <KeyPairGenerator {alg} onkey={useGeneratedKey} />
   {/key}
   <KeyPairHelp {alg} />
 

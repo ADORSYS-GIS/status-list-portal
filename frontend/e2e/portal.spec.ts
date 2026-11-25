@@ -19,7 +19,8 @@ interface HeldIssuer {
   state: string;
   expires_at: number;
   version: number;
-  keys: { public_key: JsonWebKey }[];
+  keys: { kid: string; state: string; public_key: JsonWebKey }[];
+  usage: { keys: number; keys_limit: number };
 }
 
 /** A GitHub account of the test's own, so tests share nothing. */
@@ -155,30 +156,59 @@ test('a key registers one issuer only', async ({ page }, testInfo) => {
   await expect(page.getByRole('heading', { name: 'Register an issuer' })).toBeVisible();
 });
 
+test('a developer adds a key, reaches the limit, and revokes the old key', async ({
+  page,
+}, testInfo) => {
+  const name = `Rotation ${testInfo.testId}`;
+  await signIn(page, accountFor(testInfo));
+  await register(page, name, await publicKey());
+  await expect(page.getByRole('heading', { name, level: 1 })).toBeVisible();
+  await expect(page.getByText('Your issuer is ready.')).toBeVisible();
+  const before = await heldIssuer(name);
+  const oldKid = before.keys[0].kid;
+
+  await page.getByRole('button', { name: 'Make a key pair in this browser' }).click();
+  const privateJwk: JsonWebKey = JSON.parse(await download(page, 'Download private-key.json'));
+  const { kty, crv, x, y } = privateJwk;
+  await expect(page.getByLabel('Public key (JWK)')).toHaveValue(JSON.stringify({ kty, crv, x, y }));
+  await page.getByRole('button', { name: 'Add public key' }).click();
+  await expect(page.getByText('Key added. Move your signers')).toBeVisible();
+  const added = await heldIssuer(name);
+  expect(added.version).toBe(before.version + 1);
+  expect(added.usage.keys).toBe(2);
+  expect(added.keys.filter((key) => key.state === 'active')).toHaveLength(2);
+  await expect(page.getByText('The key limit is reached.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add public key' })).toBeHidden();
+
+  await page.getByRole('button', { name: `Revoke key ${oldKid}` }).click();
+  const confirm = page.getByRole('dialog', { name: `Revoke key ${oldKid}?` });
+  await confirm.getByRole('button', { name: 'Revoke key' }).click();
+  await expect(page.getByText('Key revoked. Tokens signed with it')).toBeVisible();
+  const revoked = await heldIssuer(name);
+  expect(revoked.version).toBe(added.version + 1);
+  expect(revoked.keys.find((key) => key.kid === oldKid)?.state).toBe('revoked');
+  expect(revoked.keys.filter((key) => key.state === 'active')).toHaveLength(1);
+  expect(revoked.usage.keys).toBe(1);
+});
+
 test('a key pair made in the browser never leaves it', async ({ page }, testInfo) => {
   const name = `Browser key ${testInfo.testId}`;
-  // From every page, popups included, with every header: `headers()` leaves out the cookies.
-  const requests: Promise<{ url: string; headers: object; body: string | null }>[] = [];
-  page.context().on('request', (request) =>
-    requests.push(
-      request.allHeaders().then((headers) => ({
-        url: request.url(),
-        headers,
-        body: request.postData(),
-      })),
-    ),
-  );
+  // Capture every request without waiting for headers on requests that may stay open.
+  const requests: { url: string; headers: object; body: string | null }[] = [];
+  page.context().on('request', (request) => {
+    requests.push({ url: request.url(), headers: request.headers(), body: request.postData() });
+  });
   await signIn(page, accountFor(testInfo));
   await page.getByRole('link', { name: 'Register an issuer' }).click();
   await page.getByLabel('Display name').fill(name);
 
-  await page.getByRole('button', { name: 'Make an ES256 key pair in this browser' }).click();
+  await page.getByRole('button', { name: 'Make a key pair in this browser' }).click();
   const pem = await download(page, 'Download private-key.pem');
   const jwk: JsonWebKey = JSON.parse(await download(page, 'Download private-key.json'));
   await submitRegistration(page);
 
   await expect(page.getByText('Your issuer is ready.')).toBeVisible();
-  const sent = await Promise.all(requests);
+  const sent = requests;
   // Exactly what the page means to send, so that no encoding of the private key gets by.
   const { kty, crv, x, y } = jwk;
   expect(
@@ -199,6 +229,12 @@ test('a key pair made in the browser never leaves it', async ({ page }, testInfo
     for (const secret of secrets) {
       expect(JSON.stringify(request), 'a request carried the private key').not.toContain(secret);
     }
+  }
+  const cookies = await page.context().cookies();
+  for (const secret of secrets) {
+    expect(JSON.stringify(cookies), 'a browser cookie carried the private key').not.toContain(
+      secret,
+    );
   }
   // Signing tests the private halves: the public point each file also holds would match anyway.
   const registered = createPublicKey({

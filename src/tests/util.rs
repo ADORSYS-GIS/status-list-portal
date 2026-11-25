@@ -102,6 +102,21 @@ pub trait RequestHelper {
         self.send_json(Method::POST, path, body).await
     }
 
+    /// A key change from a page that read issuer version 7.
+    async fn post_key(&self, path: &str, body: &serde_json::Value) -> Response {
+        self.post_key_at(path, body, "7").await
+    }
+
+    async fn post_key_at(&self, path: &str, body: &serde_json::Value, version: &str) -> Response {
+        let request = self
+            .request_builder(Method::POST, path)
+            .header(CONTENT_TYPE, "application/json")
+            .header("if-issuer-version", version)
+            .body(Body::from(body.to_string()))
+            .expect("invalid request");
+        self.run(request).await
+    }
+
     /// Sends `body` as JSON.
     async fn put(&self, path: &str, body: &serde_json::Value) -> Response {
         self.send_json(Method::PUT, path, body).await

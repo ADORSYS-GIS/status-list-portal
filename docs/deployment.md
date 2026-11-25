@@ -261,7 +261,7 @@ Back the database up. It holds the developers' accounts, which version of the te
 
 ## Rate limits
 
-Registering, renewing and deleting issuers are limited per developer, in the database, so the limits hold across replicas. A registration or a renewal counts once the developer may make it, whether the sandbox then has room or not. The database keeps up to three rows per developer for this, deleted with the account.
+Registering, renewing and deleting issuers, and adding and revoking keys, are limited per developer in separate database buckets, so the limits hold across replicas. A registration or renewal counts once the developer may make it, whether the sandbox then has room or not. A malformed public key does not count as an add. The database keeps up to five rows per developer for these actions, deleted with the account.
 
 Finishing a sign-in is limited per client network: an IPv4 address, or an IPv6 /64. Only sign-ins that started on the portal count. Each replica counts on its own, so with three replicas a network may sign in up to three times as often. A replica counts up to 10,000 networks at once; to count another, it forgets the one it counted longest ago, which only gives that network its full allowance back. No limit counts all networks together: anyone could use it up and lock everyone out. A client with many networks shows up as many `sign_in` refusals in `portal.rate_limited`: alert on those.
 
