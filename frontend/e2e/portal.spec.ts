@@ -4,7 +4,7 @@
  */
 
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type Page, type TestInfo } from '@playwright/test';
+import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 
 import { ADMIN_API, GITHUB, GITHUB_USER_COOKIE } from './settings.ts';
 
@@ -89,6 +89,34 @@ async function expectAccessible(page: Page) {
   expect(failures).toEqual([]);
 }
 
+/** The relative luminance of a color the browser computed, such as `rgb(100, 116, 139)`. */
+function luminance(color: string): number {
+  const [red, green, blue] = (color.match(/[\d.]+/g) ?? []).slice(0, 3).map((channel) => {
+    const value = Number(channel) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+/**
+ * The contrast of a field's border against the background around it (WCAG 1.4.11), which
+ * axe does not check.
+ */
+async function borderContrast(field: Locator): Promise<number> {
+  const [border, background] = await field.evaluate((element) => {
+    let around = element.parentElement;
+    while (around && getComputedStyle(around).backgroundColor === 'rgba(0, 0, 0, 0)') {
+      around = around.parentElement;
+    }
+    return [
+      getComputedStyle(element).borderTopColor,
+      getComputedStyle(around ?? document.documentElement).backgroundColor,
+    ];
+  });
+  const [lighter, darker] = [luminance(border), luminance(background)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 test('a developer signs in with GitHub and out again', async ({ page }, testInfo) => {
   await signIn(page, accountFor(testInfo));
 
@@ -148,6 +176,10 @@ test('a key registers one issuer only', async ({ page }, testInfo) => {
     page.getByText('This public key is already registered, maybe for an issuer you deleted'),
   ).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Register an issuer' })).toBeVisible();
+  // Nothing typed has to be typed again (WCAG 3.3.7).
+  await expect(page.getByLabel('Display name')).toHaveValue(`Second ${testInfo.testId}`);
+  await expect(page.getByLabel('Public key')).toHaveValue(key);
+  await expectAccessible(page);
 });
 
 for (const colorScheme of ['light', 'dark'] as const) {
@@ -171,6 +203,9 @@ for (const colorScheme of ['light', 'dark'] as const) {
       await page.getByRole('link', { name: 'Register an issuer' }).click();
       await expect(page.getByRole('heading', { name: 'Register an issuer' })).toBeVisible();
       await expectAccessible(page);
+      for (const label of ['Display name', 'Public key']) {
+        expect(await borderContrast(page.getByLabel(label))).toBeGreaterThanOrEqual(3);
+      }
 
       await page.getByRole('button', { name: 'Register issuer' }).click();
       await expect(page.getByLabel('Display name')).toBeFocused();
