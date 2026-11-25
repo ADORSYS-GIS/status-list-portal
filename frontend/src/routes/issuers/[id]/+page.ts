@@ -19,5 +19,7 @@ export const load: PageLoad = async ({ fetch, params, parent }) => {
   if (issuer.error) {
     error(issuer.response.status, errorMessage(issuer.error));
   }
-  return { issuer: issuer.data };
+  const issuerVersion = issuer.response.headers.get('issuer-version');
+  if (!issuerVersion) error(502, 'The issuer version is missing. Please try again.');
+  return { issuer: issuer.data, issuerVersion };
 };

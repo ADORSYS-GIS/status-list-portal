@@ -74,10 +74,15 @@ impl From<AdminApiError> for BoxedAppError {
             return service_unavailable();
         }
         match error.code() {
+            Some(ErrorCode::WriteContention) => {
+                warn!(error.message = %describe(&error), "the admin API is contended");
+                json::temporarily_unavailable(error.retry_after().map(str::to_owned))
+            }
             Some(ErrorCode::IssuerNotFound | ErrorCode::KeyNotFound) => not_found(),
             Some(ErrorCode::KeyLimitReached) => custom(
                 ApiErrorCode::KeyLimitReached,
-                "This issuer has reached its key limit. A free slot is needed to add a key before revoking the old one.",
+                "This issuer has as many keys as its tier allows. Revoke a key no signer uses, \
+                 then add the new one.",
             ),
             Some(ErrorCode::KeyMaterialInUse) => custom(
                 ApiErrorCode::KeyMaterialInUse,
@@ -240,6 +245,7 @@ mod tests {
             status: StatusCode::CONFLICT,
             code,
             description: Some("the server's own wording".to_string()),
+            retry_after: None,
         }
     }
 

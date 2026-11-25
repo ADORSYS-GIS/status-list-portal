@@ -363,6 +363,67 @@ async function adminApi(request: IncomingMessage, response: ServerResponse) {
     }
   }
 
+  const keyRoute = url.pathname.match(/^\/admin\/v1\/issuers\/([^/]+)\/keys(?:\/([^/]+))?$/);
+  if (keyRoute) {
+    const stored = issuers.get(decodeURIComponent(keyRoute[1]));
+    if (!stored) return refuse(response, 404, 'issuer_not_found');
+    const version = request.headers['if-issuer-version'];
+    if (version === undefined) return refuse(response, 428, 'precondition_required');
+    if (version !== String(stored.version)) return refuse(response, 412, 'precondition_failed');
+    const keys = stored.issuer.keys as Json[];
+    if (request.method === 'POST' && !keyRoute[2]) {
+      const body = await readJson(request);
+      if (!body || !ALGORITHMS.includes(body.alg as string)) {
+        return refuse(response, ...malformed('invalid key request'));
+      }
+      const publicKey = body.public_key;
+      if (
+        typeof publicKey !== 'object' ||
+        publicKey === null ||
+        PRIVATE_MEMBERS.some((name) => name in publicKey)
+      ) {
+        return refuse(response, 422, 'invalid_public_jwk');
+      }
+      if (stored.issuer.state === 'suspended') return refuse(response, 409, 'invalid_input');
+      if (
+        Number((stored.issuer.usage as Json).keys) >=
+        Number((stored.issuer.usage as Json).keys_limit)
+      ) {
+        return refuse(response, 409, 'key_limit_reached');
+      }
+      const material = keyMaterial(publicKey);
+      const taken = [...issuers.values()].some(({ issuer }) =>
+        (issuer.keys as Json[]).some((key) => keyMaterial(key.public_key) === material),
+      );
+      if (taken) return refuse(response, 409, 'key_material_in_use');
+      const key = {
+        kid: randomUUID(),
+        alg: body.alg,
+        state: 'active',
+        not_before: null,
+        not_after: null,
+        created_at: Math.floor(Date.now() / 1000),
+        public_key: publicKey,
+      };
+      stored.issuer.keys = [key, ...keys];
+      (stored.issuer.usage as Json).keys = Number((stored.issuer.usage as Json).keys) + 1;
+      stored.version++;
+      return send(response, 201, key, { 'issuer-version': String(stored.version) });
+    }
+    if (request.method === 'PATCH' && keyRoute[2]) {
+      const key = keys.find((candidate) => candidate.kid === decodeURIComponent(keyRoute[2]));
+      if (!key) return refuse(response, 404, 'key_not_found');
+      const body = await readJson(request);
+      if (body?.state !== 'revoked') return refuse(response, ...malformed('state must be revoked'));
+      if (key.state !== 'active') return refuse(response, 409, 'invalid_input');
+      key.state = 'revoked';
+      (stored.issuer.usage as Json).keys = Number((stored.issuer.usage as Json).keys) - 1;
+      stored.version++;
+      return send(response, 200, key, { 'issuer-version': String(stored.version) });
+    }
+    return refuse(response, 405, 'method_not_allowed');
+  }
+
   const id = url.pathname.match(/^\/admin\/v1\/issuers\/([^/]+)$/)?.[1];
   const stored = id && issuers.get(decodeURIComponent(id));
   if (!stored) {

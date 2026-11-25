@@ -180,6 +180,34 @@ pub fn too_many_requests(detail: &'static str, retry_after: time::Duration) -> B
     })
 }
 
+/// A temporary admin API lock conflict, preserving its retry advice when present.
+pub fn temporarily_unavailable(retry_after: Option<String>) -> BoxedAppError {
+    Box::new(TemporarilyUnavailable { retry_after })
+}
+
+#[derive(Debug, Display)]
+#[display("the admin API is temporarily contended")]
+struct TemporarilyUnavailable {
+    retry_after: Option<String>,
+}
+
+impl AppError for TemporarilyUnavailable {
+    fn response(&self) -> Response {
+        let mut response = json_error(
+            ApiErrorCode::ServiceUnavailable,
+            "The Status List Server is busy. Please try again later.",
+        );
+        if let Some(value) = self
+            .retry_after
+            .as_deref()
+            .and_then(|value| value.parse().ok())
+        {
+            response.headers_mut().insert(RETRY_AFTER, value);
+        }
+        response
+    }
+}
+
 #[derive(Debug, Display)]
 #[display("{detail}")]
 struct TooManyRequests {

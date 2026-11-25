@@ -9,8 +9,9 @@ mod public_key;
 use axum::Json;
 use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
+use http::HeaderMap;
 use http::StatusCode;
-use http::header::LOCATION;
+use http::header::{IF_MATCH, LOCATION};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::{Duration, OffsetDateTime};
@@ -304,7 +305,7 @@ pub async fn create_issuer(
     tag = "issuers",
     params(("id" = String, Path, description = "The issuer's id.")),
     responses(
-        (status = 200, description = "The issuer.", body = IssuerResponse),
+        (status = 200, description = "The issuer.", body = IssuerResponse, headers(("issuer-version" = String, description = "The issuer version to send as If-Match when changing keys."))),
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
@@ -314,7 +315,7 @@ pub async fn get_issuer(
     ctx: ServerContext,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<String>,
-) -> AppResult<Json<IssuerResponse>> {
+) -> AppResult<([(&'static str, String); 1], Json<IssuerResponse>)> {
     let owner = Owner::github(user.gh_id);
     let issuer = ctx
         .admin_api
@@ -322,11 +323,15 @@ pub async fn get_issuer(
         .get(&id)
         .await?
         .ok_or_else(errors::not_found)?;
-    Ok(Json(IssuerResponse::new(
-        issuer.into_issuer(),
-        &ctx.config.management_api,
-        sandbox::expires_soon_window(&ctx.config.sandbox),
-    )))
+    let version = issuer.version().to_owned();
+    Ok((
+        [("issuer-version", version)],
+        Json(IssuerResponse::new(
+            issuer.into_issuer(),
+            &ctx.config.management_api,
+            sandbox::expires_soon_window(&ctx.config.sandbox),
+        )),
+    ))
 }
 
 // No `Debug`: a private key accidentally pasted into the request must stay out of logs.
@@ -343,24 +348,36 @@ pub struct NewIssuerKeyRequest {
     post,
     path = "/api/v1/issuers/{id}/keys",
     tag = "issuers",
-    params(("id" = String, Path, description = "The issuer's id.")),
+    params(
+        ("id" = String, Path, description = "The issuer's id."),
+        ("if-match" = String, Header, description = "The issuer-version received when this page was loaded."),
+    ),
     request_body = NewIssuerKeyRequest,
     responses(
         (status = 201, description = "Key added.", body = IssuerKeyResponse),
-        (status = 401, body = ApiErrorResponse),
-        (status = 404, body = ApiErrorResponse),
-        (status = 409, description = "Key limit, key already used, or issuer changed.", body = ApiErrorResponse),
+        (status = 401, description = "Not signed in.", body = ApiErrorResponse),
+        (status = 403, description = "The current terms are not accepted.", body = ApiErrorResponse),
+        (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
+        (status = 409, description = "key_limit_reached, key_material_in_use, issuer_changed, or issuer_not_renewable.", body = ApiErrorResponse),
         (status = 422, description = "Invalid or private key.", body = ApiErrorResponse),
-        (status = 502, body = ApiErrorResponse),
-        (status = 503, body = ApiErrorResponse),
+        (status = 429, description = "Too many key additions in a short time.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds until the user may try again."))),
+        (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
+        (status = 503, description = "The admin API is temporarily unavailable or contended.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds to wait when supplied by the admin API."))),
     ),
 )]
 pub async fn add_issuer_key(
     ctx: ServerContext,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<String>,
+    headers: HeaderMap,
     JsonBody(request): JsonBody<NewIssuerKeyRequest>,
 ) -> AppResult<(StatusCode, Json<IssuerKeyResponse>)> {
+    let mut conn = ctx.db.get().await?;
+    sandbox::ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
+    ctx.rate_limiter
+        .check(&mut conn, user.id, LimitedAction::AddKey)
+        .await?;
+    drop(conn);
     let key = NewIssuerKey {
         alg: request.alg,
         public_key: public_key::parse(&request.public_key, request.alg)?,
@@ -368,10 +385,43 @@ pub async fn add_issuer_key(
     let owner = Owner::github(user.gh_id);
     let issuers = ctx.admin_api.issuers_of(&owner);
     let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
-    let added = issuers
-        .add_key(&current, &key)
-        .await?
-        .ok_or_else(errors::not_found)?;
+    if current.state == IssuerState::Suspended {
+        return Err(errors::custom(
+            ApiErrorCode::IssuerNotRenewable,
+            "This issuer is deleted or suspended, so it cannot accept a new key.",
+        ));
+    }
+    let existing = || {
+        current.keys.iter().find(|candidate| {
+            candidate.state == KeyState::Active
+                && candidate.alg == key.alg
+                && candidate.public_key == key.public_key
+        })
+    };
+    if !matches_issuer_version(&headers, &current) {
+        if let Some(added) = existing() {
+            return Ok((StatusCode::CREATED, Json(added.clone().into())));
+        }
+        return Err(issuer_changed());
+    }
+    let added = match issuers.add_key(&current, &key).await {
+        Ok(Some(added)) => added,
+        Ok(None) => return Err(errors::not_found()),
+        Err(error) if error.code() == Some(crate::admin_api::ErrorCode::KeyMaterialInUse) => {
+            let reread = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
+            reread
+                .keys
+                .iter()
+                .find(|candidate| {
+                    candidate.state == KeyState::Active
+                        && candidate.alg == key.alg
+                        && candidate.public_key == key.public_key
+                })
+                .cloned()
+                .ok_or_else(|| errors::BoxedAppError::from(error))?
+        }
+        Err(error) => return Err(error.into()),
+    };
     info!(user.id, issuer.id = %id, key.id = %added.kid, "added issuer key");
     Ok((StatusCode::CREATED, Json(added.into())))
 }
@@ -384,30 +434,63 @@ pub async fn add_issuer_key(
     params(
         ("id" = String, Path, description = "The issuer's id."),
         ("kid" = String, Path, description = "The key id."),
+        ("if-match" = String, Header, description = "The issuer-version received when this page was loaded."),
     ),
     responses(
         (status = 200, description = "Key revoked.", body = IssuerKeyResponse),
-        (status = 401, body = ApiErrorResponse),
-        (status = 404, body = ApiErrorResponse),
-        (status = 409, description = "Issuer changed.", body = ApiErrorResponse),
-        (status = 502, body = ApiErrorResponse),
-        (status = 503, body = ApiErrorResponse),
+        (status = 401, description = "Not signed in.", body = ApiErrorResponse),
+        (status = 404, description = "The user has no issuer or key with this id.", body = ApiErrorResponse),
+        (status = 409, description = "issuer_changed: the page's issuer version is stale.", body = ApiErrorResponse),
+        (status = 429, description = "Too many key revocations in a short time.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds until the user may try again."))),
+        (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
+        (status = 503, description = "The admin API is temporarily unavailable or contended.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds to wait when supplied by the admin API."))),
     ),
 )]
 pub async fn revoke_issuer_key(
     ctx: ServerContext,
     AuthenticatedUser(user): AuthenticatedUser,
     Path((id, kid)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> AppResult<Json<IssuerKeyResponse>> {
+    let mut conn = ctx.db.get().await?;
+    ctx.rate_limiter
+        .check(&mut conn, user.id, LimitedAction::RevokeKey)
+        .await?;
+    drop(conn);
     let owner = Owner::github(user.gh_id);
     let issuers = ctx.admin_api.issuers_of(&owner);
     let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
+    if !matches_issuer_version(&headers, &current) {
+        return Err(issuer_changed());
+    }
+    let key = current
+        .keys
+        .iter()
+        .find(|key| key.kid == kid)
+        .ok_or_else(errors::not_found)?;
+    if key.state != KeyState::Active {
+        return Err(errors::custom(
+            ApiErrorCode::IssuerChanged,
+            "This key is not active. Reload the issuer before changing it.",
+        ));
+    }
     let revoked = issuers
         .revoke_key(&current, &kid)
         .await?
         .ok_or_else(errors::not_found)?;
     info!(user.id, issuer.id = %id, key.id = %kid, "revoked issuer key");
     Ok(Json(revoked.into()))
+}
+
+fn matches_issuer_version(headers: &HeaderMap, issuer: &crate::admin_api::OwnedIssuer) -> bool {
+    headers.get(IF_MATCH).and_then(|value| value.to_str().ok()) == Some(issuer.version())
+}
+
+fn issuer_changed() -> errors::BoxedAppError {
+    errors::custom(
+        ApiErrorCode::IssuerChanged,
+        "The issuer changed since this page loaded. Reload it before changing a key.",
+    )
 }
 
 /// Keeps one of the signed-in user's issuers active for another sandbox lifetime.

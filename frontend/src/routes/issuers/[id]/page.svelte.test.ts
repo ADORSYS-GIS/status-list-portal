@@ -35,7 +35,7 @@ function issuer(keys = 1, limit: number | null = 2) {
 }
 
 function pageData(keys = 1, limit: number | null = 2) {
-  return { issuer: issuer(keys, limit), user: null, terms: null };
+  return { issuer: issuer(keys, limit), issuerVersion: '7', user: null, terms: null };
 }
 
 beforeEach(() => post.mockReset());
@@ -50,10 +50,11 @@ test('a pasted public key can be added while the old key stays available', async
   expect(post).toHaveBeenCalledWith(
     '/api/v1/issuers/{id}/keys',
     expect.objectContaining({
+      params: { path: { id: 'issuer-1' }, header: { 'if-match': '7' } },
       body: { alg: 'ES256', public_key: { kty: 'EC', crv: 'P-256', x: 'AAAA', y: 'BBBB' } },
     }),
   );
-  await expect.element(screen.getByText('key-1', { exact: false }).first()).toBeVisible();
+  await expect.element(screen.getByLabelText('Public key (JWK)')).toHaveValue('');
 });
 
 test('the tier limit blocks adding a key', async () => {
@@ -67,11 +68,28 @@ test('the tier limit blocks adding a key', async () => {
 test('revoking the last active key requires confirmation', async () => {
   post.mockResolvedValue({ data: { kid: 'key-1', alg: 'ES256', state: 'revoked' } });
   const screen = await render(Page, { data: pageData(1) });
-  await screen.getByRole('button', { name: 'Revoke', exact: true }).click();
+  await screen.getByRole('button', { name: 'Revoke key key-1' }).click();
   expect(post).not.toHaveBeenCalled();
   await expect.element(screen.getByText(/will no longer be able to write/)).toBeVisible();
   await screen.getByRole('button', { name: 'Revoke key' }).click();
   expect(post).toHaveBeenCalledWith('/api/v1/issuers/{id}/keys/{kid}/revoke', {
-    params: { path: { id: 'issuer-1', kid: 'key-1' } },
+    params: { path: { id: 'issuer-1', kid: 'key-1' }, header: { 'if-match': '7' } },
   });
+});
+
+test('revoking one of two active keys also requires confirmation', async () => {
+  post.mockResolvedValue({ data: { kid: 'key-1', alg: 'ES256', state: 'revoked' } });
+  const screen = await render(Page, { data: pageData(2) });
+  await screen.getByRole('button', { name: 'Revoke key key-1' }).click();
+  expect(post).not.toHaveBeenCalled();
+  await expect
+    .element(screen.getByRole('dialog', { name: 'Revoke this active key?' }))
+    .toBeVisible();
+});
+
+test('changing the algorithm clears a generated or pasted public key', async () => {
+  const screen = await render(Page, { data: pageData() });
+  await screen.getByLabelText('Public key (JWK)').fill('{"kty":"EC"}');
+  await screen.getByLabelText('Algorithm').selectOptions('ES384');
+  await expect.element(screen.getByLabelText('Public key (JWK)')).toHaveValue('');
 });

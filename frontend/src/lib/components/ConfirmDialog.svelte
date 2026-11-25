@@ -16,6 +16,7 @@
   } = $props();
 
   let dialog: HTMLDialogElement;
+  const titleId = $props.id();
 
   /** Opens the dialog. It keeps focus inside until it closes, then gives focus back. */
   export function open() {
@@ -28,8 +29,8 @@
   }
 </script>
 
-<dialog bind:this={dialog} aria-labelledby="confirm-title">
-  <h2 id="confirm-title">{title}</h2>
+<dialog bind:this={dialog} aria-labelledby={titleId}>
+  <h2 id={titleId}>{title}</h2>
   {@render children()}
   <div class="actions">
     <button type="button" class="button" onclick={() => dialog.close()}>{cancelLabel}</button>

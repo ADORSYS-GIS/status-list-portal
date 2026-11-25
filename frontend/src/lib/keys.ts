@@ -86,7 +86,7 @@ console.log(JSON.stringify(await crypto.subtle.exportKey('jwk', publicKey)));
 `;
 }
 
-/** The key that signs the issuer's tokens: its newest active one. */
+/** The selected active key, or the newest active key when no id is given. */
 export function signingKey(issuer: Issuer, kid?: string) {
   return issuer.keys.find(
     (key) => key.state === 'active' && (kid === undefined || key.kid === kid),

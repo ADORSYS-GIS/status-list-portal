@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { resolve } from '$app/paths';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
@@ -36,11 +37,12 @@
   let keyFileName = $state('private-key.json');
   let generatedFiles = $state<Record<string, string>>({});
   let generatedFileName = $state('');
-  let alg = $state<SigningAlgorithm>('ES256');
+  let alg = $state<SigningAlgorithm>(untrack(() => signingKey(data.issuer)?.alg ?? 'ES256'));
   let publicKey = $state('');
   let generated = $state(false);
   let keyError = $state<string | null>(null);
   let selectedKey = $derived(signingKey(issuer, selectedKid) ?? signingKey(issuer));
+  let lastActiveRevoke = $derived(issuer.keys.filter((key) => key.state === 'active').length === 1);
   $effect(() => {
     if (!selectedKid && selectedKey) selectedKid = selectedKey.kid;
   });
@@ -100,7 +102,7 @@
     if (keyError || atKeyLimit) return;
     await act(async () => {
       const { data: added, error } = await createApi().POST('/api/v1/issuers/{id}/keys', {
-        ...path,
+        params: { path: { id: issuer.id }, header: { 'if-match': data.issuerVersion } },
         body: { alg, public_key: JSON.parse(publicKey) },
       });
       if (error) {
@@ -127,16 +129,14 @@
 
   function askToRevoke(kid: string) {
     revokeKid = kid;
-    const active = issuer.keys.filter((key) => key.state === 'active');
-    if (active.length === 1 && active[0].kid === kid) confirmRevoke.open();
-    else void revokeKey();
+    confirmRevoke.open();
   }
 
   async function revokeKey() {
     const kid = revokeKid;
     await act(async () => {
       const { error } = await createApi().POST('/api/v1/issuers/{id}/keys/{kid}/revoke', {
-        params: { path: { id: issuer.id, kid } },
+        params: { path: { id: issuer.id, kid }, header: { 'if-match': data.issuerVersion } },
       });
       if (error) {
         failure = errorMessage(error);
@@ -189,22 +189,25 @@
 {#if issuer.state !== 'suspended'}
   <section aria-labelledby="keys">
     <h2 id="keys">Signing keys</h2>
-    <p>
-      {issuer.usage.keys} of {issuer.usage.keys_limit ?? 'unlimited'} key slots used. Revoked keys do
-      not use a slot.
-    </p>
+    <p>Revoked keys do not use a slot.</p>
     <ol class="key-list">
       {#each issuer.keys as key (key.kid)}
         <li>
           <span class="mono">{key.kid}</span> · {key.alg} · {key.state}
           {#if key.state === 'active'}
-            <button type="button" onclick={() => selectKey(key.kid)} disabled={busy}
-              >Use in example</button
+            <button
+              type="button"
+              aria-label="Use key {key.kid} in example"
+              onclick={() => selectKey(key.kid)}
+              disabled={busy}>Use in example</button
             >
           {/if}
-          {#if key.state !== 'revoked'}
-            <button type="button" onclick={() => askToRevoke(key.kid)} disabled={busy}
-              >Revoke</button
+          {#if key.state === 'active'}
+            <button
+              type="button"
+              aria-label="Revoke key {key.kid}"
+              onclick={() => askToRevoke(key.kid)}
+              disabled={busy}>Revoke</button
             >
           {/if}
         </li>
@@ -221,7 +224,16 @@
       <form onsubmit={addKey}>
         <h3>Add a key</h3>
         <label for="key-alg">Algorithm</label>
-        <select id="key-alg" bind:value={alg}>
+        <select
+          id="key-alg"
+          bind:value={alg}
+          onchange={() => {
+            publicKey = '';
+            generated = false;
+            generatedFileName = '';
+            keyError = null;
+          }}
+        >
           {#each SIGNING_ALGORITHMS as algorithm (algorithm)}<option value={algorithm}
               >{algorithm}</option
             >{/each}
@@ -263,7 +275,7 @@
     <section aria-labelledby="publish">
       <h2 id="publish">Publish your first status list</h2>
       <p>
-        In the folder with your <code>private-key.json</code>, save this script as
+        In the folder with your <code>{keyFileName}</code>, save this script as
         <code>mint-token.mjs</code>. It signs a management token that lasts two minutes.
       </p>
       <p>
@@ -316,11 +328,18 @@
 
 <ConfirmDialog
   bind:this={confirmRevoke}
-  title="Revoke the last active key?"
+  title={lastActiveRevoke ? 'Revoke the last active key?' : 'Revoke this active key?'}
   confirmLabel="Revoke key"
   onconfirm={revokeKey}
 >
-  <p>This issuer will no longer be able to write status lists until you add a new key.</p>
+  {#if lastActiveRevoke}
+    <p>This issuer will no longer be able to write status lists until you add a new key.</p>
+  {:else}
+    <p>
+      Tokens signed with this key will stop working immediately. Switch every signer before revoking
+      it.
+    </p>
+  {/if}
 </ConfirmDialog>
 
 <style>

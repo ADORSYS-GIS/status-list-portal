@@ -16,6 +16,8 @@ interface HeldIssuer {
   state: string;
   expires_at: number;
   version: number;
+  keys: { kid: string; state: string }[];
+  usage: { keys: number; keys_limit: number };
 }
 
 /** A GitHub account of the test's own, so tests share nothing. */
@@ -135,4 +137,36 @@ test('a key registers one issuer only', async ({ page }, testInfo) => {
     page.getByText('This public key is already registered, maybe for an issuer you deleted'),
   ).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Register an issuer' })).toBeVisible();
+});
+
+test('a developer adds a key, reaches the limit, and revokes the old key', async ({
+  page,
+}, testInfo) => {
+  const name = `Rotation ${testInfo.testId}`;
+  await signIn(page, accountFor(testInfo));
+  await register(page, name, await publicKey());
+  await expect(page.getByRole('heading', { name, level: 1 })).toBeVisible();
+  await expect(page.getByText('Your issuer is ready.')).toBeVisible();
+  const before = await heldIssuer(name);
+  const oldKid = before.keys[0].kid;
+
+  await page.getByLabel('Public key (JWK)').fill(await publicKey());
+  await page.getByRole('button', { name: 'Add public key' }).click();
+  await expect(page.getByText('Key added. Move your signers')).toBeVisible();
+  const added = await heldIssuer(name);
+  expect(added.version).toBe(before.version + 1);
+  expect(added.usage.keys).toBe(2);
+  expect(added.keys.filter((key) => key.state === 'active')).toHaveLength(2);
+  await expect(page.getByText('The key limit is reached.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add public key' })).toBeHidden();
+
+  await page.getByRole('button', { name: `Revoke key ${oldKid}` }).click();
+  const confirm = page.getByRole('dialog', { name: 'Revoke this active key?' });
+  await confirm.getByRole('button', { name: 'Revoke key' }).click();
+  await expect(page.getByText('Key revoked. Tokens signed with it')).toBeVisible();
+  const revoked = await heldIssuer(name);
+  expect(revoked.version).toBe(added.version + 1);
+  expect(revoked.keys.find((key) => key.kid === oldKid)?.state).toBe('revoked');
+  expect(revoked.keys.filter((key) => key.state === 'active')).toHaveLength(1);
+  expect(revoked.usage.keys).toBe(1);
 });

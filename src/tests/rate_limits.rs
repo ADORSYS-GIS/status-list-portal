@@ -1,4 +1,4 @@
-//! Rate limits on registering, renewing and deleting issuers, and on signing in.
+//! Rate limits on issuer and key changes, and on signing in.
 
 use axum::body::Body;
 use http::header::COOKIE;
@@ -27,6 +27,8 @@ fn once_an_hour() -> RateLimits {
     RateLimits {
         register: limit,
         renew: limit,
+        add_key: limit,
+        revoke_key: limit,
         delete: limit,
         sign_in: limit,
     }
@@ -220,6 +222,35 @@ async fn concurrent_requests_take_turns() {
     let allowed = checks.join_all().await.into_iter().filter(|ok| *ok).count();
 
     assert_eq!(allowed, 3);
+}
+
+#[tokio::test]
+async fn adding_and_revoking_keys_have_independent_buckets() {
+    let (app, _anon) = TestApp::init()
+        .with_rate_limits(once_an_hour())
+        .empty()
+        .await;
+    let user_id = app.db_new_user("octocat").await.user().id;
+    let mut conn = app.db_conn().await;
+    let limiter = &app.ctx().rate_limiter;
+    assert!(
+        limiter
+            .check(&mut conn, user_id, LimitedAction::AddKey)
+            .await
+            .is_ok()
+    );
+    assert!(
+        limiter
+            .check(&mut conn, user_id, LimitedAction::AddKey)
+            .await
+            .is_err()
+    );
+    assert!(
+        limiter
+            .check(&mut conn, user_id, LimitedAction::RevokeKey)
+            .await
+            .is_ok()
+    );
 }
 
 #[tokio::test]

@@ -646,6 +646,8 @@ export interface operations {
             /** @description The issuer. */
             200: {
                 headers: {
+                    /** @description The issuer version to send as If-Match when changing keys. */
+                    "issuer-version"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -752,7 +754,10 @@ export interface operations {
     add_issuer_key: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description The issuer-version received when this page was loaded. */
+                "if-match": string;
+            };
             path: {
                 /** @description The issuer's id. */
                 id: string;
@@ -774,6 +779,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssuerKeyResponse"];
                 };
             };
+            /** @description Not signed in. */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -782,6 +788,16 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
+            /** @description The current terms are not accepted. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The user has no issuer with this id. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -790,7 +806,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
-            /** @description Key limit, key already used, or issuer changed. */
+            /** @description key_limit_reached, key_material_in_use, issuer_changed, or issuer_not_renewable. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -808,6 +824,18 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
+            /** @description Too many key additions in a short time. */
+            429: {
+                headers: {
+                    /** @description Seconds until the user may try again. */
+                    "retry-after"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The Status List Server did not complete the request. */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -816,8 +844,11 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
+            /** @description The admin API is temporarily unavailable or contended. */
             503: {
                 headers: {
+                    /** @description Seconds to wait when supplied by the admin API. */
+                    "retry-after"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -829,7 +860,10 @@ export interface operations {
     revoke_issuer_key: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description The issuer-version received when this page was loaded. */
+                "if-match": string;
+            };
             path: {
                 /** @description The issuer's id. */
                 id: string;
@@ -849,6 +883,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssuerKeyResponse"];
                 };
             };
+            /** @description Not signed in. */
             401: {
                 headers: {
                     [name: string]: unknown;
@@ -857,6 +892,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
+            /** @description The user has no issuer or key with this id. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -865,7 +901,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
-            /** @description Issuer changed. */
+            /** @description issuer_changed: the page's issuer version is stale. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -874,6 +910,18 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
+            /** @description Too many key revocations in a short time. */
+            429: {
+                headers: {
+                    /** @description Seconds until the user may try again. */
+                    "retry-after"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description The Status List Server did not complete the request. */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -882,8 +930,11 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
+            /** @description The admin API is temporarily unavailable or contended. */
             503: {
                 headers: {
+                    /** @description Seconds to wait when supplied by the admin API. */
+                    "retry-after"?: number;
                     [name: string]: unknown;
                 };
                 content: {

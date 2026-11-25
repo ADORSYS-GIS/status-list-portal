@@ -224,6 +224,14 @@ expression: openapi
         "responses": {
           "200": {
             "description": "The issuer.",
+            "headers": {
+              "issuer-version": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The issuer version to send as If-Match when changing keys."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -364,6 +372,15 @@ expression: openapi
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "description": "The issuer-version received when this page was loaded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -388,6 +405,17 @@ expression: openapi
             }
           },
           "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The current terms are not accepted.",
             "content": {
               "application/json": {
                 "schema": {
@@ -397,6 +425,7 @@ expression: openapi
             }
           },
           "404": {
+            "description": "The user has no issuer with this id.",
             "content": {
               "application/json": {
                 "schema": {
@@ -406,7 +435,7 @@ expression: openapi
             }
           },
           "409": {
-            "description": "Key limit, key already used, or issuer changed.",
+            "description": "key_limit_reached, key_material_in_use, issuer_changed, or issuer_not_renewable.",
             "content": {
               "application/json": {
                 "schema": {
@@ -425,7 +454,28 @@ expression: openapi
               }
             }
           },
+          "429": {
+            "description": "Too many key additions in a short time.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds until the user may try again."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
           "502": {
+            "description": "The Status List Server did not complete the request.",
             "content": {
               "application/json": {
                 "schema": {
@@ -435,6 +485,17 @@ expression: openapi
             }
           },
           "503": {
+            "description": "The admin API is temporarily unavailable or contended.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds to wait when supplied by the admin API."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -471,6 +532,15 @@ expression: openapi
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "description": "The issuer-version received when this page was loaded.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -485,6 +555,7 @@ expression: openapi
             }
           },
           "401": {
+            "description": "Not signed in.",
             "content": {
               "application/json": {
                 "schema": {
@@ -494,6 +565,7 @@ expression: openapi
             }
           },
           "404": {
+            "description": "The user has no issuer or key with this id.",
             "content": {
               "application/json": {
                 "schema": {
@@ -503,7 +575,27 @@ expression: openapi
             }
           },
           "409": {
-            "description": "Issuer changed.",
+            "description": "issuer_changed: the page's issuer version is stale.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many key revocations in a short time.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds until the user may try again."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -513,6 +605,7 @@ expression: openapi
             }
           },
           "502": {
+            "description": "The Status List Server did not complete the request.",
             "content": {
               "application/json": {
                 "schema": {
@@ -522,6 +615,17 @@ expression: openapi
             }
           },
           "503": {
+            "description": "The admin API is temporarily unavailable or contended.",
+            "headers": {
+              "retry-after": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "description": "Seconds to wait when supplied by the admin API."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

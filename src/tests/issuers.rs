@@ -45,7 +45,7 @@ fn shown_issuer_json() -> Value {
 #[tokio::test]
 async fn adding_a_key_uses_the_owner_version_and_public_jwk() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = app.db_new_user("octocat").await;
+    let user = app.db_new_registrant("octocat").await;
     admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
     let added = json!({
         "kid": "new-kid", "alg": "ES256", "state": "active",
@@ -65,7 +65,7 @@ async fn adding_a_key_uses_the_owner_version_and_public_jwk() {
     let mut pasted = public_jwk_json();
     pasted["kid"] = json!("ignored");
     let response = user
-        .post(
+        .post_key(
             &format!("{ISSUER_URL}/keys"),
             &json!({ "alg": "ES256", "public_key": pasted }),
         )
@@ -77,7 +77,7 @@ async fn adding_a_key_uses_the_owner_version_and_public_jwk() {
 #[tokio::test]
 async fn key_limit_refusal_is_a_conflict() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = app.db_new_user("octocat").await;
+    let user = app.db_new_registrant("octocat").await;
     admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
     Mock::given(method("POST"))
         .and(path(
@@ -89,7 +89,7 @@ async fn key_limit_refusal_is_a_conflict() {
         .mount(app.admin_api())
         .await;
     let response = user
-        .post(
+        .post_key(
             &format!("{ISSUER_URL}/keys"),
             &json!({ "alg": "ES256", "public_key": public_jwk_json() }),
         )
@@ -101,7 +101,7 @@ async fn key_limit_refusal_is_a_conflict() {
 #[tokio::test]
 async fn an_added_key_must_be_public_and_fit_its_algorithm() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = app.db_new_user("octocat").await;
+    let user = app.db_new_registrant("octocat").await;
     let mut private = public_jwk_json();
     private["d"] = json!("secret");
     let bad_curve = public_jwk_json();
@@ -115,7 +115,7 @@ async fn an_added_key_must_be_public_and_fit_its_algorithm() {
             "invalid_public_key",
         ),
     ] {
-        let response = user.post(&format!("{ISSUER_URL}/keys"), &body).await;
+        let response = user.post_key(&format!("{ISSUER_URL}/keys"), &body).await;
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(response.json()["errors"][0]["code"], code);
     }
@@ -131,7 +131,7 @@ async fn an_added_key_must_be_public_and_fit_its_algorithm() {
 #[tokio::test]
 async fn a_key_change_racing_another_is_a_conflict() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = app.db_new_user("octocat").await;
+    let user = app.db_new_registrant("octocat").await;
     admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
     Mock::given(method("POST"))
         .and(path(
@@ -143,7 +143,7 @@ async fn a_key_change_racing_another_is_a_conflict() {
         .mount(app.admin_api())
         .await;
     let response = user
-        .post(
+        .post_key(
             &format!("{ISSUER_URL}/keys"),
             &json!({ "alg": "ES256", "public_key": public_jwk_json() }),
         )
@@ -155,7 +155,7 @@ async fn a_key_change_racing_another_is_a_conflict() {
 #[tokio::test]
 async fn revoking_a_key_uses_its_kid_and_the_issuer_version() {
     let (app, _anon) = TestApp::init().empty().await;
-    let user = app.db_new_user("octocat").await;
+    let user = app.db_new_registrant("octocat").await;
     admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
     let kid = "QoRTRSkzlInq0eOmPqJwmZ5OS9pxkN_SIf5KgZP2F8M";
     let mut revoked = own_issuer_json(&user)["keys"][0].clone();
@@ -171,7 +171,7 @@ async fn revoking_a_key_uses_its_kid_and_the_issuer_version() {
         .mount(app.admin_api())
         .await;
     let response = user
-        .post(&format!("{ISSUER_URL}/keys/{kid}/revoke"), &json!({}))
+        .post_key(&format!("{ISSUER_URL}/keys/{kid}/revoke"), &json!({}))
         .await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.json()["state"], "revoked");
@@ -180,17 +180,17 @@ async fn revoking_a_key_uses_its_kid_and_the_issuer_version() {
 #[tokio::test]
 async fn another_account_cannot_change_keys() {
     let (app, _anon) = TestApp::init().empty().await;
-    let owner = app.db_new_user("octocat").await;
-    let someone_else = app.db_new_user("other").await;
+    let owner = app.db_new_registrant("octocat").await;
+    let someone_else = app.db_new_registrant("other").await;
     admin_api_holds(app.admin_api(), &own_issuer_json(&owner)).await;
     let added = someone_else
-        .post(
+        .post_key(
             &format!("{ISSUER_URL}/keys"),
             &json!({ "alg": "ES256", "public_key": public_jwk_json() }),
         )
         .await;
     let revoked = someone_else
-        .post(&format!("{ISSUER_URL}/keys/some-kid/revoke"), &json!({}))
+        .post_key(&format!("{ISSUER_URL}/keys/some-kid/revoke"), &json!({}))
         .await;
     assert_eq!(added.status(), StatusCode::NOT_FOUND);
     assert_eq!(revoked.status(), StatusCode::NOT_FOUND);
@@ -198,6 +198,224 @@ async fn another_account_cannot_change_keys() {
     assert_eq!(
         requests_with_method(app.admin_api(), "PATCH").await.len(),
         0
+    );
+}
+
+#[tokio::test]
+async fn a_stale_page_cannot_revoke_another_tabs_last_key() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_registrant("octocat").await;
+    admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
+    let kid = own_issuer_json(&user)["keys"][0]["kid"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let response = user
+        .post_key_at(&format!("{ISSUER_URL}/keys/{kid}/revoke"), &json!({}), "6")
+        .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.json()["errors"][0]["code"], "issuer_changed");
+    assert!(
+        requests_with_method(app.admin_api(), "PATCH")
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn suspended_issuers_cannot_gain_keys_but_terms_are_required() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_user("octocat").await;
+    let mut issuer = own_issuer_json(&user);
+    issuer["state"] = json!("suspended");
+    admin_api_holds(app.admin_api(), &issuer).await;
+    let body = json!({ "alg": "ES256", "public_key": public_jwk_json() });
+    let terms = user.post_key(&format!("{ISSUER_URL}/keys"), &body).await;
+    assert_eq!(terms.status(), StatusCode::FORBIDDEN);
+    app.accept_terms(user.user()).await;
+    let suspended = user.post_key(&format!("{ISSUER_URL}/keys"), &body).await;
+    assert_eq!(suspended.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        suspended.json()["errors"][0]["code"],
+        "issuer_not_renewable"
+    );
+    assert!(
+        requests_with_method(app.admin_api(), "POST")
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn key_write_contention_keeps_retry_after() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_registrant("octocat").await;
+    admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
+    Mock::given(method("POST"))
+        .and(path(
+            format!("{ISSUER_URL}/keys").replace("/api/v1", "/admin/v1"),
+        ))
+        .respond_with(
+            ResponseTemplate::new(409)
+                .insert_header("retry-after", "2")
+                .set_body_json(json!({ "error": "write_contention" })),
+        )
+        .mount(app.admin_api())
+        .await;
+    let response = user
+        .post_key(
+            &format!("{ISSUER_URL}/keys"),
+            &json!({
+                "alg": "ES256", "public_key": public_jwk_json(),
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.header("retry-after"), Some("2"));
+}
+
+#[tokio::test]
+async fn a_refused_key_add_can_be_recovered_only_on_this_issuer() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_registrant("octocat").await;
+    let mut issuer = own_issuer_json(&user);
+    let mut key = issuer["keys"][0].clone();
+    key["kid"] = json!("new-kid");
+    issuer["keys"][0]["public_key"]["x"] = json!("OTHER");
+    issuer["keys"].as_array_mut().unwrap().insert(0, key);
+    admin_api_holds(app.admin_api(), &issuer).await;
+    // A timed-out first add advanced the issuer from version 6 to 7. Retrying the same
+    // public key against the page's old version returns the already-active key.
+    let response = user
+        .post_key_at(
+            &format!("{ISSUER_URL}/keys"),
+            &json!({
+                "alg": "ES256", "public_key": public_jwk_json(),
+            }),
+            "6",
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.json()["kid"], "new-kid");
+    assert!(
+        requests_with_method(app.admin_api(), "POST")
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn key_refusals_and_invalid_ids_do_not_change_a_key() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_registrant("octocat").await;
+    admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
+    let kid = own_issuer_json(&user)["keys"][0]["kid"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    Mock::given(method("PATCH"))
+        .and(path(
+            format!("{ISSUER_URL}/keys/{kid}").replace("/api/v1", "/admin/v1"),
+        ))
+        .respond_with(
+            ResponseTemplate::new(412).set_body_json(json!({ "error": "precondition_failed" })),
+        )
+        .mount(app.admin_api())
+        .await;
+    let changed = user
+        .post_key(&format!("{ISSUER_URL}/keys/{kid}/revoke"), &json!({}))
+        .await;
+    assert_eq!(changed.status(), StatusCode::CONFLICT);
+    assert_eq!(changed.json()["errors"][0]["code"], "issuer_changed");
+    for invalid in ["..".to_owned(), "x".repeat(256)] {
+        let refused = user
+            .post_key(&format!("{ISSUER_URL}/keys/{invalid}/revoke"), &json!({}))
+            .await;
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+    }
+    assert_eq!(
+        requests_with_method(app.admin_api(), "PATCH").await.len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_key_used_elsewhere_is_a_conflict_and_admin_throttling_is_temporary() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_registrant("octocat").await;
+    admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
+    let mut other_key = public_jwk_json();
+    other_key["x"] = json!("OTHER");
+    Mock::given(method("POST"))
+        .and(path(
+            format!("{ISSUER_URL}/keys").replace("/api/v1", "/admin/v1"),
+        ))
+        .respond_with(
+            ResponseTemplate::new(409).set_body_json(json!({ "error": "key_material_in_use" })),
+        )
+        .mount(app.admin_api())
+        .await;
+    let response = user
+        .post_key(
+            &format!("{ISSUER_URL}/keys"),
+            &json!({
+                "alg": "ES256", "public_key": other_key,
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.json()["errors"][0]["code"], "key_material_in_use");
+
+    app.admin_api().reset().await;
+    admin_api_holds(app.admin_api(), &own_issuer_json(&user)).await;
+    Mock::given(method("POST"))
+        .and(path(
+            format!("{ISSUER_URL}/keys").replace("/api/v1", "/admin/v1"),
+        ))
+        .respond_with(ResponseTemplate::new(429))
+        .mount(app.admin_api())
+        .await;
+    let throttled = user
+        .post_key(
+            &format!("{ISSUER_URL}/keys"),
+            &json!({
+                "alg": "ES256", "public_key": public_jwk_json(),
+            }),
+        )
+        .await;
+    assert_eq!(throttled.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn key_not_found_and_reserved_keys_are_not_revoked() {
+    let (app, _anon) = TestApp::init().empty().await;
+    let user = app.db_new_registrant("octocat").await;
+    let mut issuer = own_issuer_json(&user);
+    let kid = issuer["keys"][0]["kid"].as_str().unwrap().to_owned();
+    admin_api_holds(app.admin_api(), &issuer).await;
+    Mock::given(method("PATCH"))
+        .and(path(
+            format!("{ISSUER_URL}/keys/{kid}").replace("/api/v1", "/admin/v1"),
+        ))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "error": "key_not_found" })))
+        .mount(app.admin_api())
+        .await;
+    let missing = user
+        .post_key(&format!("{ISSUER_URL}/keys/{kid}/revoke"), &json!({}))
+        .await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+    app.admin_api().reset().await;
+    issuer["keys"][0]["state"] = json!("reserved");
+    admin_api_holds(app.admin_api(), &issuer).await;
+    let reserved = user
+        .post_key(&format!("{ISSUER_URL}/keys/{kid}/revoke"), &json!({}))
+        .await;
+    assert_eq!(reserved.status(), StatusCode::CONFLICT);
+    assert!(
+        requests_with_method(app.admin_api(), "PATCH")
+            .await
+            .is_empty()
     );
 }
 
@@ -297,6 +515,7 @@ async fn users_get_their_own_issuer() {
     let response = user.get(ISSUER_URL).await;
 
     assert_snapshot!(response.status(), @"200 OK");
+    assert_eq!(response.header("issuer-version"), Some("7"));
     assert_eq!(response.json(), shown_issuer_json());
 }
 

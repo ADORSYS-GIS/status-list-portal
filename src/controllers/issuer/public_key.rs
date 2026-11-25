@@ -73,10 +73,9 @@ pub(super) fn parse(value: &Value, alg: SigningAlgorithm) -> Result<PublicJwk, B
             "The key's \"use\" must be \"sig\".",
         ));
     }
-    if jwk
-        .get("alg")
-        .is_some_and(|key_alg| *key_alg != alg.to_string())
-    {
+    if jwk.get("alg").is_some_and(|key_alg| {
+        *key_alg != alg.to_string() && !(alg == SigningAlgorithm::EdDsa && key_alg == "Ed25519")
+    }) {
         return Err(errors::custom(
             ApiErrorCode::InvalidPublicKey,
             format!("The key's \"alg\" must be {alg}, the algorithm chosen for the issuer."),
@@ -185,6 +184,14 @@ mod tests {
 
             assert_eq!(serde_json::to_value(jwk).unwrap(), key, "{alg}");
         }
+    }
+
+    #[test]
+    fn web_crypto_ed25519_algorithm_name_is_accepted() {
+        let value = json!({ "kty": "OKP", "crv": "Ed25519", "x": "AAAA", "alg": "Ed25519" });
+        let parsed = parse(&value, SigningAlgorithm::EdDsa).unwrap();
+        assert_eq!(parsed.crv.as_deref(), Some("Ed25519"));
+        assert_eq!(parsed.x.as_deref(), Some("AAAA"));
     }
 
     #[test]

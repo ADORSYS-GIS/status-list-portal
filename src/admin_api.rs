@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use derive_more::{Deref, Display};
+use http::header::RETRY_AFTER;
 use http::{HeaderName, StatusCode};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Histogram, Meter};
@@ -44,6 +45,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 /// The contract's `maxLength` for an issuer id. A longer one cannot exist.
 const ISSUER_ID_MAX_CHARS: usize = 255;
+/// The contract's `maxLength` for a key id.
+const KEY_ID_MAX_CHARS: usize = 255;
 /// The most issuers the admin API returns in one page.
 const MAX_PAGE_SIZE: u8 = 100;
 /// The version of an issuer's writable state, on every response about one issuer.
@@ -84,6 +87,10 @@ pub struct OwnedIssuer {
 }
 
 impl OwnedIssuer {
+    pub fn version(&self) -> &str {
+        &self.version.0
+    }
+
     pub fn into_issuer(self) -> Issuer {
         self.issuer
     }
@@ -101,6 +108,8 @@ pub enum AdminApiError {
         code: ErrorCode,
         /// Human-readable, for the logs; its wording is not part of the contract.
         description: Option<String>,
+        /// How long the admin API asks us to wait before retrying.
+        retry_after: Option<String>,
     },
     /// The admin API answered in a way its contract does not allow.
     #[error("the admin API sent {0}")]
@@ -139,6 +148,7 @@ pub enum ErrorCode {
     DynamicIssuersDisabled,
     KeyLimitReached,
     KeyMaterialInUse,
+    WriteContention,
     PreconditionFailed,
     PayloadTooLarge,
     InvalidPublicJwk,
@@ -320,7 +330,7 @@ impl AdminApi {
         kid: &str,
         version: &IssuerVersion,
     ) -> Result<Option<IssuerKey>, AdminApiError> {
-        if matches!(kid, "" | "." | "..") || kid.chars().count() > ISSUER_ID_MAX_CHARS {
+        if !valid_path_segment(kid, KEY_ID_MAX_CHARS) {
             return Ok(None);
         }
         let Some(mut url) = self.issuer_url(id) else {
@@ -351,7 +361,7 @@ impl AdminApi {
     /// `None` for an id that one URL path segment cannot hold.
     fn issuer_url(&self, id: &str) -> Option<Url> {
         // A path segment drops `.` and `..`, which would leave the issuer's URL.
-        if matches!(id, "" | "." | "..") || id.chars().count() > ISSUER_ID_MAX_CHARS {
+        if !valid_path_segment(id, ISSUER_ID_MAX_CHARS) {
             return None;
         }
         let mut url = self.issuers_url.clone();
@@ -451,6 +461,11 @@ impl AdminApi {
         self.request_duration
             .record(duration.as_secs_f64(), &attributes);
     }
+}
+
+/// Rejects segments that a URL parser would remove, or that exceed the contract's limit.
+fn valid_path_segment(segment: &str, max_chars: usize) -> bool {
+    !matches!(segment, "" | "." | "..") && segment.chars().count() <= max_chars
 }
 
 impl OwnedIssuers<'_> {
@@ -554,8 +569,20 @@ impl AdminApiError {
         }
     }
 
+    pub fn retry_after(&self) -> Option<&str> {
+        match self {
+            Self::Refused { retry_after, .. } => retry_after.as_deref(),
+            _ => None,
+        }
+    }
+
     async fn from_response(response: Response) -> Self {
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
         // The admin API's rate limiter answers before its handlers, without an error code.
         if status == StatusCode::TOO_MANY_REQUESTS {
             return Self::Throttled;
@@ -565,6 +592,7 @@ impl AdminApiError {
                 status,
                 code: body.error,
                 description: body.error_description,
+                retry_after,
             },
             Err(_) => Self::Unexpected(format!("{status} without an error code")),
         }
