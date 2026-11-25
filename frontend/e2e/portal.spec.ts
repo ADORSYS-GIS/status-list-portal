@@ -3,6 +3,9 @@
  * own, with stand-ins for GitHub and the admin API (`fakes.ts`).
  */
 
+import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
 import { ADMIN_API, GITHUB, GITHUB_USER_COOKIE } from './settings.ts';
@@ -16,6 +19,7 @@ interface HeldIssuer {
   state: string;
   expires_at: number;
   version: number;
+  keys: { public_key: JsonWebKey }[];
 }
 
 /** A GitHub account of the test's own, so tests share nothing. */
@@ -52,6 +56,11 @@ async function register(page: Page, name: string, key: string, { termsAccepted =
   await page.getByRole('link', { name: 'Register an issuer' }).click();
   await page.getByLabel('Display name').fill(name);
   await page.getByLabel('Public key').fill(key);
+  await submitRegistration(page, { termsAccepted });
+}
+
+/** Sends the registration form, accepting the terms unless the account already has. */
+async function submitRegistration(page: Page, { termsAccepted = false } = {}) {
   const terms = page.getByLabel('I have read and accept the terms of use');
   if (termsAccepted) {
     await expect(terms).toBeHidden();
@@ -59,6 +68,15 @@ async function register(page: Page, name: string, key: string, { termsAccepted =
     await terms.check();
   }
   await page.getByRole('button', { name: 'Register issuer' }).click();
+}
+
+/** What the download that `button` starts holds. */
+async function download(page: Page, button: string): Promise<string> {
+  const [file] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: button }).click(),
+  ]);
+  return readFile(await file.path(), 'utf8');
 }
 
 /** The issuer named `name`, as the stand-in for the admin API holds it. */
@@ -135,4 +153,60 @@ test('a key registers one issuer only', async ({ page }, testInfo) => {
     page.getByText('This public key is already registered, maybe for an issuer you deleted'),
   ).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Register an issuer' })).toBeVisible();
+});
+
+test('a key pair made in the browser never leaves it', async ({ page }, testInfo) => {
+  const name = `Browser key ${testInfo.testId}`;
+  // From every page, popups included, with every header: `headers()` leaves out the cookies.
+  const requests: Promise<{ url: string; headers: object; body: string | null }>[] = [];
+  page.context().on('request', (request) =>
+    requests.push(
+      request.allHeaders().then((headers) => ({
+        url: request.url(),
+        headers,
+        body: request.postData(),
+      })),
+    ),
+  );
+  await signIn(page, accountFor(testInfo));
+  await page.getByRole('link', { name: 'Register an issuer' }).click();
+  await page.getByLabel('Display name').fill(name);
+
+  await page.getByRole('button', { name: 'Make an ES256 key pair in this browser' }).click();
+  const pem = await download(page, 'Download private-key.pem');
+  const jwk: JsonWebKey = JSON.parse(await download(page, 'Download private-key.json'));
+  await submitRegistration(page);
+
+  await expect(page.getByText('Your issuer is ready.')).toBeVisible();
+  const sent = await Promise.all(requests);
+  // Exactly what the page means to send, so that no encoding of the private key gets by.
+  const { kty, crv, x, y } = jwk;
+  expect(
+    sent
+      .filter((request) => request.body !== null)
+      .map(({ url, body }) => ({ path: new URL(url).pathname, body: JSON.parse(body ?? '') })),
+  ).toEqual([
+    { path: '/api/v1/me/terms', body: { version: expect.any(String) } },
+    {
+      path: '/api/v1/issuers',
+      body: { display_name: name, alg: 'ES256', public_key: { kty, crv, x, y } },
+    },
+  ]);
+  expect(jwk.d, 'the JWK holds a P-256 private key').toMatch(/^[\w-]{43}$/);
+  // The PEM's full lines, which hold the private key; its last line is too short to tell.
+  const secrets = [jwk.d, ...pem.split('\n').filter((line) => line.length === 64)];
+  for (const request of sent) {
+    for (const secret of secrets) {
+      expect(JSON.stringify(request), 'a request carried the private key').not.toContain(secret);
+    }
+  }
+  // Signing tests the private halves: the public point each file also holds would match anyway.
+  const registered = createPublicKey({
+    key: (await heldIssuer(name)).keys[0].public_key,
+    format: 'jwk',
+  });
+  const data = Buffer.from('a management token');
+  for (const key of [createPrivateKey(pem), createPrivateKey({ key: jwk, format: 'jwk' })]) {
+    expect(verify('sha256', data, registered, sign('sha256', data, key))).toBe(true);
+  }
 });

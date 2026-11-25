@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 
 import type { Issuer, SigningAlgorithm } from './api';
+import { makeKeyPair } from './key-pair';
 import { keyPairScript, publicKeyProblem, publishCommands, tokenScript } from './keys';
 
 const run = promisify(execFile);
@@ -65,6 +66,18 @@ function decodePart(part: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
 }
 
+/** Whether `token` is signed by the private half of `publicJwk`, as the server checks it. */
+async function isSignedBy(token: string, publicJwk: JsonWebKey, alg: SigningAlgorithm) {
+  const [header, claims, signature] = token.split('.');
+  const key = await crypto.subtle.importKey('jwk', publicJwk, VERIFY[alg].key, false, ['verify']);
+  return crypto.subtle.verify(
+    VERIFY[alg].verify,
+    key,
+    Buffer.from(signature, 'base64url'),
+    new TextEncoder().encode(`${header}.${claims}`),
+  );
+}
+
 test.each(['ES256', 'ES384', 'EdDSA', 'PS256'] as const)(
   'the %s scripts make a key and a token the server accepts',
   async (alg) => {
@@ -73,22 +86,23 @@ test.each(['ES256', 'ES384', 'EdDSA', 'PS256'] as const)(
 
     const token = await runScript('mint-token.mjs', tokenScript(issuer(alg)));
 
-    const [header, claims, signature] = token.split('.');
+    const [header, claims] = token.split('.');
     expect(decodePart(header)).toEqual({ alg, typ: 'statuslist-management+jwt', kid: 'the-kid' });
     const { iss, aud, iat, exp } = decodePart(claims);
     expect({ iss, aud }).toEqual({ iss: issuer(alg).id, aud: 'https://status.example.com' });
     expect(Number(exp) - Number(iat)).toBe(120);
-    const key = await crypto.subtle.importKey('jwk', publicJwk, VERIFY[alg].key, false, ['verify']);
-    const signed = new TextEncoder().encode(`${header}.${claims}`);
-    const valid = await crypto.subtle.verify(
-      VERIFY[alg].verify,
-      key,
-      Buffer.from(signature, 'base64url'),
-      signed,
-    );
-    expect(valid).toBe(true);
+    expect(await isSignedBy(token, publicJwk, alg)).toBe(true);
   },
 );
+
+test('the token script signs with a key pair from makeKeyPair', async () => {
+  const { publicJwk, privateJwk } = await makeKeyPair();
+  await writeFile(join(dir, 'private-key.json'), privateJwk);
+
+  const token = await runScript('mint-token.mjs', tokenScript(issuer('ES256')));
+
+  expect(await isSignedBy(token, JSON.parse(publicJwk), 'ES256')).toBe(true);
+});
 
 test('private keys are refused before they are sent', () => {
   for (const member of ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k']) {
