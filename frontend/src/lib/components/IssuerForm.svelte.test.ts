@@ -45,7 +45,7 @@ test('a private key never leaves the form', async () => {
   await expect.element(screen.getByLabelText('Public key')).toHaveFocus();
 });
 
-test('a key pair made in the browser fills in the form once its private key is saved', async () => {
+test('a key pair made in the browser fills in the form once its private key is downloaded', async () => {
   const { screen, onsubmit } = await renderForm();
   await screen.getByLabelText('Algorithm').selectOptions('ES384');
 

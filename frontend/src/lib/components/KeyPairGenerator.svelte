@@ -7,8 +7,9 @@
   import Notice from './Notice.svelte';
 
   /**
-   * Gets the public key once the private key is saved: an issuer registered with a key
-   * whose private half was never saved could never sign a token.
+   * Gets the public key once the private key is downloaded: an issuer registered with a key
+   * whose private half was never downloaded could never sign a token. Browsers cannot tell
+   * whether the file was then saved.
    */
   let { onkey }: { onkey: (publicJwk: string) => void } = $props();
 
@@ -18,13 +19,13 @@
   let pair = $state<KeyPair | null>(null);
   let making = $state(false);
   let failed = $state(false);
-  let saved = $state(false);
+  let downloaded = $state(false);
   let firstDownload = $state<HTMLButtonElement>();
   const id = $props.id();
   const warning = `${id}-warning`;
 
   async function make() {
-    // A second pair would replace the first after its private key may have been saved.
+    // A second pair would replace the first after its private key may have been downloaded.
     making = true;
     try {
       pair = await makeKeyPair();
@@ -34,20 +35,20 @@
     } finally {
       making = false;
     }
-    // The button that had focus is gone; the next step is saving the key.
+    // The button that had focus is gone; the next step is downloading the key.
     await tick();
     firstDownload?.focus();
   }
 
-  function save(name: string, text: string, type: string) {
+  function download(name: string, text: string, type: string) {
     const url = URL.createObjectURL(new Blob([text], { type }));
     const link = document.createElement('a');
     link.href = url;
     link.download = name;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
-    if (pair && !saved) {
-      saved = true;
+    if (pair && !downloaded) {
+      downloaded = true;
       onkey(pair.publicJwk);
     }
   }
@@ -72,7 +73,7 @@
         type="button"
         class="button"
         aria-describedby={warning}
-        onclick={() => save('private-key.json', privateJwk, 'application/json')}
+        onclick={() => download('private-key.json', privateJwk, 'application/json')}
       >
         <Icon name="arrow-down-tray" /> Download private-key.json
       </button>
@@ -80,15 +81,15 @@
         type="button"
         class="button"
         aria-describedby={warning}
-        onclick={() => save('private-key.pem', privatePem, 'application/x-pem-file')}
+        onclick={() => download('private-key.pem', privatePem, 'application/x-pem-file')}
       >
         <Icon name="arrow-down-tray" /> Download private-key.pem
       </button>
     </div>
     <p class="hint" role="status">
-      {saved
+      {downloaded
         ? 'The public key is in the form.'
-        : 'The public key goes into the form once you have saved the private key.'}
+        : 'The public key goes into the form once you download the private key.'}
     </p>
   {:else}
     <button type="button" class="button" onclick={make} disabled={making}>

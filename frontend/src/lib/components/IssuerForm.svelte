@@ -39,7 +39,7 @@
   let alg = $state<SigningAlgorithm>('ES256');
   let publicKey = $state('');
   let acceptTerms = $state(false);
-  // A key made here stays as made: its saved private half signs for nothing else.
+  // A key made here stays as made: its downloaded private half signs for nothing else.
   let generated = $state(false);
   // Changing it remounts the generator, which drops the key pair it holds.
   let generator = $state(0);
