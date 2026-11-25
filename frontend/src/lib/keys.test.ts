@@ -95,7 +95,7 @@ test.each(['ES256', 'ES384', 'EdDSA', 'PS256'] as const)(
   },
 );
 
-test('the token script signs with a key pair made in the browser', async () => {
+test('the token script signs with a key pair from makeKeyPair', async () => {
   const { publicJwk, privateJwk } = await makeKeyPair();
   await writeFile(join(dir, 'private-key.json'), privateJwk);
 
