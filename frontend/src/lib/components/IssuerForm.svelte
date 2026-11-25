@@ -43,6 +43,8 @@
   let generated = $state(false);
   // Changing it remounts the generator, which drops the key pair it holds.
   let generator = $state(0);
+  // What a key made here replaced, so that going back to their own key loses nothing.
+  let ownKey: { publicKey: string; alg: SigningAlgorithm } = { publicKey: '', alg: 'ES256' };
   // Shown once a submit fails, then kept up to date as the fields change.
   let submitted = $state(false);
   const errors = $derived(submitted ? check() : {});
@@ -74,13 +76,14 @@
   }
 
   function useGeneratedKey(publicJwk: string) {
+    ownKey = { publicKey, alg };
     publicKey = publicJwk;
     alg = 'ES256';
     generated = true;
   }
 
   async function useOwnKey() {
-    publicKey = '';
+    ({ publicKey, alg } = ownKey);
     generated = false;
     generator += 1;
     // The button that had focus is gone; the next step is pasting a key.

@@ -87,6 +87,20 @@ test('a key pair made in the browser stays in the form until the developer uses 
     .toBeVisible();
 });
 
+test('going back to their own key brings back what the developer had entered', async () => {
+  const { screen } = await renderForm();
+  await screen.getByLabelText('Algorithm').selectOptions('ES384');
+  await screen.getByLabelText('Public key').fill(PUBLIC_KEY);
+  await screen.getByRole('button', { name: 'Make an ES256 key pair in this browser' }).click();
+  await screen.getByRole('button', { name: 'Download private-key.json' }).click();
+  await expect.element(screen.getByLabelText('Public key')).not.toHaveValue(PUBLIC_KEY);
+
+  await screen.getByRole('button', { name: 'Use your own key instead' }).click();
+
+  await expect.element(screen.getByLabelText('Public key')).toHaveValue(PUBLIC_KEY);
+  await expect.element(screen.getByLabelText('Algorithm')).toHaveValue('ES384');
+});
+
 test('an empty form points at the first field to fix', async () => {
   const { screen, onsubmit } = await renderForm();
 
