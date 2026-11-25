@@ -15,7 +15,10 @@
       Run <code>node make-key.mjs</code> there (Node.js 22 or later). It saves the private key in
       <code>private-key.json</code>, which you keep, and prints the public key.
     </li>
-    <li>Paste the printed public key into the field above.</li>
+    <li>
+      Paste the printed public key into the field above. If it holds a key made in this browser,
+      click <strong>Use your own key instead</strong> first.
+    </li>
   </ol>
   <CodeBlock code={keyPairScript(alg)} title="make-key.mjs ({alg})" />
 </details>
