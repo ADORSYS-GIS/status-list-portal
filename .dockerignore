@@ -5,6 +5,7 @@
 !build.rs
 !migrations/
 !src/
+!templates/
 !package.json
 !bun.lock
 !frontend/

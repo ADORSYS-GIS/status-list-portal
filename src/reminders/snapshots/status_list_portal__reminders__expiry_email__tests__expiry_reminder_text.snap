@@ -1,0 +1,23 @@
+---
+source: src/reminders/expiry_email.rs
+expression: email.text
+---
+Your sandbox issuer expires in 7 days
+
+Acme Wallet Issuer stops being active on Tuesday, 1 December 2026, 14:05 UTC.
+Renew it before then to keep it working.
+
+Issuer:     Acme Wallet Issuer
+Issuer ID:  6f1c2a9e-0b7d-4c1e-9a53-2f8d7e4b1c00
+Expires:    Tuesday, 1 December 2026, 14:05 UTC
+
+Renew the issuer: https://portal.example.com/issuers/6f1c2a9e-0b7d-4c1e-9a53-2f8d7e4b1c00
+
+Once it has expired, renewing it brings it back only while the sandbox has
+room for it. If you no longer need the issuer, you can ignore this email.
+
+--
+You get this email because you registered this issuer on the Status List
+Portal, which sends reminders to your GitHub account's primary email. The
+portal emails you only about your issuers.
+Status List Portal by adorsys: https://portal.example.com

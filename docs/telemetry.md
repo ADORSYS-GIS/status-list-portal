@@ -58,6 +58,8 @@ The names follow the [semantic conventions](https://opentelemetry.io/docs/specs/
 
 Operator commands export no metrics: a process that lasts a second would only add series that end at once.
 
+`portal send-reminders` counts in its logs instead. Each reminder it tries logs one line: `sent an expiry reminder` at `INFO`, `failed to send an expiry reminder; the next run tries again` at `WARN`, or `gave up an expiry reminder` at `ERROR`, with `reminder.id`, `reminder.window_days`, `reminder.attempt`, `issuer.id` and `user.id`, and on failure the SMTP server's `smtp.code`. The run ends with `sent the due expiry reminders`, whose `reminders.sent`, `reminders.retrying` and `reminders.given_up` count them; alert on `ERROR` lines from the job, or on its failed runs.
+
 ## Logs
 
 Log lines go to stdout, or stderr for operator commands, as `APP_LOG_FORMAT` says, `text` or `json`, and `RUST_LOG` filters them. A JSON line holds the event's fields at the top level, and the fields of the spans it was written in under `spans`: when two spans share a field, such as a request and its call to the admin API, the innermost one's value is kept. A line written during a request carries the request's trace and span ids under `openTelemetry`, so a log collector can link it to the trace. Health checks log their response at `DEBUG`, a failing one too, so the default `RUST_LOG=info` leaves them out.

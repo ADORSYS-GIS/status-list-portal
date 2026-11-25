@@ -60,11 +60,29 @@ const MIGRATION_LOCK_KEY: i64 = 0x706f_7274_616c;
 /// Key of the advisory lock held while an issuer takes a place within the sandbox limits:
 /// "issuer" in ASCII.
 const ISSUER_LIMITS_LOCK_KEY: i64 = 0x6973_7375_6572;
+/// Key of the advisory lock held while expiry reminders are sent: "reminder" in ASCII.
+const REMINDERS_LOCK_KEY: i64 = 0x7265_6d69_6e64_6572;
 
 #[diesel::declare_sql_function]
 extern "SQL" {
     fn pg_try_advisory_lock(key: BigInt) -> Bool;
     fn pg_try_advisory_xact_lock(key: BigInt) -> Bool;
+    fn pg_advisory_unlock(key: BigInt) -> Bool;
+}
+
+/// Takes the reminders lock for the session, unless another session holds it. Whoever holds
+/// it is the only one sending reminders. The lock outlives transactions, so a run can commit
+/// each reminder before it sends it; release it with [`unlock_reminders`].
+pub async fn try_lock_reminders(conn: &mut AsyncPgConnection) -> QueryResult<bool> {
+    diesel::select(pg_try_advisory_lock(REMINDERS_LOCK_KEY))
+        .get_result(conn)
+        .await
+}
+
+pub async fn unlock_reminders(conn: &mut AsyncPgConnection) -> QueryResult<bool> {
+    diesel::select(pg_advisory_unlock(REMINDERS_LOCK_KEY))
+        .get_result(conn)
+        .await
 }
 
 /// Takes the sandbox limits lock until the transaction ends, unless another transaction

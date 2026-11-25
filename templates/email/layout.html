@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>{% block title %}{% endblock %}</title>
+<style>
+  /* Inline styles carry the light scheme for every client; these rules adapt it where
+     clients read a style sheet. */
+  body { margin: 0; padding: 0; width: 100% !important; }
+  @media (max-width: 620px) {
+    .container { width: 100% !important; }
+    .gutter { padding-left: 24px !important; padding-right: 24px !important; }
+  }
+  @media (prefers-color-scheme: dark) {
+    .page { background-color: #0b1120 !important; }
+    .card { background-color: #111827 !important; border-color: #334155 !important; }
+    .text { color: #f1f5f9 !important; }
+    .muted { color: #a3b1c6 !important; }
+    .facts { background-color: #1e293b !important; }
+    .link { color: #7ccbe9 !important; }
+    .button { background-color: #25a8db !important; }
+    .button-label { color: #101828 !important; }
+  }
+</style>
+</head>
+<body class="page" style="margin: 0; padding: 0; background-color: #f8fafc;">
+<div style="display: none; max-height: 0; overflow: hidden; opacity: 0; mso-hide: all;">{% block preheader %}{% endblock %}</div>
+<table role="presentation" class="page" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f8fafc;">
+  <tr>
+    <td align="center" style="padding: 32px 16px;">
+      <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width: 600px; max-width: 600px;">
+        <tr>
+          <td class="gutter" style="background-color: #144587; border-radius: 6px 6px 0 0; padding: 20px 40px;">
+            <a href="{{ layout.origin }}" style="text-decoration: none;"><img src="{{ layout.logo_url }}" width="135" height="24" alt="adorsys" style="display: block; border: 0; outline: none; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 20px; font-weight: 600; line-height: 24px;"></a>
+          </td>
+        </tr>
+        <tr>
+          <td class="card gutter text" style="background-color: #ffffff; border: 1px solid #cbd5e1; border-top: 0; border-radius: 0 0 6px 6px; padding: 32px 40px; color: #101828; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 16px; line-height: 24px;">
+{% block content %}{% endblock %}
+          </td>
+        </tr>
+        <tr>
+          <td class="gutter muted" style="padding: 24px 40px; color: #475569; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 13px; line-height: 20px;">
+            <p style="margin: 0 0 8px;">{% block reason %}{% endblock %}</p>
+            <p style="margin: 0;">Status List Portal by adorsys &middot; <a href="{{ layout.origin }}" class="link" style="color: #144587;">{{ layout.origin }}</a></p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

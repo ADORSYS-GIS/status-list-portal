@@ -12,14 +12,14 @@ Requires [Rust](https://rustup.rs) 1.99 or later (`rustup update`) and [Docker](
 
 ```sh
 cp .env.template .env   # every setting, documented
-docker compose up -d    # Postgres
+docker compose up -d    # Postgres, and Mailpit for email
 cargo run -- migrate    # apply pending migrations
 cargo run -- server     # http://localhost:8080
 ```
 
 Signing in needs a [GitHub OAuth app](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app) with the callback URL `http://localhost:8080/api/v1/session/github/callback`. Put its client ID and secret in `.env`, next to a session key.
 
-`cargo run -- help` lists the operators' commands, such as approving registrations when `APP_SANDBOX__MANUAL_APPROVAL` is on.
+`cargo run -- help` lists the operators' commands, such as approving registrations when `APP_SANDBOX__MANUAL_APPROVAL` is on. `cargo run -- send-reminders` emails developers whose sandbox issuers expire soon; Mailpit shows the emails at <http://localhost:8025>.
 
 ### Frontend
 
@@ -27,7 +27,7 @@ The frontend lives in `frontend/` and needs [Bun](https://bun.com). Its commands
 
 ## Deploy
 
-`docker build --tag status-list-portal .` builds the image, with the frontend. The [deployment guide](docs/deployment.md) covers the GitHub OAuth app, the admin API key, secrets, database roles, migrations and TLS, proxies, health checks and backtraces.
+`docker build --tag status-list-portal .` builds the image, with the frontend. The [deployment guide](docs/deployment.md) covers the GitHub OAuth app, the admin API key, secrets, database roles, migrations and TLS, proxies, health checks, expiry reminders and backtraces.
 
 ## Telemetry
 
@@ -39,7 +39,7 @@ The server's log lines go to stdout. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to also s
 cargo test
 ```
 
-Tests use the Postgres from `docker compose`, with a fresh database per test. `bun run test` runs the frontend's tests, some of them in Chromium (`bun run playwright install chromium`). `bun test` would run Bun's own test runner instead.
+Tests use the Postgres and Mailpit from `docker compose`, with a fresh database per test. `bun run test` runs the frontend's tests, some of them in Chromium (`bun run playwright install chromium`). `bun test` would run Bun's own test runner instead.
 
 To run the TLS integration test locally, start its Docker fixture, export the
 printed variables, then run the test. Remove the container afterward:

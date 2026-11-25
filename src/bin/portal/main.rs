@@ -2,6 +2,7 @@
 
 mod admin;
 mod migrate;
+mod send_reminders;
 mod server;
 
 use std::future::Future;
@@ -9,7 +10,7 @@ use std::process::ExitCode;
 
 use anyhow::Context;
 use clap::Parser;
-use status_list_portal::config::{Config, MigrationConfig};
+use status_list_portal::config::{Config, MigrationConfig, ReminderConfig};
 use status_list_portal::telemetry::{OPERATOR_COMMAND_SPAN, Process, Telemetry};
 use tracing::field::Empty;
 use tracing::{Instrument, error, info_span};
@@ -30,6 +31,9 @@ enum Command {
     Server,
     /// Applies pending database migrations with the migration role.
     Migrate,
+    /// Emails developers whose sandbox issuers expire soon. Run it on a schedule, such as
+    /// hourly: each run sends what is due and retries what failed before.
+    SendReminders,
     #[command(flatten)]
     Admin(admin::Command),
 }
@@ -37,6 +41,7 @@ enum Command {
 enum Action {
     Server(Config),
     Migrate(MigrationConfig),
+    SendReminders(ReminderConfig),
     Admin(Config, admin::Command),
 }
 
@@ -49,6 +54,12 @@ fn main() -> anyhow::Result<ExitCode> {
                 "invalid migration configuration (.env.template lists the APP_DATABASE settings)",
             )?;
             Action::Migrate(config)
+        }
+        Command::SendReminders => {
+            let config = ReminderConfig::from_environment().context(
+                "invalid reminder configuration (.env.template lists the APP_EMAIL settings)",
+            )?;
+            Action::SendReminders(config)
         }
         Command::Server => Action::Server(load_config()?),
         Command::Admin(command) => Action::Admin(load_config()?, command),
@@ -66,6 +77,12 @@ fn main() -> anyhow::Result<ExitCode> {
             Process::Command,
             Some("migration failed"),
         ),
+        Action::SendReminders(config) => (
+            config.env,
+            config.log_format,
+            Process::Command,
+            Some("sending reminders failed"),
+        ),
         Action::Admin(config, _) => (config.env, config.log_format, Process::Command, None),
     };
     let telemetry = Telemetry::from_env(env, process)?;
@@ -78,13 +95,14 @@ fn main() -> anyhow::Result<ExitCode> {
             Action::Server(config) => server::run(config, &meter).await,
             Action::Admin(config, command) => admin::run(config, &meter, command).await,
             Action::Migrate(config) => migrate::run(config).await,
+            Action::SendReminders(config) => send_reminders::run(config, &meter).await,
         }
     });
     // The exporters run on threads of their own, and shutting them down blocks until they
     // have sent what they hold, so it waits for the runtime to stop.
     drop(runtime);
     let result = match (result, failure_message) {
-        // The server and migration job report failures in the configured log format
+        // The server and the jobs report failures in the configured log format
         // before the exporters stop.
         (Err(error), Some(message)) => {
             error!(error = %format!("{error:#}"), "{message}");

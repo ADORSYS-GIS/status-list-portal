@@ -32,4 +32,6 @@ allow = [
   "CC0-1.0",
   "CDLA-Permissive-2.0",
   "BSL-1.0",
+  # Public-domain-like, with no conditions at all: lettre's quoted_printable.
+  "0BSD",
 ]

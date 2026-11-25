@@ -15,6 +15,7 @@ mod otlp;
 mod pool;
 mod rate_limits;
 mod registrations;
+mod reminders;
 mod session;
 mod telemetry;
 mod terms;

@@ -36,6 +36,7 @@ RUN --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
     --mount=type=bind,source=build.rs,target=build.rs \
     --mount=type=bind,source=migrations,target=migrations \
     --mount=type=bind,source=src,target=src \
+    --mount=type=bind,source=templates,target=templates \
     --mount=type=cache,target=/root/.cargo/registry,id=cargo-registry-${TARGETPLATFORM} \
     --mount=type=cache,target=/build/target,id=portal-target-${TARGETPLATFORM} \
     cargo build --release --locked --bin portal \

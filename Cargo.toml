@@ -28,6 +28,7 @@ path = "src/tests/mod.rs"
 
 [dependencies]
 anyhow = "1.0"
+askama = "0.16"
 axum = { version = "0.8", features = ["macros"] }
 axum-extra = { version = "0.12", features = ["cookie-private"] }
 clap = { version = "4.6", features = ["derive"] }
@@ -43,6 +44,19 @@ http = "1.5"
 ipnet = "2.12"
 json-subscriber = { version = "0.3.1", features = ["tracing-opentelemetry-0-34"] }
 jsonwebtoken = { version = "11.1", features = ["aws_lc_rs"] }
+lettre = {
+  version = "0.11",
+  default-features = false,
+  features = [
+    "aws-lc-rs",
+    "builder",
+    "hostname",
+    "rustls-native-certs",
+    "serde",
+    "smtp-transport",
+    "tokio1-rustls"
+  ]
+}
 oauth2 = "5.0"
 opentelemetry = {
   version = "0.33",

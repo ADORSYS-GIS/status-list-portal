@@ -10,12 +10,14 @@ pub mod client_address;
 pub mod config;
 pub mod controllers;
 pub mod db;
+pub mod email;
 pub mod github;
 pub mod metrics;
 pub mod middleware;
 pub mod models;
 pub mod openapi;
 pub mod rate_limiter;
+pub mod reminders;
 mod router;
 pub mod sandbox;
 /// Diesel table definitions generated from the database migrations.

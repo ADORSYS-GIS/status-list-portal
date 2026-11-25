@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use ::config::{ConfigError, Environment};
 use axum_extra::extract::cookie::Key;
+use lettre::message::Mailbox;
 use secrecy::{ExposeSecret, SecretString};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, de};
@@ -110,6 +111,52 @@ impl MigrationConfig {
     fn from_vars(vars: HashMap<String, String>) -> Result<Self, ConfigError> {
         load(vars, &MIGRATION_SECRETS)
     }
+}
+
+/// Settings of `portal send-reminders`, which emails developers before their sandbox issuers
+/// expire. The server's own secrets are not needed, and the server never reads these.
+#[derive(Debug, Deserialize)]
+pub struct ReminderConfig {
+    #[serde(default)]
+    pub env: Env,
+    #[serde(default)]
+    pub log_format: LogFormat,
+    /// The emails link to the portal at `server.origin`.
+    pub server: Server,
+    pub database: Database,
+    pub admin_api: AdminApi,
+    pub email: Email,
+}
+
+/// The secrets `portal send-reminders` reads, from variables or files.
+const REMINDER_SECRETS: [&str; 2] = ["database.url", "email.smtp_url"];
+
+impl ReminderConfig {
+    /// Reads the settings as [`Config::from_environment`] does.
+    pub fn from_environment() -> Result<Self, ConfigError> {
+        Self::from_vars(process_vars())
+    }
+
+    fn from_vars(vars: HashMap<String, String>) -> Result<Self, ConfigError> {
+        load(vars, &REMINDER_SECRETS)
+    }
+}
+
+/// How the portal sends email: through any SMTP server, so the provider changes with these
+/// settings alone.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Email {
+    /// The SMTP server and its credentials (`APP_EMAIL__SMTP_URL`), such as
+    /// `smtp://user:password@smtp.eu.mailgun.org:587?tls=required`. `smtps://` connects over
+    /// TLS, `?tls=required` upgrades with STARTTLS, and plain `smtp://` sends in the clear,
+    /// which production allows on loopback only.
+    pub smtp_url: SecretString,
+    /// The sender (`APP_EMAIL__FROM`), such as `Status List Portal <noreply@example.com>`.
+    pub from: Mailbox,
+    /// Where replies go, if not to the sender (`APP_EMAIL__REPLY_TO`).
+    #[serde(default)]
+    pub reply_to: Option<Mailbox>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -329,9 +376,13 @@ impl PublicOrigin {
     }
 }
 
-fn is_loopback(url: &Url) -> bool {
+pub(crate) fn is_loopback(url: &Url) -> bool {
     match url.host() {
-        Some(Host::Domain(domain)) => domain == "localhost",
+        // URLs of schemes other than http's kin, such as `smtp://`, keep an IPv4 address as
+        // a domain.
+        Some(Host::Domain(domain)) => {
+            domain == "localhost" || domain.parse::<Ipv4Addr>().is_ok_and(|ip| ip.is_loopback())
+        }
         Some(Host::Ipv4(address)) => address.is_loopback(),
         Some(Host::Ipv6(address)) => address.is_loopback(),
         None => false,
@@ -793,6 +844,78 @@ mod tests {
         );
 
         assert_eq!(config.unwrap().database.url.expose_secret(), DATABASE_URL);
+    }
+
+    const REMINDER_VARS: &[(&str, &str)] = &[
+        ("APP_SERVER__ORIGIN", "https://portal.example.com"),
+        ("APP_DATABASE__URL", DATABASE_URL),
+        ("APP_ADMIN_API__URL", "http://status-list-server:8002"),
+        ("APP_ADMIN_API__PRINCIPAL", "portal"),
+        ("APP_ADMIN_API__AUDIENCE", "status-list-admin"),
+        (
+            "APP_ADMIN_API__SIGNING_KEY_FILE",
+            "/run/secrets/admin-key.pem",
+        ),
+        ("APP_ADMIN_API__KEY_ID", "portal-1"),
+        (
+            "APP_EMAIL__FROM",
+            "Status List Portal <noreply@example.com>",
+        ),
+        // The server's secrets are not mounted for the reminder job.
+        ("APP_SESSION__KEY_FILE", "/nonexistent/session-key"),
+        (
+            "APP_GITHUB__CLIENT_SECRET_FILE",
+            "/nonexistent/client-secret",
+        ),
+    ];
+
+    fn load_reminder_config(extra: &[(&str, &str)]) -> Result<ReminderConfig, ConfigError> {
+        ReminderConfig::from_vars(
+            REMINDER_VARS
+                .iter()
+                .chain(extra)
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn the_reminder_job_needs_only_its_own_settings() {
+        let smtp_url = "smtp://user:s3cr3t@smtp.example.com:587?tls=required";
+
+        let config = load_reminder_config(&[("APP_EMAIL__SMTP_URL", smtp_url)]).unwrap();
+
+        assert_eq!(config.env, Env::Production);
+        assert_eq!(config.server.origin.as_str(), "https://portal.example.com");
+        assert_eq!(config.email.smtp_url.expose_secret(), smtp_url);
+        assert_eq!(
+            config.email.from.to_string(),
+            "Status List Portal <noreply@example.com>"
+        );
+        assert_eq!(config.email.reply_to, None);
+    }
+
+    #[test]
+    fn the_reminder_job_reads_the_smtp_url_from_a_file() {
+        let smtp_url = "smtps://user:s3cr3t@smtp.example.com";
+        let file = std::env::temp_dir().join(format!("portal-smtp-url-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&file, format!("{smtp_url}\n")).unwrap();
+
+        let config = load_reminder_config(&[("APP_EMAIL__SMTP_URL_FILE", file.to_str().unwrap())]);
+        std::fs::remove_file(&file).unwrap();
+
+        assert_eq!(config.unwrap().email.smtp_url.expose_secret(), smtp_url);
+    }
+
+    #[test]
+    fn the_reminder_job_needs_a_valid_sender() {
+        let smtp_url = ("APP_EMAIL__SMTP_URL", "smtp://localhost:1025");
+
+        let error = load_reminder_config(&[smtp_url, ("APP_EMAIL__FROM", "not an address")])
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("email.from"), "{error}");
     }
 
     #[test]
