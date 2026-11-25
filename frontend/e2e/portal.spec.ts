@@ -157,9 +157,16 @@ test('a key registers one issuer only', async ({ page }, testInfo) => {
 
 test('a key pair made in the browser never leaves it', async ({ page }, testInfo) => {
   const name = `Browser key ${testInfo.testId}`;
-  const requests: string[] = [];
-  page.on('request', (request) =>
-    requests.push(`${request.url()}\n${JSON.stringify(request.headers())}\n${request.postData()}`),
+  // From every page, popups included, with every header: `headers()` leaves out the cookies.
+  const requests: Promise<{ url: string; headers: object; body: string | null }>[] = [];
+  page.context().on('request', (request) =>
+    requests.push(
+      request.allHeaders().then((headers) => ({
+        url: request.url(),
+        headers,
+        body: request.postData(),
+      })),
+    ),
   );
   await signIn(page, accountFor(testInfo));
   await page.getByRole('link', { name: 'Register an issuer' }).click();
@@ -171,13 +178,26 @@ test('a key pair made in the browser never leaves it', async ({ page }, testInfo
   await submitRegistration(page);
 
   await expect(page.getByText('Your issuer is ready.')).toBeVisible();
-  expect(requests.some((request) => request.includes('/api/v1/issuers'))).toBe(true);
+  const sent = await Promise.all(requests);
+  // Exactly what the page means to send, so that no encoding of the private key gets by.
+  const { kty, crv, x, y } = jwk;
+  expect(
+    sent
+      .filter((request) => request.body !== null)
+      .map(({ url, body }) => ({ path: new URL(url).pathname, body: JSON.parse(body ?? '') })),
+  ).toEqual([
+    { path: '/api/v1/me/terms', body: { version: expect.any(String) } },
+    {
+      path: '/api/v1/issuers',
+      body: { display_name: name, alg: 'ES256', public_key: { kty, crv, x, y } },
+    },
+  ]);
   expect(jwk.d, 'the JWK holds a P-256 private key').toMatch(/^[\w-]{43}$/);
   // The PEM's full lines, which hold the private key; its last line is too short to tell.
   const secrets = [jwk.d, ...pem.split('\n').filter((line) => line.length === 64)];
-  for (const request of requests) {
+  for (const request of sent) {
     for (const secret of secrets) {
-      expect(request, 'a request carried the private key').not.toContain(secret);
+      expect(JSON.stringify(request), 'a request carried the private key').not.toContain(secret);
     }
   }
   // Signing tests the private halves: the public point each file also holds would match anyway.
