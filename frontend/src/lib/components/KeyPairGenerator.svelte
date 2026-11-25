@@ -17,6 +17,8 @@
   let failed = $state(false);
   let saved = $state(false);
   let firstDownload = $state<HTMLButtonElement>();
+  const id = $props.id();
+  const warning = `${id}-warning`;
 
   async function make() {
     // A second pair would replace the first after its private key may have been saved.
@@ -52,10 +54,13 @@
 <div class="generator">
   {#if pair}
     {@const { privatePem, privateJwk } = pair}
-    <Notice kind="warning">
-      <p>
+    <!-- Read as the downloads' description: a live region added with its text is often not
+         announced, and focus goes straight to the first download. -->
+    <Notice kind="warning" announce={false}>
+      <p id={warning}>
         <strong>Your private key exists only in the files you download here.</strong> The portal never
-        receives it and cannot recover it. Keep it safe: it signs your issuer's tokens.
+        receives it and cannot recover it. Keep it safe: it signs your issuer's tokens. Move the files
+        out of Downloads, which often syncs to the cloud, to a folder only you can read.
       </p>
     </Notice>
     <!-- The JSON first: the token script on the issuer page reads it; the PEM is for other tools. -->
@@ -64,6 +69,7 @@
         bind:this={firstDownload}
         type="button"
         class="button"
+        aria-describedby={warning}
         onclick={() => save('private-key.json', privateJwk, 'application/json')}
       >
         <Icon name="arrow-down-tray" /> Download private-key.json
@@ -71,6 +77,7 @@
       <button
         type="button"
         class="button"
+        aria-describedby={warning}
         onclick={() => save('private-key.pem', privatePem, 'application/x-pem-file')}
       >
         <Icon name="arrow-down-tray" /> Download private-key.pem

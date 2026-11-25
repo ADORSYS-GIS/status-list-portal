@@ -58,6 +58,11 @@ test('a key pair made in the browser fills in the form once its private key is s
   await expect
     .element(screen.getByRole('button', { name: 'Download private-key.json' }))
     .toHaveFocus();
+  for (const name of ['Download private-key.json', 'Download private-key.pem']) {
+    await expect
+      .element(screen.getByRole('button', { name }))
+      .toHaveAccessibleDescription(/exists only in the files you download here/);
+  }
 
   await screen.getByRole('button', { name: 'Download private-key.pem' }).click();
   await screen.getByLabelText('Display name').fill('Acme Wallet Issuer');
