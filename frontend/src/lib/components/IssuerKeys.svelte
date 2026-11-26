@@ -40,6 +40,7 @@
   let ownKey = { publicKey: '', alg: 'ES256' as SigningAlgorithm };
   let keyError = $state<string | null>(null);
   let publicKeyField = $state<HTMLTextAreaElement>();
+  let heading: HTMLHeadingElement;
   let lastActiveRevoke = $derived(issuer.keys.filter((key) => key.state === 'active').length === 1);
   let atKeyLimit = $derived(
     issuer.usage.keys_limit !== null && issuer.usage.keys >= issuer.usage.keys_limit,
@@ -62,6 +63,7 @@
 
   async function addKey(event: SubmitEvent) {
     event.preventDefault();
+    if (busy) return;
     keyError = publicKeyProblem(publicKey);
     if (keyError) {
       await tick();
@@ -87,6 +89,8 @@
         'Key added. Move your signers to it and verify a write before revoking the old key.',
       );
       await invalidateAll();
+      // The emptied form disables its button, or the key limit replaces the form.
+      heading.focus();
     });
   }
 
@@ -96,6 +100,7 @@
   }
 
   function askToRevoke(kid: string) {
+    if (busy) return;
     revokeKid = kid;
     confirmRevoke.open();
   }
@@ -121,10 +126,13 @@
         'Key revoked. Tokens signed with it are no longer accepted.',
       );
       await invalidateAll();
+      // The revoked key's buttons, one of which had focus, are gone.
+      heading.focus();
     });
   }
 
   async function act(action: () => Promise<void>) {
+    if (busy) return;
     busy = true;
     failure = null;
     try {
@@ -138,7 +146,7 @@
 </script>
 
 <section aria-labelledby="keys">
-  <h2 id="keys">Signing keys</h2>
+  <h2 id="keys" tabindex="-1" bind:this={heading}>Signing keys</h2>
   {#if failure}<Notice kind="error"><p>{failure}</p></Notice>{/if}
   <p>Revoked keys do not use a slot.</p>
   <ol class="key-list">
@@ -150,15 +158,15 @@
             type="button"
             class="button"
             aria-label="Use in example: key {key.kid}"
-            onclick={() => selectKey(key.kid)}
-            disabled={busy}>Use in example</button
+            onclick={() => busy || selectKey(key.kid)}
+            aria-disabled={busy ? 'true' : undefined}>Use in example</button
           >
           <button
             type="button"
             class="button"
             aria-label="Revoke key {key.kid}"
             onclick={() => askToRevoke(key.kid)}
-            disabled={busy}>Revoke</button
+            aria-disabled={busy ? 'true' : undefined}>Revoke</button
           >
         {/if}
       </li>
@@ -216,8 +224,11 @@
       </div>
       {#key generator}<KeyPairGenerator {alg} onkey={useGeneratedKey} />{/key}
       <KeyPairHelp {alg} />
-      <button type="submit" class="button" disabled={busy || !publicKey.trim()}
-        >Add public key</button
+      <button
+        type="submit"
+        class="button"
+        disabled={!publicKey.trim()}
+        aria-disabled={busy ? 'true' : undefined}>Add public key</button
       >
     </form>
   {/if}
@@ -249,6 +260,10 @@
 <style>
   section {
     margin-top: var(--space-8);
+  }
+
+  h2:focus {
+    outline: none;
   }
 
   .key-list li {

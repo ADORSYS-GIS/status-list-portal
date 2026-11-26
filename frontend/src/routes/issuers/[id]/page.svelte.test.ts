@@ -125,3 +125,36 @@ test('invalid key input is described and focused', async () => {
     .toHaveAttribute('aria-describedby', 'new-public-key-hint new-public-key-error');
   expect(document.activeElement?.id).toBe('new-public-key');
 });
+
+test('focus moves to the signing keys once a key is added', async () => {
+  post.mockResolvedValue({ data: { kid: 'key-2', alg: 'ES256', state: 'active' } });
+  const screen = await render(Page, { data: pageData() });
+  await screen
+    .getByLabelText('Public key (JWK)')
+    .fill('{"kty":"EC","crv":"P-256","x":"AAAA","y":"BBBB"}');
+  await screen.getByRole('button', { name: 'Add public key' }).click();
+  await expect.element(screen.getByRole('heading', { name: 'Signing keys' })).toHaveFocus();
+});
+
+test('focus moves to the signing keys once a key is revoked', async () => {
+  post.mockResolvedValue({ data: { kid: 'key-1', alg: 'ES256', state: 'revoked' } });
+  const screen = await render(Page, { data: pageData(2) });
+  await screen.getByRole('button', { name: 'Revoke key key-1' }).click();
+  await screen.getByRole('button', { name: 'Revoke key', exact: true }).click();
+  await expect.element(screen.getByRole('heading', { name: 'Signing keys' })).toHaveFocus();
+});
+
+test('a button keeps focus while its request runs, and runs it once', async () => {
+  const { promise, resolve } = Promise.withResolvers<{ error?: unknown }>();
+  post.mockReturnValue(promise);
+  const screen = await render(Page, { data: pageData() });
+  const renew = screen.getByRole('button', { name: 'Renew for 30 days' });
+  await renew.click();
+  await expect.element(renew).toHaveAttribute('aria-disabled', 'true');
+  await expect.element(renew).toHaveFocus();
+  // Forced: the click must reach a button that only looks disabled.
+  await renew.click({ force: true });
+  expect(post).toHaveBeenCalledTimes(1);
+  resolve({});
+  await expect.element(renew).not.toHaveAttribute('aria-disabled');
+});
