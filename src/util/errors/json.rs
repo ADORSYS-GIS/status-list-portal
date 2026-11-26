@@ -3,8 +3,8 @@ use std::borrow::Cow;
 use axum::Json;
 use axum::response::{IntoResponse, Response};
 use derive_more::Display;
-use http::StatusCode;
 use http::header::RETRY_AFTER;
+use http::{HeaderValue, StatusCode};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -52,6 +52,8 @@ pub enum ApiErrorCode {
     IssuerRegistrationInProgress,
     /// The public key is already registered.
     KeyMaterialInUse,
+    /// The issuer has reached its tier's key limit.
+    KeyLimitReached,
     /// The public key is malformed or incompatible with the chosen algorithm.
     InvalidPublicKey,
     /// The submitted key contains private key material.
@@ -62,6 +64,12 @@ pub enum ApiErrorCode {
     IssuerChanged,
     /// The issuer cannot be renewed in its current state.
     IssuerNotRenewable,
+    /// A suspended issuer cannot gain keys.
+    IssuerSuspended,
+    /// Only an active key can be revoked by a developer.
+    KeyNotActive,
+    /// The request needs the issuer version previously returned to the client.
+    PreconditionRequired,
     /// Another decision is in progress for the registration.
     RegistrationBeingDecided,
     /// The registration has already been decided.
@@ -105,8 +113,11 @@ impl ApiErrorCode {
             TermsChanged
             | ActiveIssuerLimitReached
             | KeyMaterialInUse
+            | KeyLimitReached
             | IssuerChanged
             | IssuerNotRenewable
+            | IssuerSuspended
+            | KeyNotActive
             | RegistrationBeingDecided
             | RegistrationAlreadyDecided => StatusCode::CONFLICT,
             InvalidPublicKey
@@ -117,6 +128,7 @@ impl ApiErrorCode {
             InvalidJson | InvalidQuery | BodyReadFailed => StatusCode::BAD_REQUEST,
             UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            PreconditionRequired => StatusCode::PRECONDITION_REQUIRED,
             RateLimited => StatusCode::TOO_MANY_REQUESTS,
             BadGateway => StatusCode::BAD_GATEWAY,
             SandboxIssuerLimitReached
@@ -175,6 +187,27 @@ pub fn too_many_requests(detail: &'static str, retry_after: time::Duration) -> B
         detail,
         retry_after,
     })
+}
+
+/// A dependency failure, preserving its retry advice when present.
+pub fn service_unavailable(retry_after: Option<u64>) -> BoxedAppError {
+    Box::new(ServiceUnavailable { retry_after })
+}
+
+#[derive(Debug, Display)]
+#[display("Service Unavailable")]
+struct ServiceUnavailable {
+    retry_after: Option<u64>,
+}
+
+impl AppError for ServiceUnavailable {
+    fn response(&self) -> Response {
+        let mut response = json_error(ApiErrorCode::ServiceUnavailable, "Service Unavailable");
+        if let Some(value) = self.retry_after.map(HeaderValue::from) {
+            response.headers_mut().insert(RETRY_AFTER, value);
+        }
+        response
+    }
 }
 
 #[derive(Debug, Display)]
@@ -253,6 +286,7 @@ mod tests {
                 "key_material_in_use",
                 StatusCode::CONFLICT,
             ),
+            (KeyLimitReached, "key_limit_reached", StatusCode::CONFLICT),
             (
                 InvalidPublicKey,
                 "invalid_public_key",
@@ -273,6 +307,13 @@ mod tests {
                 IssuerNotRenewable,
                 "issuer_not_renewable",
                 StatusCode::CONFLICT,
+            ),
+            (IssuerSuspended, "issuer_suspended", StatusCode::CONFLICT),
+            (KeyNotActive, "key_not_active", StatusCode::CONFLICT),
+            (
+                PreconditionRequired,
+                "precondition_required",
+                StatusCode::PRECONDITION_REQUIRED,
             ),
             (
                 RegistrationBeingDecided,

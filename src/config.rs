@@ -255,6 +255,10 @@ pub struct RateLimits {
     /// Registering an issuer, at once or for approval.
     pub register: RateLimit,
     pub renew: RateLimit,
+    /// Adding a signing key.
+    pub add_key: RateLimit,
+    /// Revoking a signing key, independently of additions.
+    pub revoke_key: RateLimit,
     /// Deleting an issuer.
     pub delete: RateLimit,
     /// Finishing a sign-in with GitHub.
@@ -266,6 +270,8 @@ impl Default for RateLimits {
         Self {
             register: RateLimit::new(5, 600),
             renew: RateLimit::new(10, 60),
+            add_key: RateLimit::new(10, 60),
+            revoke_key: RateLimit::new(20, 30),
             delete: RateLimit::new(20, 30),
             sign_in: RateLimit::new(20, 6),
         }
@@ -912,6 +918,8 @@ mod tests {
         assert_eq!(config.rate_limits.register, RateLimit::new(2, 600));
         let defaults = RateLimits::default();
         assert_eq!(config.rate_limits.renew, defaults.renew);
+        assert_eq!(config.rate_limits.add_key, defaults.add_key);
+        assert_eq!(config.rate_limits.revoke_key, defaults.revoke_key);
         assert_eq!(config.rate_limits.delete, defaults.delete);
         assert_eq!(config.rate_limits.sign_in, defaults.sign_in);
 

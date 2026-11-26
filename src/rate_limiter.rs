@@ -29,6 +29,8 @@ pub enum LimitedAction {
     /// Registering an issuer, at once or for approval.
     Register,
     Renew,
+    AddKey,
+    RevokeKey,
     Delete,
 }
 
@@ -38,6 +40,8 @@ impl LimitedAction {
         match self {
             Self::Register => "register",
             Self::Renew => "renew",
+            Self::AddKey => "add_key",
+            Self::RevokeKey => "revoke_key",
             Self::Delete => "delete",
         }
     }
@@ -46,6 +50,8 @@ impl LimitedAction {
         match self {
             Self::Register => limits.register,
             Self::Renew => limits.renew,
+            Self::AddKey => limits.add_key,
+            Self::RevokeKey => limits.revoke_key,
             Self::Delete => limits.delete,
         }
     }
@@ -54,6 +60,8 @@ impl LimitedAction {
         match self {
             Self::Register => "You registered too many issuers in a short time.",
             Self::Renew => "You renewed issuers too often in a short time.",
+            Self::AddKey => "You added keys too often in a short time.",
+            Self::RevokeKey => "You revoked keys too often in a short time.",
             Self::Delete => "You deleted too many issuers in a short time.",
         }
     }

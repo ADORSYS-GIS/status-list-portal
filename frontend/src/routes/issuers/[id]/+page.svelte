@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { resolve } from '$app/paths';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
@@ -7,9 +8,10 @@
   import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
   import Icon from '#lib/components/Icon.svelte';
   import IssuerFacts from '#lib/components/IssuerFacts.svelte';
+  import IssuerKeys from '#lib/components/IssuerKeys.svelte';
   import Notice from '#lib/components/Notice.svelte';
   import StateBadge from '#lib/components/StateBadge.svelte';
-  import { publishCommands, tokenScript } from '#lib/keys.ts';
+  import { publishCommands, signingKey, tokenScript } from '#lib/keys.ts';
   import { flash } from '#lib/notices.svelte.ts';
 
   let { data } = $props();
@@ -19,6 +21,9 @@
   let busy = $state(false);
   let failure = $state<string | null>(null);
   let confirmDelete: ConfirmDialog;
+  let selectedKid = $state(untrack(() => signingKey(data.issuer)?.kid ?? ''));
+  let keyFileName = $state('private-key.json');
+  let selectedKey = $derived(signingKey(issuer, selectedKid) ?? signingKey(issuer));
 
   let path = $derived({ params: { path: { id: issuer.id } } });
 
@@ -74,19 +79,33 @@
   <Notice kind="error"><p>{failure}</p></Notice>
 {/if}
 
-<IssuerFacts {issuer} />
+<IssuerFacts {issuer} key={selectedKey} />
 
 {#if issuer.state !== 'suspended'}
-  <section aria-labelledby="publish">
-    <h2 id="publish">Publish your first status list</h2>
-    <p>
-      In the folder with your <code>private-key.json</code>, save this script as
-      <code>mint-token.mjs</code>. It signs a management token that lasts two minutes.
-    </p>
-    <CodeBlock code={tokenScript(issuer)} title="mint-token.mjs" />
-    <p>Then publish a status list with one valid entry:</p>
-    <CodeBlock code={publishCommands(issuer)} title="Publish a status list" />
-  </section>
+  <IssuerKeys {issuer} issuerVersion={data.issuerVersion} bind:selectedKid bind:keyFileName />
+
+  {#if selectedKey}
+    <section aria-labelledby="publish">
+      <h2 id="publish">Publish your first status list</h2>
+      <p>
+        In the folder with your <code>{keyFileName}</code>, save this script as
+        <code>mint-token.mjs</code>. It signs a management token that lasts two minutes.
+      </p>
+      <p>
+        Example key: <code>{selectedKey.kid}</code>. Select another active key above if your signer
+        has not switched yet.
+      </p>
+      <label for="private-key-file">Private key filename for this example</label>
+      <input id="private-key-file" bind:value={keyFileName} />
+      <CodeBlock code={tokenScript(issuer, selectedKey.kid, keyFileName)} title="mint-token.mjs" />
+      <p>Then publish a status list with one valid entry:</p>
+      <CodeBlock code={publishCommands(issuer)} title="Publish a status list" />
+    </section>
+  {:else}
+    <Notice kind="info"
+      ><p>No active signing key is available. Add one before writing status lists.</p></Notice
+    >
+  {/if}
 
   <section aria-labelledby="manage">
     <h2 id="manage">Manage</h2>

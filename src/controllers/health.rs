@@ -143,7 +143,7 @@ pub async fn ready(ctx: ServerContext) -> AppResult<Json<HealthResponse>> {
     {
         Ok(Json(OK))
     } else {
-        Err(errors::service_unavailable())
+        Err(errors::service_unavailable(None))
     }
 }
 

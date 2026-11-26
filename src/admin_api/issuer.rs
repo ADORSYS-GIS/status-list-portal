@@ -238,6 +238,13 @@ pub struct NewIssuer {
     pub expires_at: Option<OffsetDateTime>,
 }
 
+/// A public signing key to add to an existing issuer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewIssuerKey {
+    pub public_key: PublicJwk,
+    pub alg: SigningAlgorithm,
+}
+
 /// The state an issuer can be put in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]

@@ -1,4 +1,4 @@
-//! Rate limits on registering, renewing and deleting issuers, and on signing in.
+//! Rate limits on issuer and key changes, and on signing in.
 
 use axum::body::Body;
 use http::header::COOKIE;
@@ -14,7 +14,8 @@ use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, ResponseTemplate};
 
 use crate::util::admin_api::{
-    Counts, issuer_json, issuer_response, new_issuer_body, owner, sandbox_counts,
+    Counts, ISSUER_ID, admin_api_holds, issuer_json, issuer_response, new_issuer_body, owner,
+    public_jwk_json, sandbox_counts,
 };
 use crate::util::{MockAnonymousUser, MockCookieUser, RequestHelper, Response, TestApp};
 
@@ -27,6 +28,8 @@ fn once_an_hour() -> RateLimits {
     RateLimits {
         register: limit,
         renew: limit,
+        add_key: limit,
+        revoke_key: limit,
         delete: limit,
         sign_in: limit,
     }
@@ -220,6 +223,62 @@ async fn concurrent_requests_take_turns() {
     let allowed = checks.join_all().await.into_iter().filter(|ok| *ok).count();
 
     assert_eq!(allowed, 3);
+}
+
+#[tokio::test]
+async fn adding_and_revoking_keys_have_independent_buckets() {
+    let (app, _anon) = TestApp::init()
+        .with_rate_limits(once_an_hour())
+        .empty()
+        .await;
+    let user = app.db_new_registrant("octocat").await;
+    let issuer = issuer_json(user.user().gh_id);
+    let kid = issuer["keys"][0]["kid"].as_str().unwrap();
+    admin_api_holds(app.admin_api(), &issuer).await;
+    for (method_name, route) in [
+        ("POST", format!("/admin/v1/issuers/{ISSUER_ID}/keys")),
+        ("PATCH", format!("/admin/v1/issuers/{ISSUER_ID}/keys/{kid}")),
+    ] {
+        Mock::given(method(method_name))
+            .and(path(route))
+            .respond_with(
+                ResponseTemplate::new(412).set_body_json(json!({ "error": "precondition_failed" })),
+            )
+            .mount(app.admin_api())
+            .await;
+    }
+    let add_path = format!("/api/v1/issuers/{ISSUER_ID}/keys");
+    let body = json!({ "alg": "ES256", "public_key": public_jwk_json() });
+    let invalid_add = user
+        .post_key(
+            &add_path,
+            &json!({ "alg": "ES256", "public_key": { "kty": "oct" } }),
+        )
+        .await;
+    assert_eq!(invalid_add.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let first_add = user.post_key(&add_path, &body).await;
+    let second_add = user.post_key(&add_path, &body).await;
+    assert_eq!(first_add.status(), StatusCode::CONFLICT);
+    assert_refused(&second_add, "You added keys too often in a short time.");
+
+    let revoke_path = format!("/api/v1/issuers/{ISSUER_ID}/keys/{kid}/revoke");
+    let first_revoke = user.post_key(&revoke_path, &json!({})).await;
+    let second_revoke = user.post_key(&revoke_path, &json!({})).await;
+    assert_eq!(first_revoke.status(), StatusCode::CONFLICT);
+    assert_refused(
+        &second_revoke,
+        "You revoked keys too often in a short time.",
+    );
+    let metrics = app.metrics();
+    for action in ["add_key", "revoke_key"] {
+        assert_eq!(
+            metrics.sum(
+                "portal.rate_limited",
+                &[("portal.rate_limit.action", action)]
+            ),
+            1
+        );
+    }
 }
 
 #[tokio::test]

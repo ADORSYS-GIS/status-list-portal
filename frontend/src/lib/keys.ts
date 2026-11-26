@@ -6,6 +6,13 @@
 
 import type { Issuer, SigningAlgorithm } from './api';
 
+export const ALGORITHM_LABELS: Record<SigningAlgorithm, string> = {
+  ES256: 'ES256: ECDSA on P-256, a good default',
+  ES384: 'ES384: ECDSA on P-384',
+  EdDSA: 'EdDSA: Ed25519',
+  PS256: 'PS256: RSA-PSS, 2048 bits or more',
+};
+
 /** Members that only private and symmetric keys have (RFC 7518 §6). */
 const PRIVATE_MEMBERS = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'];
 
@@ -86,20 +93,26 @@ console.log(JSON.stringify(await crypto.subtle.exportKey('jwk', publicKey)));
 `;
 }
 
-/** The key that signs the issuer's tokens: its newest active one. */
-export function signingKey(issuer: Issuer) {
-  return issuer.keys.find((key) => key.state === 'active') ?? issuer.keys[0];
+/** The selected active key, or the newest active key when no id is given. */
+export function signingKey(issuer: Issuer, kid?: string) {
+  return issuer.keys.find(
+    (key) => key.state === 'active' && (kid === undefined || key.kid === kid),
+  );
 }
 
 /** A Node.js script that signs a management token for `issuer` with private-key.json. */
-export function tokenScript(issuer: Issuer): string {
-  const key = signingKey(issuer);
+export function tokenScript(
+  issuer: Issuer,
+  kid?: string,
+  privateKeyFile = 'private-key.json',
+): string {
+  const key = signingKey(issuer, kid);
   const alg = key?.alg ?? 'ES256';
   const header = { alg, typ: 'statuslist-management+jwt', kid: key?.kid ?? '' };
   return `// mint-token.mjs: run \`node mint-token.mjs\` (Node.js 22 or later).
 import { readFile } from 'node:fs/promises';
 
-const jwk = JSON.parse(await readFile('private-key.json', 'utf8'));
+const jwk = JSON.parse(await readFile(${JSON.stringify(privateKeyFile)}, 'utf8'));
 const key = await crypto.subtle.importKey('jwk', jwk, ${WEB_CRYPTO[alg].key}, false, ['sign']);
 const now = Math.floor(Date.now() / 1000);
 const header = ${JSON.stringify(header)};

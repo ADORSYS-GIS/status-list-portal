@@ -9,6 +9,7 @@ mod public_key;
 use axum::Json;
 use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
+use http::HeaderMap;
 use http::StatusCode;
 use http::header::LOCATION;
 use serde::{Deserialize, Serialize};
@@ -19,8 +20,8 @@ use url::Url;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::admin_api::{
-    Issuer, IssuerChange, IssuerState, IssuerUsage, KeyState, NewIssuer, Owner, RequestedState,
-    SigningAlgorithm,
+    ErrorCode, IF_ISSUER_VERSION, ISSUER_VERSION, Issuer, IssuerChange, IssuerKey, IssuerState,
+    IssuerUsage, KeyState, NewIssuer, NewIssuerKey, Owner, RequestedState, SigningAlgorithm,
 };
 use crate::auth::AuthenticatedUser;
 use crate::config::{self, PublicOrigin};
@@ -78,6 +79,16 @@ pub struct IssuerKeyResponse {
     state: KeyState,
 }
 
+impl From<IssuerKey> for IssuerKeyResponse {
+    fn from(key: IssuerKey) -> Self {
+        Self {
+            kid: key.kid,
+            alg: key.alg,
+            state: key.state,
+        }
+    }
+}
+
 /// What the issuer uses of its tier's limits.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct IssuerUsageResponse {
@@ -123,11 +134,7 @@ impl IssuerResponse {
         let keys = issuer
             .keys
             .into_iter()
-            .map(|key| IssuerKeyResponse {
-                kid: key.kid,
-                alg: key.alg,
-                state: key.state,
-            })
+            .map(IssuerKeyResponse::from)
             .collect();
         Self {
             id: issuer.id,
@@ -298,7 +305,7 @@ pub async fn create_issuer(
     tag = "issuers",
     params(("id" = String, Path, description = "The issuer's id.")),
     responses(
-        (status = 200, description = "The issuer.", body = IssuerResponse),
+        (status = 200, description = "The issuer.", body = IssuerResponse, headers(("issuer-version" = String, description = "The issuer version to send as if-issuer-version when changing keys."))),
         (status = 401, description = "Not signed in.", body = ApiErrorResponse),
         (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
         (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
@@ -308,7 +315,7 @@ pub async fn get_issuer(
     ctx: ServerContext,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<String>,
-) -> AppResult<Json<IssuerResponse>> {
+) -> AppResult<([(http::HeaderName, String); 1], Json<IssuerResponse>)> {
     let owner = Owner::github(user.gh_id);
     let issuer = ctx
         .admin_api
@@ -316,11 +323,183 @@ pub async fn get_issuer(
         .get(&id)
         .await?
         .ok_or_else(errors::not_found)?;
-    Ok(Json(IssuerResponse::new(
-        issuer.into_issuer(),
-        &ctx.config.management_api,
-        sandbox::expires_soon_window(&ctx.config.sandbox),
-    )))
+    let version = issuer.version().to_owned();
+    Ok((
+        [(ISSUER_VERSION, version)],
+        Json(IssuerResponse::new(
+            issuer.into_issuer(),
+            &ctx.config.management_api,
+            sandbox::expires_soon_window(&ctx.config.sandbox),
+        )),
+    ))
+}
+
+// No `Debug`: a private key accidentally pasted into the request must stay out of logs.
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NewIssuerKeyRequest {
+    alg: SigningAlgorithm,
+    #[schema(value_type = Object)]
+    public_key: Value,
+}
+
+/// Adds an active key to one of the signed-in user's issuers.
+#[utoipa::path(
+    post,
+    path = "/api/v1/issuers/{id}/keys",
+    tag = "issuers",
+    params(
+        ("id" = String, Path, description = "The issuer's id."),
+        ("if-issuer-version" = String, Header, description = "The issuer-version received when this page was loaded."),
+    ),
+    request_body = NewIssuerKeyRequest,
+    responses(
+        (status = 201, description = "Key added.", body = IssuerKeyResponse),
+        (status = 401, description = "Not signed in.", body = ApiErrorResponse),
+        (status = 403, description = "The current terms are not accepted.", body = ApiErrorResponse),
+        (status = 404, description = "The user has no issuer with this id.", body = ApiErrorResponse),
+        (status = 409, description = "key_limit_reached, key_material_in_use, issuer_changed, or issuer_suspended.", body = ApiErrorResponse),
+        (status = 422, description = "Invalid or private key.", body = ApiErrorResponse),
+        (status = 429, description = "Too many key additions in a short time.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds until the user may try again."))),
+        (status = 428, description = "The if-issuer-version header is required.", body = ApiErrorResponse),
+        (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
+        (status = 503, description = "The admin API is temporarily unavailable or contended.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds to wait when supplied by the admin API."))),
+    ),
+)]
+pub async fn add_issuer_key(
+    ctx: ServerContext,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    JsonBody(request): JsonBody<NewIssuerKeyRequest>,
+) -> AppResult<(StatusCode, Json<IssuerKeyResponse>)> {
+    let observed_version = required_issuer_version(&headers)?;
+    let key = NewIssuerKey {
+        alg: request.alg,
+        public_key: public_key::parse(&request.public_key, request.alg)?,
+    };
+    let mut conn = ctx.db.get().await?;
+    sandbox::ensure_terms_accepted(&mut conn, &user, &ctx.config.terms).await?;
+    ctx.rate_limiter
+        .check(&mut conn, user.id, LimitedAction::AddKey)
+        .await?;
+    drop(conn);
+    let owner = Owner::github(user.gh_id);
+    let issuers = ctx.admin_api.issuers_of(&owner);
+    let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
+    if current.state == IssuerState::Suspended {
+        return Err(errors::custom(
+            ApiErrorCode::IssuerSuspended,
+            "This issuer is deleted or suspended, so it cannot accept a new key.",
+        ));
+    }
+    if observed_version != current.version() {
+        if let Some(added) = active_match(&current.keys, &key) {
+            return Ok((StatusCode::CREATED, Json(added.clone().into())));
+        }
+        return Err(issuer_changed());
+    }
+    let added = match issuers.add_key(&current, &key).await {
+        Ok(Some(added)) => added,
+        Ok(None) => return Err(errors::not_found()),
+        Err(error) if error.code() == Some(ErrorCode::KeyMaterialInUse) => {
+            let reread = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
+            active_match(&reread.keys, &key)
+                .cloned()
+                .ok_or_else(|| errors::BoxedAppError::from(error))?
+        }
+        Err(error) => return Err(error.into()),
+    };
+    info!(user.id, issuer.id = %id, key.id = %added.kid, "added issuer key");
+    Ok((StatusCode::CREATED, Json(added.into())))
+}
+
+/// Permanently revokes one key of the signed-in user's issuer.
+#[utoipa::path(
+    post,
+    path = "/api/v1/issuers/{id}/keys/{kid}/revoke",
+    tag = "issuers",
+    params(
+        ("id" = String, Path, description = "The issuer's id."),
+        ("kid" = String, Path, description = "The key id."),
+        ("if-issuer-version" = String, Header, description = "The issuer-version received when this page was loaded."),
+    ),
+    responses(
+        (status = 200, description = "Key revoked.", body = IssuerKeyResponse),
+        (status = 401, description = "Not signed in.", body = ApiErrorResponse),
+        (status = 404, description = "The user has no issuer or key with this id.", body = ApiErrorResponse),
+        (status = 409, description = "issuer_changed for a stale version, or key_not_active for a reserved key.", body = ApiErrorResponse),
+        (status = 428, description = "The if-issuer-version header is required.", body = ApiErrorResponse),
+        (status = 429, description = "Too many key revocations in a short time.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds until the user may try again."))),
+        (status = 502, description = "The Status List Server did not complete the request.", body = ApiErrorResponse),
+        (status = 503, description = "The admin API is temporarily unavailable or contended.", body = ApiErrorResponse, headers(("retry-after" = u64, description = "Seconds to wait when supplied by the admin API."))),
+    ),
+)]
+pub async fn revoke_issuer_key(
+    ctx: ServerContext,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path((id, kid)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> AppResult<Json<IssuerKeyResponse>> {
+    let observed_version = required_issuer_version(&headers)?;
+    let mut conn = ctx.db.get().await?;
+    ctx.rate_limiter
+        .check(&mut conn, user.id, LimitedAction::RevokeKey)
+        .await?;
+    drop(conn);
+    let owner = Owner::github(user.gh_id);
+    let issuers = ctx.admin_api.issuers_of(&owner);
+    let current = issuers.get(&id).await?.ok_or_else(errors::not_found)?;
+    let key = current
+        .keys
+        .iter()
+        .find(|key| key.kid == kid)
+        .ok_or_else(errors::not_found)?;
+    if key.state == KeyState::Revoked {
+        return Ok(Json(key.clone().into()));
+    }
+    if key.state != KeyState::Active {
+        return Err(errors::custom(
+            ApiErrorCode::KeyNotActive,
+            "Only active keys can be revoked. This reserved key needs operator action.",
+        ));
+    }
+    if observed_version != current.version() {
+        return Err(issuer_changed());
+    }
+    let revoked = issuers
+        .revoke_key(&current, &kid)
+        .await?
+        .ok_or_else(errors::not_found)?;
+    info!(user.id, issuer.id = %id, key.id = %kid, "revoked issuer key");
+    Ok(Json(revoked.into()))
+}
+
+fn required_issuer_version(headers: &HeaderMap) -> AppResult<&str> {
+    headers
+        .get(IF_ISSUER_VERSION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| {
+            errors::custom(
+                ApiErrorCode::PreconditionRequired,
+                "Send the issuer version from the page as if-issuer-version.",
+            )
+        })
+}
+
+fn active_match<'a>(keys: &'a [IssuerKey], key: &NewIssuerKey) -> Option<&'a IssuerKey> {
+    keys.iter().find(|candidate| {
+        candidate.state == KeyState::Active
+            && candidate.alg == key.alg
+            && candidate.public_key == key.public_key
+    })
+}
+
+fn issuer_changed() -> errors::BoxedAppError {
+    errors::custom(
+        ApiErrorCode::IssuerChanged,
+        "The issuer changed since this page loaded. Reload it before changing a key.",
+    )
 }
 
 /// Keeps one of the signed-in user's issuers active for another sandbox lifetime.

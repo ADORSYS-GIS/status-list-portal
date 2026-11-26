@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import arrowDownTray from 'heroicons/24/outline/arrow-down-tray.svg?raw';
   import arrowPath from 'heroicons/24/outline/arrow-path.svg?raw';
   import arrowRightStartOnRectangle from 'heroicons/24/outline/arrow-right-start-on-rectangle.svg?raw';
   import arrowTopRightOnSquare from 'heroicons/24/outline/arrow-top-right-on-square.svg?raw';
@@ -7,10 +8,12 @@
   import clipboardDocument from 'heroicons/24/outline/clipboard-document.svg?raw';
   import exclamationTriangle from 'heroicons/24/outline/exclamation-triangle.svg?raw';
   import informationCircle from 'heroicons/24/outline/information-circle.svg?raw';
+  import key from 'heroicons/24/outline/key.svg?raw';
   import plus from 'heroicons/24/outline/plus.svg?raw';
   import trash from 'heroicons/24/outline/trash.svg?raw';
 
   const ICONS = {
+    'arrow-down-tray': arrowDownTray,
     'arrow-path': arrowPath,
     'arrow-right-start-on-rectangle': arrowRightStartOnRectangle,
     'arrow-top-right-on-square': arrowTopRightOnSquare,
@@ -19,6 +22,7 @@
     'clipboard-document': clipboardDocument,
     'exclamation-triangle': exclamationTriangle,
     'information-circle': informationCircle,
+    key,
     plus,
     trash,
   } as const;
