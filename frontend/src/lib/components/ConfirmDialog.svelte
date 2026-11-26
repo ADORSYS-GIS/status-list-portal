@@ -16,8 +16,6 @@
     children: Snippet;
   } = $props();
 
-  // Unique to each dialog, so that on a page with several, each is named and described by its
-  // own title and text.
   const id = $props.id();
 
   let dialog: HTMLDialogElement;
