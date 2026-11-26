@@ -51,6 +51,11 @@
     });
   }
 
+  function askToDelete() {
+    if (busy) return;
+    confirmDelete.open();
+  }
+
   /**
    * Runs `action` with the buttons disabled, though still focusable. A failed request is
    * reported, never lost.
@@ -114,21 +119,11 @@
   <section aria-labelledby="manage">
     <h2 id="manage">Manage</h2>
     <div class="actions">
-      <button
-        type="button"
-        class="button"
-        onclick={renew}
-        aria-disabled={busy ? 'true' : undefined}
-      >
+      <button type="button" class="button" onclick={renew} aria-disabled={busy || undefined}>
         <Icon name="arrow-path" />
         Renew for 30 days
       </button>
-      <button
-        type="button"
-        class="button"
-        onclick={() => busy || confirmDelete.open()}
-        aria-disabled={busy ? 'true' : undefined}
-      >
+      <button type="button" class="button" onclick={askToDelete} aria-disabled={busy || undefined}>
         <Icon name="trash" />
         Delete issuer
       </button>

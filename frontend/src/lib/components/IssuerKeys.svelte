@@ -99,6 +99,11 @@
     keyFileName = 'private-key.json';
   }
 
+  function useInExample(kid: string) {
+    if (busy) return;
+    selectKey(kid);
+  }
+
   function askToRevoke(kid: string) {
     if (busy) return;
     revokeKid = kid;
@@ -158,15 +163,15 @@
             type="button"
             class="button"
             aria-label="Use in example: key {key.kid}"
-            onclick={() => busy || selectKey(key.kid)}
-            aria-disabled={busy ? 'true' : undefined}>Use in example</button
+            onclick={() => useInExample(key.kid)}
+            aria-disabled={busy || undefined}>Use in example</button
           >
           <button
             type="button"
             class="button"
             aria-label="Revoke key {key.kid}"
             onclick={() => askToRevoke(key.kid)}
-            aria-disabled={busy ? 'true' : undefined}>Revoke</button
+            aria-disabled={busy || undefined}>Revoke</button
           >
         {/if}
       </li>
@@ -228,7 +233,7 @@
         type="submit"
         class="button"
         disabled={!publicKey.trim()}
-        aria-disabled={busy ? 'true' : undefined}>Add public key</button
+        aria-disabled={busy || undefined}>Add public key</button
       >
     </form>
   {/if}

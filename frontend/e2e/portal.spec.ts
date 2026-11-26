@@ -138,7 +138,7 @@ function contrast(first: string, second: string): number {
 
 /**
  * The contrasts axe does not check: a field's border against the backgrounds on both sides of
- * it (WCAG 1.4.11), and its placeholder against its own background (WCAG 1.4.3).
+ * it (WCAG 1.4.11), and its placeholder, if it has one, against its own background (WCAG 1.4.3).
  */
 async function fieldContrasts(field: Locator) {
   const { border, placeholder, inside, around } = await field.evaluate((element) => {
@@ -148,14 +148,16 @@ async function fieldContrasts(field: Locator) {
     }
     return {
       border: getComputedStyle(element).borderTopColor,
-      placeholder: getComputedStyle(element, '::placeholder').color,
+      placeholder: element.hasAttribute('placeholder')
+        ? getComputedStyle(element, '::placeholder').color
+        : null,
       inside: getComputedStyle(element).backgroundColor,
       around: getComputedStyle(outer ?? document.documentElement).backgroundColor,
     };
   });
   return {
     border: Math.min(contrast(border, around), contrast(border, inside)),
-    placeholder: contrast(placeholder, inside),
+    placeholder: placeholder === null ? null : contrast(placeholder, inside),
   };
 }
 
@@ -291,8 +293,10 @@ for (const colorScheme of ['light', 'dark'] as const) {
       for (const label of ['Display name', 'Algorithm', 'Public key']) {
         const contrasts = await fieldContrasts(page.getByLabel(label, { exact: true }));
         expect(contrasts.border, `${label}: border`).toBeGreaterThanOrEqual(3);
-        expect(contrasts.placeholder, `${label}: placeholder`).toBeGreaterThanOrEqual(4.5);
       }
+      // Only "Public key" has a placeholder.
+      const publicKey = await fieldContrasts(page.getByLabel('Public key', { exact: true }));
+      expect(publicKey.placeholder, 'Public key: placeholder').toBeGreaterThanOrEqual(4.5);
 
       await page.getByRole('button', { name: 'Register issuer' }).click();
       await expect(page.getByLabel('Display name')).toBeFocused();
