@@ -75,6 +75,8 @@ const portalSettings = {
   APP_MANAGEMENT_API__AUDIENCE: 'https://status.example.com',
   APP_TERMS__VERSION: '2026-10-22',
   APP_TERMS__URL: `${PORTAL.url}/terms`,
+  APP_PRIVACY_NOTICE__URL: `${PORTAL.url}/privacy`,
+  APP_IMPRINT__URL: `${PORTAL.url}/imprint`,
   // Every test signs in from the same address.
   APP_RATE_LIMITS__SIGN_IN__BURST: '1000',
 };

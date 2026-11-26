@@ -305,5 +305,11 @@ fn simple_config(
             version: TERMS_VERSION.to_string(),
             url: Url::parse(&format!("{ORIGIN}/terms")).expect("the URL is valid"),
         },
+        privacy_notice: config::LegalDocument {
+            url: Url::parse(&format!("{ORIGIN}/privacy")).expect("the URL is valid"),
+        },
+        imprint: config::LegalDocument {
+            url: Url::parse(&format!("{ORIGIN}/imprint")).expect("the URL is valid"),
+        },
     }
 }

@@ -3,7 +3,12 @@ import { render } from 'vitest-browser-svelte';
 
 import IssuerForm from './IssuerForm.svelte';
 
-const TERMS = { version: '2026-10-22', url: 'https://portal.example.com/terms' };
+const TERMS = {
+  version: '2026-10-22',
+  url: 'https://portal.example.com/terms',
+  privacy_notice_url: 'https://portal.example.com/privacy',
+  imprint_url: 'https://portal.example.com/imprint',
+};
 const PUBLIC_KEY = '{"kty":"EC","crv":"P-256","x":"AAAA","y":"BBBB"}';
 
 async function renderForm(termsAccepted = true) {

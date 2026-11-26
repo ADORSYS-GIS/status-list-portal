@@ -10,6 +10,8 @@
     <ul>
       {#if terms}
         <li><a href={terms.url} rel="external">Terms of use</a></li>
+        <li><a href={terms.privacy_notice_url} rel="external">Privacy notice</a></li>
+        <li><a href={terms.imprint_url} rel="external">Imprint</a></li>
       {/if}
       <li>
         <a href="https://github.com/adorsys/status-list-server" rel="external">Status List Server</a
@@ -39,6 +41,7 @@
 
   ul {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-4);
     margin: 0;
     padding: 0;

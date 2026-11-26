@@ -8,7 +8,7 @@ import { readFile } from 'node:fs/promises';
 
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
-import { ADMIN_API, GITHUB, GITHUB_USER_COOKIE } from './settings.ts';
+import { ADMIN_API, GITHUB, GITHUB_USER_COOKIE, PORTAL } from './settings.ts';
 
 /** The sandbox's issuer lifetime, in seconds. */
 const LIFETIME = 30 * 24 * 60 * 60;
@@ -94,6 +94,32 @@ function oneLifetimeAway(expiresAt: number): boolean {
   const fromNow = expiresAt - Date.now() / 1000;
   return fromNow > LIFETIME - 10 * 60 && fromNow <= LIFETIME;
 }
+
+test('every page links the legal documents', async ({ page }, testInfo) => {
+  const links = [
+    { name: 'Terms of use', path: '/terms' },
+    { name: 'Privacy notice', path: '/privacy' },
+    { name: 'Imprint', path: '/imprint' },
+  ];
+  async function checkFooter() {
+    const footer = page.getByRole('contentinfo');
+    for (const { name, path } of links) {
+      await expect(footer.getByRole('link', { name })).toHaveAttribute(
+        'href',
+        `${PORTAL.url}${path}`,
+      );
+    }
+  }
+
+  await page.goto('/');
+  await checkFooter();
+  await page.goto('/missing');
+  await checkFooter();
+  await signIn(page, accountFor(testInfo));
+  await checkFooter();
+  await page.goto('/issuers/new');
+  await checkFooter();
+});
 
 test('a developer signs in with GitHub and out again', async ({ page }, testInfo) => {
   await signIn(page, accountFor(testInfo));

@@ -463,6 +463,16 @@ export interface components {
         SigningAlgorithm: "ES256" | "ES384" | "EdDSA" | "PS256";
         TermsResponse: {
             /**
+             * @description Where the imprint is published.
+             * @example https://portal.example.com/imprint
+             */
+            imprint_url: string;
+            /**
+             * @description Where the privacy notice is published.
+             * @example https://portal.example.com/privacy
+             */
+            privacy_notice_url: string;
+            /**
              * @description Where the current terms are published.
              * @example https://portal.example.com/terms
              */
