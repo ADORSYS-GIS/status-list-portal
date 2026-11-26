@@ -12,6 +12,7 @@
     confirmLabel: string;
     cancelLabel?: string;
     onconfirm: () => void;
+    /** What confirming does. Screen readers read all of it as the dialog's description. */
     children: Snippet;
   } = $props();
 

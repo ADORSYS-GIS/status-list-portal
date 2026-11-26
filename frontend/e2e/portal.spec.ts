@@ -99,41 +99,64 @@ function oneLifetimeAway(expiresAt: number): boolean {
   return fromNow > LIFETIME - 10 * 60 && fromNow <= LIFETIME;
 }
 
-/** Checks the page as it is now against WCAG 2.2 AA, naming each failure and where it is. */
+/**
+ * Checks the page as it is now against WCAG 2.2 AA, naming each failure and where it is. A
+ * contrast axe could not decide, such as text over a dialog's backdrop, fails too: it was never
+ * checked.
+ */
 async function expectAccessible(page: Page) {
-  const { violations } = await new AxeBuilder({ page }).withTags(WCAG_AA).analyze();
-  const failures = violations.map(
+  const { violations, incomplete } = await new AxeBuilder({ page }).withTags(WCAG_AA).analyze();
+  const undecided = incomplete.filter(({ id }) => id === 'color-contrast');
+  const failures = [...violations, ...undecided].map(
     ({ id, help, nodes }) => `${id}: ${help} (${nodes.map((node) => node.target).join(', ')})`,
   );
   expect(failures).toEqual([]);
 }
 
-/** The relative luminance of a color the browser computed, such as `rgb(100, 116, 139)`. */
-function luminance(color: string): number {
-  const [red, green, blue] = (color.match(/[\d.]+/g) ?? []).slice(0, 3).map((channel) => {
-    const value = Number(channel) / 255;
-    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+/** The red, green and blue of an opaque color the browser computed, such as `rgb(1, 2, 3)`. */
+function channels(color: string): number[] {
+  const match = /^rgba?\((\d+), (\d+), (\d+)(?:, ([\d.]+))?\)$/.exec(color);
+  if (!match || (match[4] !== undefined && Number(match[4]) !== 1)) {
+    throw new Error(`cannot measure the contrast of ${color}`);
+  }
+  return match.slice(1, 4).map(Number);
+}
+
+/** The contrast ratio of two colors the browser computed. */
+function contrast(first: string, second: string): number {
+  const [lighter, darker] = [first, second]
+    .map((color) => {
+      const [red, green, blue] = channels(color).map((channel) => {
+        const value = channel / 255;
+        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    })
+    .sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
 }
 
 /**
- * The contrast of a field's border against the background around it (WCAG 1.4.11), which
- * axe does not check.
+ * The contrasts axe does not check: a field's border against the backgrounds on both sides of
+ * it (WCAG 1.4.11), and its placeholder against its own background (WCAG 1.4.3).
  */
-async function borderContrast(field: Locator): Promise<number> {
-  const [border, background] = await field.evaluate((element) => {
-    let around = element.parentElement;
-    while (around && getComputedStyle(around).backgroundColor === 'rgba(0, 0, 0, 0)') {
-      around = around.parentElement;
+async function fieldContrasts(field: Locator) {
+  const { border, placeholder, inside, around } = await field.evaluate((element) => {
+    let outer = element.parentElement;
+    while (outer && getComputedStyle(outer).backgroundColor === 'rgba(0, 0, 0, 0)') {
+      outer = outer.parentElement;
     }
-    return [
-      getComputedStyle(element).borderTopColor,
-      getComputedStyle(around ?? document.documentElement).backgroundColor,
-    ];
+    return {
+      border: getComputedStyle(element).borderTopColor,
+      placeholder: getComputedStyle(element, '::placeholder').color,
+      inside: getComputedStyle(element).backgroundColor,
+      around: getComputedStyle(outer ?? document.documentElement).backgroundColor,
+    };
   });
-  const [lighter, darker] = [luminance(border), luminance(background)].sort((a, b) => b - a);
-  return (lighter + 0.05) / (darker + 0.05);
+  return {
+    border: Math.min(contrast(border, around), contrast(border, inside)),
+    placeholder: contrast(placeholder, inside),
+  };
 }
 
 test('a developer signs in with GitHub and out again', async ({ page }, testInfo) => {
@@ -241,13 +264,34 @@ for (const colorScheme of ['light', 'dark'] as const) {
       await expectAccessible(page);
     });
 
+    test('the pages after signing in meet WCAG 2.2 AA', async ({ page }, testInfo) => {
+      await signIn(page, accountFor(testInfo));
+      await expectAccessible(page);
+
+      const name = `Wallet ${testInfo.testId}`;
+      await register(page, name, await publicKey());
+      await expect(page.getByRole('heading', { name, level: 1 })).toBeVisible();
+      await page
+        .getByRole('navigation', { name: 'Account' })
+        .getByRole('link', { name: 'Issuers' })
+        .click();
+      await expect(page.getByRole('row', { name })).toBeVisible();
+      await expectAccessible(page);
+
+      await page.goto('/');
+      await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+      await expectAccessible(page);
+    });
+
     test('the registration page meets WCAG 2.2 AA', async ({ page }, testInfo) => {
       await signIn(page, accountFor(testInfo));
       await page.getByRole('link', { name: 'Register an issuer' }).click();
       await expect(page.getByRole('heading', { name: 'Register an issuer' })).toBeVisible();
       await expectAccessible(page);
-      for (const label of ['Display name', 'Public key']) {
-        expect(await borderContrast(page.getByLabel(label))).toBeGreaterThanOrEqual(3);
+      for (const label of ['Display name', 'Algorithm', 'Public key']) {
+        const contrasts = await fieldContrasts(page.getByLabel(label, { exact: true }));
+        expect(contrasts.border, `${label}: border`).toBeGreaterThanOrEqual(3);
+        expect(contrasts.placeholder, `${label}: placeholder`).toBeGreaterThanOrEqual(4.5);
       }
 
       await page.getByRole('button', { name: 'Register issuer' }).click();
@@ -288,6 +332,11 @@ for (const colorScheme of ['light', 'dark'] as const) {
       await expect(page.getByRole('button', { name: 'Download private-key.json' })).toBeFocused();
       await expectAccessible(page);
 
+      await download(page, 'Download private-key.json');
+      await page.getByRole('button', { name: 'Add public key' }).click();
+      await expect(page.getByText('The key limit is reached.')).toBeVisible();
+      await expectAccessible(page);
+
       const { kid } = (await heldIssuer(name)).keys[0];
       await page.getByRole('button', { name: `Revoke key ${kid}` }).click();
       await expect(page.getByRole('dialog', { name: `Revoke key ${kid}?` })).toBeVisible();
@@ -313,6 +362,8 @@ test('a developer adds a key, reaches the limit, and revokes the old key', async
   await expect(page.getByLabel('Public key (JWK)')).toHaveValue(JSON.stringify({ kty, crv, x, y }));
   await page.getByRole('button', { name: 'Add public key' }).click();
   await expect(page.getByText('Key added. Move your signers')).toBeVisible();
+  // The key limit replaced the form, and with it the button that had focus.
+  await expect(page.getByRole('heading', { name: 'Signing keys' })).toBeFocused();
   const added = await heldIssuer(name);
   expect(added.version).toBe(before.version + 1);
   expect(added.usage.keys).toBe(2);
@@ -324,6 +375,8 @@ test('a developer adds a key, reaches the limit, and revokes the old key', async
   const confirm = page.getByRole('dialog', { name: `Revoke key ${oldKid}?` });
   await confirm.getByRole('button', { name: 'Revoke key' }).click();
   await expect(page.getByText('Key revoked. Tokens signed with it')).toBeVisible();
+  // The button that had focus is gone with the key.
+  await expect(page.getByRole('heading', { name: 'Signing keys' })).toBeFocused();
   const revoked = await heldIssuer(name);
   expect(revoked.version).toBe(added.version + 1);
   expect(revoked.keys.find((key) => key.kid === oldKid)?.state).toBe('revoked');
