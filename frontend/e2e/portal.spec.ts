@@ -253,6 +253,15 @@ for (const colorScheme of ['light', 'dark'] as const) {
       await page.getByRole('button', { name: 'Register issuer' }).click();
       await expect(page.getByLabel('Display name')).toBeFocused();
       await expectAccessible(page);
+
+      // Focus skips the warning above the downloads, so they are described by it.
+      await page.getByRole('button', { name: 'Make a key pair in this browser' }).click();
+      const firstDownload = page.getByRole('button', { name: 'Download private-key.json' });
+      await expect(firstDownload).toBeFocused();
+      await expect(firstDownload).toHaveAccessibleDescription(
+        /^Your private key exists only in the files you download here\./,
+      );
+      await expectAccessible(page);
     });
 
     test("an issuer's page meets WCAG 2.2 AA", async ({ page }, testInfo) => {
@@ -264,6 +273,24 @@ for (const colorScheme of ['light', 'dark'] as const) {
 
       await page.getByRole('button', { name: 'Delete issuer' }).click();
       await expect(page.getByRole('dialog', { name: `Delete ${name}?` })).toBeVisible();
+      await expectAccessible(page);
+      await page.getByRole('button', { name: 'Keep issuer' }).click();
+
+      const newKey = page.getByLabel('Public key (JWK)');
+      await newKey.fill('not a key');
+      await page.getByRole('button', { name: 'Add public key' }).click();
+      await expect(newKey).toBeFocused();
+      await expect(newKey).toHaveAttribute('aria-invalid', 'true');
+      await expectAccessible(page);
+
+      await newKey.fill('');
+      await page.getByRole('button', { name: 'Make a key pair in this browser' }).click();
+      await expect(page.getByRole('button', { name: 'Download private-key.json' })).toBeFocused();
+      await expectAccessible(page);
+
+      const { kid } = (await heldIssuer(name)).keys[0];
+      await page.getByRole('button', { name: `Revoke key ${kid}` }).click();
+      await expect(page.getByRole('dialog', { name: `Revoke key ${kid}?` })).toBeVisible();
       await expectAccessible(page);
     });
   });
