@@ -27,7 +27,7 @@ The frontend lives in `frontend/` and needs [Bun](https://bun.com). Its commands
 
 ## Deploy
 
-`docker build --tag status-list-portal .` builds the image, with the frontend. The [deployment guide](docs/deployment.md) covers the GitHub OAuth app, the admin API key, secrets, database roles, migrations and TLS, proxies, health checks and backtraces.
+Releases publish a signed image as `ghcr.io/adorsys-gis/status-list-portal`; [docs/releasing.md](docs/releasing.md) shows how to cut a release and verify its image. `docker build --tag status-list-portal .` builds it locally, with the frontend. The [deployment guide](docs/deployment.md) covers the GitHub OAuth app, the admin API key, secrets, database roles, migrations and TLS, proxies, health checks and backtraces.
 
 ## Telemetry
 
