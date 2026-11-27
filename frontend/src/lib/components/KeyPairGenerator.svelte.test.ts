@@ -13,7 +13,11 @@ test('one key pair is made at a time', async () => {
 
   await make.click();
 
-  await expect.element(make).toBeDisabled();
+  await expect.element(make).toHaveAttribute('aria-disabled', 'true');
+  await expect.element(make).toHaveFocus();
+  // Forced: the click must reach a button that only looks disabled.
+  await make.click({ force: true });
+  expect(makeKeyPair).toHaveBeenCalledTimes(1);
 });
 
 test('a key pair that could not be made can be tried again', async () => {

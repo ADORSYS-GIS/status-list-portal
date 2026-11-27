@@ -44,6 +44,9 @@ const WEB_CRYPTO: Record<SigningAlgorithm, { key: string; sign: string }> = {
  * key again; this catches a pasted private key before it leaves the browser.
  */
 export function publicKeyProblem(text: string): string | null {
+  if (!text.trim()) {
+    return 'Paste your public key as a JSON Web Key, or make a key pair below.';
+  }
   let key: unknown;
   try {
     key = JSON.parse(text);

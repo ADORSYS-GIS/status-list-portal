@@ -142,5 +142,26 @@ test('an error goes away once its field is fixed', async () => {
 
   await expect.element(screen.getByText(/Give your issuer a name/)).not.toBeInTheDocument();
   await expect.element(screen.getByLabelText('Display name')).not.toHaveAttribute('aria-invalid');
-  await expect.element(screen.getByText(/This is not JSON/)).toBeVisible();
+  await expect.element(screen.getByText(/Paste your public key/)).toBeVisible();
+});
+
+test('a form being sent keeps focus on its button and is not sent again', async () => {
+  const onsubmit = vi.fn();
+  const screen = await render(IssuerForm, {
+    terms: TERMS,
+    termsAccepted: true,
+    submitting: true,
+    onsubmit,
+  });
+  await screen.getByLabelText('Display name').fill('Acme Wallet Issuer');
+  await screen.getByLabelText('Public key').fill(PUBLIC_KEY);
+  const send = screen.getByRole('button', { name: 'Registering…' });
+  await expect.element(send).toHaveAttribute('aria-disabled', 'true');
+
+  // Forced: the click must reach a button that only looks disabled.
+  await send.click({ force: true });
+  await expect.element(send).toHaveFocus();
+  (screen.getByLabelText('Display name').element() as HTMLInputElement).form?.requestSubmit();
+
+  expect(onsubmit).not.toHaveBeenCalled();
 });

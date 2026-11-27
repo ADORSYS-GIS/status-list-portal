@@ -88,9 +88,10 @@
         'success',
         'Key added. Move your signers to it and verify a write before revoking the old key.',
       );
-      await invalidateAll();
-      // The emptied form disables its button, or the key limit replaces the form.
+      // Before the reload, which may replace the form with the key limit: focus moved after
+      // it could pull focus back from wherever the developer went meanwhile.
       heading.focus();
+      await invalidateAll();
     });
   }
 
@@ -130,9 +131,9 @@
         'success',
         'Key revoked. Tokens signed with it are no longer accepted.',
       );
-      await invalidateAll();
-      // The revoked key's buttons, one of which had focus, are gone.
+      // The revoked key's buttons, one of which had focus, go with the reload.
       heading.focus();
+      await invalidateAll();
     });
   }
 
@@ -229,12 +230,7 @@
       </div>
       {#key generator}<KeyPairGenerator {alg} onkey={useGeneratedKey} />{/key}
       <KeyPairHelp {alg} />
-      <button
-        type="submit"
-        class="button"
-        disabled={!publicKey.trim()}
-        aria-disabled={busy || undefined}>Add public key</button
-      >
+      <button type="submit" class="button" aria-disabled={busy || undefined}>Add public key</button>
     </form>
   {/if}
   <h3>Rotate without interrupting writes</h3>
@@ -267,7 +263,8 @@
     margin-top: var(--space-8);
   }
 
-  h2:focus {
+  /* Focused from code: the ring shows after a keypress, not after a click. */
+  h2:focus:not(:focus-visible) {
     outline: none;
   }
 
