@@ -1,0 +1,43 @@
+# release-plz opens the release pull request: the next version, worked out from the
+# conventional commits since the last release, and its entry in CHANGELOG.md. Merging the
+# pull request tags the release, which the release workflow publishes. docs/releasing.md
+# describes the steps.
+[workspace]
+# The portal is not published to a registry: the v* tags record its releases.
+git_only = true
+publish = false
+git_tag_name = "v{{ version }}"
+# Only a merged release pull request releases, not any version change on main.
+release_always = false
+# The release workflow creates the GitHub release, once the image is checked.
+git_release_enable = false
+# For libraries only.
+semver_check = false
+# Features bump the minor version even before 1.0, so that X.Y only ever gains fixes.
+features_always_increment_minor = true
+
+[changelog]
+# release-plz's own, with the one lint setting a changelog needs.
+header = """# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+<!-- Each release has its own "Added" and "Fixed" headings. -->
+<!-- markdownlint-configure-file { "MD024": { "siblings_only": true } } -->
+
+## [Unreleased]
+"""
+# A breaking change stays in, whatever its type.
+protect_breaking_commits = true
+commit_parsers = [
+  { message = "^feat", group = "added" },
+  { message = "^fix", group = "fixed" },
+  { message = "^perf", group = "changed" },
+  { message = "^[a-z]+(\\([^)]*\\))?!:", group = "changed" },
+  { footer = "^BREAKING[ -]CHANGE", group = "changed" },
+  # Merge commits, and changes to tests, docs, CI and tooling, are left out.
+  { message = ".*", skip = true },
+]

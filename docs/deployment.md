@@ -9,6 +9,10 @@ The portal is one container: the server, which also serves the frontend. It need
 
 ## The image
 
+Each release publishes the image as `ghcr.io/adorsys-gis/status-list-portal`, for `linux/amd64` and `linux/arm64`, tagged `X.Y.Z` and `X.Y`. The package is public, so pulling it needs no credentials. Deploy the digest from the release's notes rather than a tag, which can move, and verify it first, as [Releasing the portal](releasing.md#verifying-an-image) shows.
+
+To build it yourself:
+
 ```sh
 docker build --tag status-list-portal .
 ```
