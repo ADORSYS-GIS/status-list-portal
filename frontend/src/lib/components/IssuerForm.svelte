@@ -58,6 +58,8 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
+    // Enter in a field still submits while the button only looks disabled.
+    if (submitting) return;
     const problems = check();
     if (problems.displayName || problems.publicKey || problems.terms) {
       submitted = true;
@@ -168,7 +170,8 @@
     </div>
   {/if}
 
-  <button type="submit" class="button primary" disabled={submitting}>
+  <!-- Not `disabled`, which would drop focus to the body while the request runs. -->
+  <button type="submit" class="button primary" aria-disabled={submitting || undefined}>
     {submitting ? 'Registering…' : 'Register issuer'}
   </button>
 </form>

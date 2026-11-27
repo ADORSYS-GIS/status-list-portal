@@ -28,6 +28,7 @@
 
   async function make() {
     // A second pair would replace the first after its private key may have been downloaded.
+    if (making) return;
     making = true;
     try {
       pair = await makeKeyPair(alg);
@@ -94,7 +95,7 @@
         : 'The public key goes into the form once you download the private key.'}
     </p>
   {:else}
-    <button type="button" class="button" onclick={make} disabled={making}>
+    <button type="button" class="button" onclick={make} aria-disabled={making || undefined}>
       <Icon name="key" /> Make a key pair in this browser
     </button>
     {#if failed}

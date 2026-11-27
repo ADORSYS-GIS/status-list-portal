@@ -6,7 +6,8 @@
 import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
-import { expect, test, type Page, type TestInfo } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 
 import { ADMIN_API, GITHUB, GITHUB_USER_COOKIE } from './settings.ts';
 
@@ -22,6 +23,9 @@ interface HeldIssuer {
   keys: { kid: string; state: string; public_key: JsonWebKey }[];
   usage: { keys: number; keys_limit: number };
 }
+
+/** The rules of WCAG 2.2 at levels A and AA, as axe tags them. */
+const WCAG_AA = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
 /** A GitHub account of the test's own, so tests share nothing. */
 function accountFor(testInfo: TestInfo): string {
@@ -95,6 +99,99 @@ function oneLifetimeAway(expiresAt: number): boolean {
   return fromNow > LIFETIME - 10 * 60 && fromNow <= LIFETIME;
 }
 
+/** One rule's results from axe. */
+type Result = Awaited<ReturnType<AxeBuilder['analyze']>>['violations'][number];
+
+/** The rules whose undecided results fail a check: they were never checked. */
+const MUST_DECIDE = ['color-contrast', 'target-size'];
+
+/** How `result` fails, naming where. */
+function failureLine({ id, help, nodes }: Result): string {
+  return `${id}: ${help} (${nodes.map((node) => node.target).join(', ')})`;
+}
+
+/**
+ * Checks the page as it is now against WCAG 2.2 AA, naming each failure and where it is. A
+ * contrast or target size axe could not decide, such as text over a dialog's backdrop or a
+ * partly covered button, fails too: it was never checked, so it needs measuring by hand. Each
+ * is first scrolled into view and checked again, since a table cell scrolled out of its
+ * region reads as covered. Reflow (WCAG 1.4.10), which axe does not look at, is checked here:
+ * the page must not scroll sideways.
+ */
+async function expectAccessible(page: Page) {
+  const { violations, incomplete } = await new AxeBuilder({ page }).withTags(WCAG_AA).analyze();
+  const undecided: Result[] = [];
+  for (const result of incomplete.filter(({ id }) => MUST_DECIDE.includes(id))) {
+    for (const node of result.nodes) {
+      const [selector, ...inFrames] = node.target;
+      if (typeof selector !== 'string' || inFrames.length > 0) {
+        undecided.push({ ...result, nodes: [node] });
+        continue;
+      }
+      await page.locator(selector).scrollIntoViewIfNeeded();
+      const again = await new AxeBuilder({ page })
+        .include(selector)
+        .withRules([result.id])
+        .analyze();
+      undecided.push(...again.violations, ...again.incomplete);
+    }
+  }
+  expect([...violations, ...undecided].map(failureLine)).toEqual([]);
+  const { scrollWidth, clientWidth } = await page.evaluate(() => {
+    const { scrollWidth, clientWidth } = document.documentElement;
+    return { scrollWidth, clientWidth };
+  });
+  expect(scrollWidth, 'the page scrolls sideways').toBeLessThanOrEqual(clientWidth);
+}
+
+/** The red, green and blue of an opaque color the browser computed, such as `rgb(1, 2, 3)`. */
+function channels(color: string): number[] {
+  const match = /^rgba?\((\d+), (\d+), (\d+)(?:, ([\d.]+))?\)$/.exec(color);
+  if (!match || (match[4] !== undefined && Number(match[4]) !== 1)) {
+    throw new Error(`cannot measure the contrast of ${color}`);
+  }
+  return match.slice(1, 4).map(Number);
+}
+
+/** The contrast ratio of two colors the browser computed. */
+function contrast(first: string, second: string): number {
+  const [lighter, darker] = [first, second]
+    .map((color) => {
+      const [red, green, blue] = channels(color).map((channel) => {
+        const value = channel / 255;
+        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    })
+    .sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/**
+ * The contrasts axe does not check: a field's border against the backgrounds on both sides of
+ * it (WCAG 1.4.11), and its placeholder, if it has one, against its own background (WCAG 1.4.3).
+ */
+async function fieldContrasts(field: Locator) {
+  const { border, placeholder, inside, around } = await field.evaluate((element) => {
+    let outer = element.parentElement;
+    while (outer && getComputedStyle(outer).backgroundColor === 'rgba(0, 0, 0, 0)') {
+      outer = outer.parentElement;
+    }
+    return {
+      border: getComputedStyle(element).borderTopColor,
+      placeholder: element.hasAttribute('placeholder')
+        ? getComputedStyle(element, '::placeholder').color
+        : null,
+      inside: getComputedStyle(element).backgroundColor,
+      around: getComputedStyle(outer ?? document.documentElement).backgroundColor,
+    };
+  });
+  return {
+    border: Math.min(contrast(border, around), contrast(border, inside)),
+    placeholder: placeholder === null ? null : contrast(placeholder, inside),
+  };
+}
+
 test('a developer signs in with GitHub and out again', async ({ page }, testInfo) => {
   await signIn(page, accountFor(testInfo));
 
@@ -154,7 +251,141 @@ test('a key registers one issuer only', async ({ page }, testInfo) => {
     page.getByText('This public key is already registered, maybe for an issuer you deleted'),
   ).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Register an issuer' })).toBeVisible();
+  // Nothing typed has to be typed again (WCAG 3.3.7).
+  await expect(page.getByLabel('Display name')).toHaveValue(`Second ${testInfo.testId}`);
+  await expect(page.getByLabel('Public key')).toHaveValue(key);
+  // Focus stays where it was while the request ran.
+  await expect(page.getByRole('button', { name: 'Register issuer' })).toBeFocused();
+  await expectAccessible(page);
 });
+
+test('the keyboard skips to the content and works the delete dialog', async ({
+  page,
+}, testInfo) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: /^Try the Status List Server/ })).toBeVisible();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('link', { name: 'Skip to content' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('main')).toBeFocused();
+
+  const name = `Wallet ${testInfo.testId}`;
+  await signIn(page, accountFor(testInfo));
+  await register(page, name, await publicKey());
+  const remove = page.getByRole('button', { name: 'Delete issuer' });
+  await remove.focus();
+  await page.keyboard.press('Enter');
+
+  const confirm = page.getByRole('dialog', { name: `Delete ${name}?` });
+  await expect(confirm.getByRole('button', { name: 'Keep issuer' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(confirm).toBeHidden();
+  await expect(remove).toBeFocused();
+});
+
+/** The desktop width, and the narrowest that WCAG 1.4.10 asks content to reflow to. */
+const WIDTHS = [1280, 320];
+
+for (const [colorScheme, width] of (['light', 'dark'] as const).flatMap((scheme) =>
+  WIDTHS.map((width) => [scheme, width] as const),
+)) {
+  test.describe(`in the ${colorScheme} theme, ${width}px wide`, () => {
+    test.use({ colorScheme, viewport: { width, height: 720 } });
+
+    test('the home page meets WCAG 2.2 AA', async ({ page }) => {
+      await page.goto('/');
+      await expect(
+        page.getByRole('heading', { name: /^Try the Status List Server/ }),
+      ).toBeVisible();
+      await expectAccessible(page);
+
+      await page.goto('/?sign_in_error=denied');
+      await expect(page.getByRole('alert')).toContainText('Signing in was cancelled on GitHub.');
+      await expectAccessible(page);
+    });
+
+    test('the pages after signing in meet WCAG 2.2 AA', async ({ page }, testInfo) => {
+      await signIn(page, accountFor(testInfo));
+      await expectAccessible(page);
+
+      const name = `Wallet ${testInfo.testId}`;
+      await register(page, name, await publicKey());
+      await expect(page.getByRole('heading', { name, level: 1 })).toBeVisible();
+      await page
+        .getByRole('navigation', { name: 'Account' })
+        .getByRole('link', { name: 'Issuers' })
+        .click();
+      await expect(page.getByRole('row', { name })).toBeVisible();
+      await expectAccessible(page);
+
+      await page.goto('/');
+      await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+      await expectAccessible(page);
+    });
+
+    test('the registration page meets WCAG 2.2 AA', async ({ page }, testInfo) => {
+      await signIn(page, accountFor(testInfo));
+      await page.getByRole('link', { name: 'Register an issuer' }).click();
+      await expect(page.getByRole('heading', { name: 'Register an issuer' })).toBeVisible();
+      await expectAccessible(page);
+      for (const label of ['Display name', 'Algorithm', 'Public key']) {
+        const contrasts = await fieldContrasts(page.getByLabel(label, { exact: true }));
+        expect(contrasts.border, `${label}: border`).toBeGreaterThanOrEqual(3);
+      }
+      // Only "Public key" has a placeholder.
+      const publicKey = await fieldContrasts(page.getByLabel('Public key', { exact: true }));
+      expect(publicKey.placeholder, 'Public key: placeholder').toBeGreaterThanOrEqual(4.5);
+
+      await page.getByRole('button', { name: 'Register issuer' }).click();
+      await expect(page.getByLabel('Display name')).toBeFocused();
+      await expectAccessible(page);
+
+      // Focus skips the warning above the downloads, so they are described by it.
+      await page.getByRole('button', { name: 'Make a key pair in this browser' }).click();
+      const firstDownload = page.getByRole('button', { name: 'Download private-key.json' });
+      await expect(firstDownload).toBeFocused();
+      await expect(firstDownload).toHaveAccessibleDescription(
+        /^Your private key exists only in the files you download here\./,
+      );
+      await expectAccessible(page);
+    });
+
+    test("an issuer's page meets WCAG 2.2 AA", async ({ page }, testInfo) => {
+      const name = `Wallet ${testInfo.testId}`;
+      await signIn(page, accountFor(testInfo));
+      await register(page, name, await publicKey());
+      await expect(page.getByRole('heading', { name, level: 1 })).toBeVisible();
+      await expectAccessible(page);
+
+      await page.getByRole('button', { name: 'Delete issuer' }).click();
+      await expect(page.getByRole('dialog', { name: `Delete ${name}?` })).toBeVisible();
+      await expectAccessible(page);
+      await page.getByRole('button', { name: 'Keep issuer' }).click();
+
+      const newKey = page.getByLabel('Public key (JWK)');
+      await newKey.fill('not a key');
+      await page.getByRole('button', { name: 'Add public key' }).click();
+      await expect(newKey).toBeFocused();
+      await expect(newKey).toHaveAttribute('aria-invalid', 'true');
+      await expectAccessible(page);
+
+      await newKey.fill('');
+      await page.getByRole('button', { name: 'Make a key pair in this browser' }).click();
+      await expect(page.getByRole('button', { name: 'Download private-key.json' })).toBeFocused();
+      await expectAccessible(page);
+
+      await download(page, 'Download private-key.json');
+      await page.getByRole('button', { name: 'Add public key' }).click();
+      await expect(page.getByText('The key limit is reached.')).toBeVisible();
+      await expectAccessible(page);
+
+      const { kid } = (await heldIssuer(name)).keys[0];
+      await page.getByRole('button', { name: `Revoke key ${kid}` }).click();
+      await expect(page.getByRole('dialog', { name: `Revoke key ${kid}?` })).toBeVisible();
+      await expectAccessible(page);
+    });
+  });
+}
 
 test('a developer adds a key, reaches the limit, and revokes the old key', async ({
   page,
@@ -173,6 +404,8 @@ test('a developer adds a key, reaches the limit, and revokes the old key', async
   await expect(page.getByLabel('Public key (JWK)')).toHaveValue(JSON.stringify({ kty, crv, x, y }));
   await page.getByRole('button', { name: 'Add public key' }).click();
   await expect(page.getByText('Key added. Move your signers')).toBeVisible();
+  // The key limit replaced the form, and with it the button that had focus.
+  await expect(page.getByRole('heading', { name: 'Signing keys' })).toBeFocused();
   const added = await heldIssuer(name);
   expect(added.version).toBe(before.version + 1);
   expect(added.usage.keys).toBe(2);
@@ -184,6 +417,8 @@ test('a developer adds a key, reaches the limit, and revokes the old key', async
   const confirm = page.getByRole('dialog', { name: `Revoke key ${oldKid}?` });
   await confirm.getByRole('button', { name: 'Revoke key' }).click();
   await expect(page.getByText('Key revoked. Tokens signed with it')).toBeVisible();
+  // The button that had focus is gone with the key.
+  await expect(page.getByRole('heading', { name: 'Signing keys' })).toBeFocused();
   const revoked = await heldIssuer(name);
   expect(revoked.version).toBe(added.version + 1);
   expect(revoked.keys.find((key) => key.kid === oldKid)?.state).toBe('revoked');

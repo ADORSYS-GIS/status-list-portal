@@ -111,6 +111,10 @@ test('private keys are refused before they are sent', () => {
   }
 });
 
+test('an empty field asks for a key', () => {
+  expect(publicKeyProblem('  ')).toMatch(/^Paste your public key/);
+});
+
 test('text that is not a JSON object is refused', () => {
   expect(publicKeyProblem('ssh-ed25519 AAAA')).toMatch(/not JSON/);
   expect(publicKeyProblem('[1, 2]')).toMatch(/JSON object/);
