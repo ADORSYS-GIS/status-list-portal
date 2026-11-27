@@ -20,6 +20,12 @@ pub struct TermsResponse {
     /// Where the current terms are published.
     #[schema(example = "https://portal.example.com/terms")]
     url: String,
+    /// Where the privacy notice is published.
+    #[schema(example = "https://portal.example.com/privacy")]
+    privacy_notice_url: String,
+    /// Where the imprint is published.
+    #[schema(example = "https://portal.example.com/imprint")]
+    imprint_url: String,
 }
 
 /// The current terms of use.
@@ -36,6 +42,8 @@ pub async fn get_terms(ctx: ServerContext) -> Json<TermsResponse> {
     Json(TermsResponse {
         version: terms.version.clone(),
         url: terms.url.to_string(),
+        privacy_notice_url: ctx.config.privacy_notice.url.to_string(),
+        imprint_url: ctx.config.imprint.url.to_string(),
     })
 }
 

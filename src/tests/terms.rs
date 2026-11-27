@@ -16,7 +16,12 @@ async fn anyone_reads_the_current_terms() {
     assert_snapshot!(response.status(), @"200 OK");
     assert_eq!(
         response.json(),
-        json!({ "version": TERMS_VERSION, "url": format!("{ORIGIN}/terms") })
+        json!({
+            "version": TERMS_VERSION,
+            "url": format!("{ORIGIN}/terms"),
+            "privacy_notice_url": format!("{ORIGIN}/privacy"),
+            "imprint_url": format!("{ORIGIN}/imprint")
+        })
     );
 }
 

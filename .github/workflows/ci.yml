@@ -288,6 +288,8 @@ jobs:
           APP_MANAGEMENT_API__AUDIENCE=https://status.example.com
           APP_TERMS__VERSION=ci
           APP_TERMS__URL=https://example.com/terms
+          APP_PRIVACY_NOTICE__URL=https://example.com/privacy
+          APP_IMPRINT__URL=https://example.com/imprint
           EOF
           # The migration job gets only its database URL, as docs/deployment.md has it.
           docker run --rm --network host --volume "$secrets:/run/secrets/portal:ro" \

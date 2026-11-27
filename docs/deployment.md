@@ -71,6 +71,13 @@ Then `APP_ADMIN_API__PRINCIPAL` is `portal`, `APP_ADMIN_API__KEY_ID` is `portal-
 | `APP_ADMIN_API__URL`, `__PRINCIPAL`, `__AUDIENCE`, `__KEY_ID`, `__SIGNING_KEY_FILE` | `http://status-list-server-admin:8002`, ... |
 | `APP_MANAGEMENT_API__URL`, `__AUDIENCE` | the management API's public URL and audience |
 | `APP_TERMS__VERSION`, `APP_TERMS__URL` | `2026-10-22`, `https://example.com/portal-terms` |
+| `APP_PRIVACY_NOTICE__URL`, `APP_IMPRINT__URL` | `https://example.com/portal-privacy`, `https://example.com/portal-imprint` |
+
+The portal links all three documents from every page. Obtain the published terms,
+privacy notice and imprint, and their final URLs, from adorsys's legal contact
+before launch. The server refuses to start when any URL is missing or invalid.
+When expiry reminder emails are introduced, their HTML and plain-text footers
+must link the same three documents.
 
 Keep the secrets out of the environment: the database URL, the session key and the GitHub client secret can each come from a file, named by the variable with `_FILE` appended, instead of from `APP_DATABASE__URL` and the like. With a Kubernetes Secret mounted at `/run/secrets/portal`:
 

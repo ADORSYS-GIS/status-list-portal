@@ -1544,9 +1544,21 @@ expression: openapi
         "type": "object",
         "required": [
           "version",
-          "url"
+          "url",
+          "privacy_notice_url",
+          "imprint_url"
         ],
         "properties": {
+          "imprint_url": {
+            "type": "string",
+            "description": "Where the imprint is published.",
+            "example": "https://portal.example.com/imprint"
+          },
+          "privacy_notice_url": {
+            "type": "string",
+            "description": "Where the privacy notice is published.",
+            "example": "https://portal.example.com/privacy"
+          },
           "url": {
             "type": "string",
             "description": "Where the current terms are published.",

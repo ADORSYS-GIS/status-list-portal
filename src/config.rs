@@ -51,6 +51,8 @@ pub struct Config {
     #[serde(default)]
     pub sandbox: Sandbox,
     pub terms: Terms,
+    pub privacy_notice: LegalDocument,
+    pub imprint: LegalDocument,
     /// How often developers may sign in and change their issuers (`APP_RATE_LIMITS__*`).
     pub rate_limits: RateLimits,
 }
@@ -220,6 +222,15 @@ pub struct Terms {
     /// to accept again.
     pub version: String,
     /// Where the current terms are published (`APP_TERMS__URL`).
+    #[serde(deserialize_with = "http_url")]
+    pub url: Url,
+}
+
+/// A published legal document linked from the portal and its emails.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LegalDocument {
+    /// Where the document is published (`APP_PRIVACY_NOTICE__URL` or `APP_IMPRINT__URL`).
     #[serde(deserialize_with = "http_url")]
     pub url: Url,
 }
@@ -568,6 +579,11 @@ mod tests {
         ("APP_MANAGEMENT_API__AUDIENCE", "https://status.example.com"),
         ("APP_TERMS__VERSION", "2026-10-22"),
         ("APP_TERMS__URL", "https://portal.example.com/terms"),
+        (
+            "APP_PRIVACY_NOTICE__URL",
+            "https://portal.example.com/privacy",
+        ),
+        ("APP_IMPRINT__URL", "https://portal.example.com/imprint"),
     ];
 
     fn load_exactly<'a>(
@@ -683,6 +699,14 @@ mod tests {
             config.terms.url.as_str(),
             "https://portal.example.com/terms"
         );
+        assert_eq!(
+            config.privacy_notice.url.as_str(),
+            "https://portal.example.com/privacy"
+        );
+        assert_eq!(
+            config.imprint.url.as_str(),
+            "https://portal.example.com/imprint"
+        );
     }
 
     #[test]
@@ -698,6 +722,9 @@ mod tests {
             ("APP_ADMIN_API__KEY_ID", "key_id"),
             ("APP_MANAGEMENT_API__AUDIENCE", "audience"),
             ("APP_TERMS__VERSION", "version"),
+            ("APP_TERMS__URL", "terms.url"),
+            ("APP_PRIVACY_NOTICE__URL", "privacy_notice"),
+            ("APP_IMPRINT__URL", "imprint"),
         ] {
             let error = load_without(variable).unwrap_err();
 
@@ -712,11 +739,31 @@ mod tests {
             ("APP_ADMIN_API__PRINCIPAL", "admin_api.principal"),
             ("APP_ADMIN_API__AUDIENCE", "admin_api.audience"),
             ("APP_ADMIN_API__KEY_ID", "admin_api.key_id"),
+            ("APP_TERMS__URL", "terms.url"),
+            ("APP_PRIVACY_NOTICE__URL", "privacy_notice"),
+            ("APP_IMPRINT__URL", "imprint"),
         ] {
             let error = load(&[(variable, "")]).unwrap_err();
 
             let missing = format!("missing configuration field \"{setting}\"");
             assert!(error.to_string().contains(&missing), "{variable}: {error}");
+        }
+    }
+
+    #[test]
+    fn legal_document_urls_must_be_public_http_urls() {
+        for variable in ["APP_PRIVACY_NOTICE__URL", "APP_IMPRINT__URL"] {
+            for invalid in [
+                "javascript:alert(1)",
+                "https://user@example.com/legal",
+                "https://example.com/legal?token=secret",
+            ] {
+                let error = load(&[(variable, invalid)]).unwrap_err();
+                assert!(
+                    error.to_string().contains("http:// or https://"),
+                    "{variable}: {error}"
+                );
+            }
         }
     }
 
