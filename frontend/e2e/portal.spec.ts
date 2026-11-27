@@ -99,18 +99,49 @@ function oneLifetimeAway(expiresAt: number): boolean {
   return fromNow > LIFETIME - 10 * 60 && fromNow <= LIFETIME;
 }
 
+/** One rule's results from axe. */
+type Result = Awaited<ReturnType<AxeBuilder['analyze']>>['violations'][number];
+
+/** The rules whose undecided results fail a check: they were never checked. */
+const MUST_DECIDE = ['color-contrast', 'target-size'];
+
+/** How `result` fails, naming where. */
+function failureLine({ id, help, nodes }: Result): string {
+  return `${id}: ${help} (${nodes.map((node) => node.target).join(', ')})`;
+}
+
 /**
  * Checks the page as it is now against WCAG 2.2 AA, naming each failure and where it is. A
- * contrast axe could not decide, such as text over a dialog's backdrop, fails too: it was never
- * checked.
+ * contrast or target size axe could not decide, such as text over a dialog's backdrop or a
+ * partly covered button, fails too: it was never checked, so it needs measuring by hand. Each
+ * is first scrolled into view and checked again, since a table cell scrolled out of its
+ * region reads as covered. Reflow (WCAG 1.4.10), which axe does not look at, is checked here:
+ * the page must not scroll sideways.
  */
 async function expectAccessible(page: Page) {
   const { violations, incomplete } = await new AxeBuilder({ page }).withTags(WCAG_AA).analyze();
-  const undecided = incomplete.filter(({ id }) => id === 'color-contrast');
-  const failures = [...violations, ...undecided].map(
-    ({ id, help, nodes }) => `${id}: ${help} (${nodes.map((node) => node.target).join(', ')})`,
-  );
-  expect(failures).toEqual([]);
+  const undecided: Result[] = [];
+  for (const result of incomplete.filter(({ id }) => MUST_DECIDE.includes(id))) {
+    for (const node of result.nodes) {
+      const [selector, ...inFrames] = node.target;
+      if (typeof selector !== 'string' || inFrames.length > 0) {
+        undecided.push({ ...result, nodes: [node] });
+        continue;
+      }
+      await page.locator(selector).scrollIntoViewIfNeeded();
+      const again = await new AxeBuilder({ page })
+        .include(selector)
+        .withRules([result.id])
+        .analyze();
+      undecided.push(...again.violations, ...again.incomplete);
+    }
+  }
+  expect([...violations, ...undecided].map(failureLine)).toEqual([]);
+  const { scrollWidth, clientWidth } = await page.evaluate(() => {
+    const { scrollWidth, clientWidth } = document.documentElement;
+    return { scrollWidth, clientWidth };
+  });
+  expect(scrollWidth, 'the page scrolls sideways').toBeLessThanOrEqual(clientWidth);
 }
 
 /** The red, green and blue of an opaque color the browser computed, such as `rgb(1, 2, 3)`. */
@@ -223,6 +254,8 @@ test('a key registers one issuer only', async ({ page }, testInfo) => {
   // Nothing typed has to be typed again (WCAG 3.3.7).
   await expect(page.getByLabel('Display name')).toHaveValue(`Second ${testInfo.testId}`);
   await expect(page.getByLabel('Public key')).toHaveValue(key);
+  // Focus stays where it was while the request ran.
+  await expect(page.getByRole('button', { name: 'Register issuer' })).toBeFocused();
   await expectAccessible(page);
 });
 
@@ -250,9 +283,14 @@ test('the keyboard skips to the content and works the delete dialog', async ({
   await expect(remove).toBeFocused();
 });
 
-for (const colorScheme of ['light', 'dark'] as const) {
-  test.describe(`in the ${colorScheme} theme`, () => {
-    test.use({ colorScheme });
+/** The desktop width, and the narrowest that WCAG 1.4.10 asks content to reflow to. */
+const WIDTHS = [1280, 320];
+
+for (const [colorScheme, width] of (['light', 'dark'] as const).flatMap((scheme) =>
+  WIDTHS.map((width) => [scheme, width] as const),
+)) {
+  test.describe(`in the ${colorScheme} theme, ${width}px wide`, () => {
+    test.use({ colorScheme, viewport: { width, height: 720 } });
 
     test('the home page meets WCAG 2.2 AA', async ({ page }) => {
       await page.goto('/');

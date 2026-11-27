@@ -158,3 +158,38 @@ test('a button keeps focus while its request runs, and runs it once', async () =
   resolve({});
   await expect.element(renew).not.toHaveAttribute('aria-disabled');
 });
+
+test('the issuer buttons do nothing while a request runs', async () => {
+  const { promise, resolve } = Promise.withResolvers<{ error?: unknown }>();
+  post.mockReturnValue(promise);
+  const screen = await render(Page, { data: pageData() });
+  await screen.getByRole('button', { name: 'Renew for 30 days' }).click();
+
+  // Forced: the click must reach a button that only looks disabled.
+  await screen.getByRole('button', { name: 'Delete issuer' }).click({ force: true });
+
+  await expect.element(screen.getByRole('dialog')).not.toBeInTheDocument();
+  resolve({});
+});
+
+test('the key buttons do nothing while a request runs', async () => {
+  const { promise, resolve } = Promise.withResolvers<{ data?: unknown; error?: unknown }>();
+  post.mockReturnValue(promise);
+  const screen = await render(Page, { data: pageData(2, 3) });
+  await screen
+    .getByLabelText('Public key (JWK)')
+    .fill('{"kty":"EC","crv":"P-256","x":"AAAA","y":"BBBB"}');
+  const add = screen.getByRole('button', { name: 'Add public key' });
+  await add.click();
+  await expect.element(add).toHaveAttribute('aria-disabled', 'true');
+
+  // Forced: the clicks must reach buttons that only look disabled.
+  await add.click({ force: true });
+  await screen.getByRole('button', { name: 'Use in example: key key-2' }).click({ force: true });
+  await screen.getByRole('button', { name: 'Revoke key key-1' }).click({ force: true });
+
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(screen.getByText(/Example key:/).element().textContent).toContain('key-1');
+  await expect.element(screen.getByRole('dialog')).not.toBeInTheDocument();
+  resolve({ data: { kid: 'key-3', alg: 'ES256', state: 'active' } });
+});
