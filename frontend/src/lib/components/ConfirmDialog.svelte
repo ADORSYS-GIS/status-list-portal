@@ -12,11 +12,13 @@
     confirmLabel: string;
     cancelLabel?: string;
     onconfirm: () => void;
+    /** What confirming does. Screen readers read all of it as the dialog's description. */
     children: Snippet;
   } = $props();
 
+  const id = $props.id();
+
   let dialog: HTMLDialogElement;
-  const titleId = $props.id();
 
   /** Opens the dialog. It keeps focus inside until it closes, then gives focus back. */
   export function open() {
@@ -29,9 +31,9 @@
   }
 </script>
 
-<dialog bind:this={dialog} aria-labelledby={titleId}>
-  <h2 id={titleId}>{title}</h2>
-  {@render children()}
+<dialog bind:this={dialog} aria-labelledby="{id}-title" aria-describedby="{id}-body">
+  <h2 id="{id}-title">{title}</h2>
+  <div id="{id}-body">{@render children()}</div>
   <div class="actions">
     <button type="button" class="button" onclick={() => dialog.close()}>{cancelLabel}</button>
     <button type="button" class="button danger" onclick={confirm}>{confirmLabel}</button>

@@ -24,6 +24,7 @@
     "openapi-fetch": "^0.17"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14",
     "@eslint/js": "^10.0",
     "@playwright/test": "^1.64",
     "@sveltejs/adapter-static": "^4.0",

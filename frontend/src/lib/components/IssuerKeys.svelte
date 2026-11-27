@@ -40,6 +40,7 @@
   let ownKey = { publicKey: '', alg: 'ES256' as SigningAlgorithm };
   let keyError = $state<string | null>(null);
   let publicKeyField = $state<HTMLTextAreaElement>();
+  let heading: HTMLHeadingElement;
   let lastActiveRevoke = $derived(issuer.keys.filter((key) => key.state === 'active').length === 1);
   let atKeyLimit = $derived(
     issuer.usage.keys_limit !== null && issuer.usage.keys >= issuer.usage.keys_limit,
@@ -62,6 +63,7 @@
 
   async function addKey(event: SubmitEvent) {
     event.preventDefault();
+    if (busy) return;
     keyError = publicKeyProblem(publicKey);
     if (keyError) {
       await tick();
@@ -86,6 +88,9 @@
         'success',
         'Key added. Move your signers to it and verify a write before revoking the old key.',
       );
+      // Before the reload, which may replace the form with the key limit: focus moved after
+      // it could pull focus back from wherever the developer went meanwhile.
+      heading.focus();
       await invalidateAll();
     });
   }
@@ -95,7 +100,13 @@
     keyFileName = 'private-key.json';
   }
 
+  function useInExample(kid: string) {
+    if (busy) return;
+    selectKey(kid);
+  }
+
   function askToRevoke(kid: string) {
+    if (busy) return;
     revokeKid = kid;
     confirmRevoke.open();
   }
@@ -120,11 +131,14 @@
         'success',
         'Key revoked. Tokens signed with it are no longer accepted.',
       );
+      // The revoked key's buttons, one of which had focus, go with the reload.
+      heading.focus();
       await invalidateAll();
     });
   }
 
   async function act(action: () => Promise<void>) {
+    if (busy) return;
     busy = true;
     failure = null;
     try {
@@ -138,7 +152,7 @@
 </script>
 
 <section aria-labelledby="keys">
-  <h2 id="keys">Signing keys</h2>
+  <h2 id="keys" tabindex="-1" bind:this={heading}>Signing keys</h2>
   {#if failure}<Notice kind="error"><p>{failure}</p></Notice>{/if}
   <p>Revoked keys do not use a slot.</p>
   <ol class="key-list">
@@ -150,15 +164,15 @@
             type="button"
             class="button"
             aria-label="Use in example: key {key.kid}"
-            onclick={() => selectKey(key.kid)}
-            disabled={busy}>Use in example</button
+            onclick={() => useInExample(key.kid)}
+            aria-disabled={busy || undefined}>Use in example</button
           >
           <button
             type="button"
             class="button"
             aria-label="Revoke key {key.kid}"
             onclick={() => askToRevoke(key.kid)}
-            disabled={busy}>Revoke</button
+            aria-disabled={busy || undefined}>Revoke</button
           >
         {/if}
       </li>
@@ -216,9 +230,7 @@
       </div>
       {#key generator}<KeyPairGenerator {alg} onkey={useGeneratedKey} />{/key}
       <KeyPairHelp {alg} />
-      <button type="submit" class="button" disabled={busy || !publicKey.trim()}
-        >Add public key</button
-      >
+      <button type="submit" class="button" aria-disabled={busy || undefined}>Add public key</button>
     </form>
   {/if}
   <h3>Rotate without interrupting writes</h3>
@@ -249,6 +261,11 @@
 <style>
   section {
     margin-top: var(--space-8);
+  }
+
+  /* Focused from code: the ring shows after a keypress, not after a click. */
+  h2:focus:not(:focus-visible) {
+    outline: none;
   }
 
   .key-list li {
