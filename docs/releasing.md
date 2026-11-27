@@ -26,15 +26,15 @@ The [release workflow](../.github/workflows/release.yml):
 
 1. refuses a tag that differs from `Cargo.toml`'s version, tags a commit off `main`, has no `CHANGELOG.md` entry, or is released already;
 2. runs CI on the tagged commit;
-3. builds the image for `linux/amd64` and `linux/arm64` and pushes it by digest to `ghcr.io/adorsys-gis/status-list-portal`, with BuildKit's SBOM and provenance;
-4. signs the digest with cosign, keyless, and attests its build provenance with GitHub's artifact attestations;
-5. on an amd64 and an arm64 runner, pulls the digest without credentials, verifies its signature and provenance, and runs the CI image checks on it;
+3. builds the image for `linux/amd64` and `linux/arm64` and pushes it by digest to `ghcr.io/adorsys-gis/status-list-portal`, with BuildKit's SBOM and provenance (a fork publishes to its own `ghcr.io/<owner>/<repository>`);
+4. on an amd64 and an arm64 runner, pulls the digest without credentials and runs the CI image checks on it;
+5. refuses the digest if `X.Y.Z` names another image already, then signs it with cosign, keyless, attests its build provenance with GitHub's artifact attestations, and verifies both;
 6. tags the digest `X.Y.Z` and `X.Y`;
 7. creates the GitHub release, with the changelog entry and the digest in its notes.
 
-Nothing is tagged until every check passes, so `X.Y.Z` always names a signed image that works.
+Nothing is signed until every check passes, so a signature means the image passed them, and a failed run leaves only unsigned digests behind. Re-running a failed release, all its jobs or only the failed ones, never moves `X.Y.Z` to another build.
 
-The signature and attestation certificates name the release workflow at the tag, and Sigstore's public Rekor log keeps them for good.
+The signature and attestation certificates name the release workflow, the tag and the commit, and Sigstore's public Rekor log keeps them for good.
 
 ### The first release
 
@@ -72,6 +72,4 @@ gh attestation verify "oci://$image" --repo ADORSYS-GIS/status-list-portal \
   --cert-identity "$identity" --source-ref refs/tags/v0.2.0 --deny-self-hosted-runners
 ```
 
-Both pin the exact workflow and tag. A looser check, such as `--repo` alone, would also accept a signature from another workflow or branch of the repository. The script also checks that the verified provenance names the digest, since some versions of gh exit 0 without finding any, and that the commit its certificate names is on `main`: a tag on another branch runs that branch's copy of the workflow, which may skip the workflow's own check.
-
-A failed release can leave a signed image that was never tagged. Only the digests in the releases' notes are releases.
+Both pin the exact workflow and tag. A looser check, such as `--repo` alone, would also accept a signature from another workflow or branch of the repository. The script also requires the signature and the provenance to name the commit the tag names now, which refuses what a run left behind before its tag was moved; that the verified provenance names the digest, since some versions of gh exit 0 without finding any; and that the commit is on `main`: a tag on another branch runs that branch's copy of the workflow, which may skip the workflow's own check.

@@ -1,5 +1,5 @@
 # Publishes the portal's image for a release tag, such as v0.1.0: built for amd64 and arm64,
-# signed, attested, checked on both platforms, then tagged and released with its CHANGELOG.md
+# checked on both platforms, then signed, attested, tagged and released with its CHANGELOG.md
 # entry. docs/releasing.md describes how to cut a release and verify its image.
 name: Release
 
@@ -19,10 +19,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  # Lowercase, as image names must be.
-  IMAGE: ghcr.io/adorsys-gis/status-list-portal
-
 jobs:
   version:
     name: Version
@@ -31,6 +27,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      image: ${{ steps.image.outputs.image }}
     steps:
       - name: Fetch Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -56,6 +53,12 @@ jobs:
             prerelease=true
           fi
           printf '%s\n' "version=${version}" "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+
+      # From the repository, so that a fork publishes its own and can rehearse a release.
+      # Lowercase, as image names must be.
+      - name: Name the image
+        id: image
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       # Main takes only reviewed changes that passed CI, so a release is one of them.
       - name: Check that the tagged commit is on main
@@ -95,17 +98,15 @@ jobs:
       contents: read
 
   build:
-    name: Build, sign and attest
+    name: Build
     runs-on: ubuntu-latest
     needs: [version, ci]
     timeout-minutes: 60
     permissions:
       contents: read
       packages: write
-      # For the keyless signature and attestation: Sigstore exchanges the job's OIDC token
-      # for a certificate naming this workflow and tag.
-      id-token: write
-      attestations: write
+    env:
+      IMAGE: ${{ needs.version.outputs.image }}
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
@@ -158,27 +159,6 @@ jobs:
             exit 1
           fi
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
-
-      # Keyless: the certificate names this workflow and tag, and the public Rekor log keeps
-      # the signature for good.
-      - name: Sign the image
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${IMAGE}@${DIGEST}"
-
-      - name: Attest its build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          # gh attestation verify reads the attestation from GitHub, and GHCR's support for
-          # attaching it to the image is unsettled.
-          push-to-registry: false
-          # Only needed with push-to-registry, and would take artifact-metadata: write.
-          create-storage-record: false
-
   check:
     name: Check the image (${{ matrix.platform }})
     needs: [version, build]
@@ -186,7 +166,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      attestations: read
     strategy:
       fail-fast: false
       matrix:
@@ -196,6 +175,7 @@ jobs:
           - platform: arm64
             runner: ubuntu-24.04-arm
     env:
+      IMAGE: ${{ needs.version.outputs.image }}
       DIGEST: ${{ needs.build.outputs.digest }}
       PLATFORM: ${{ matrix.platform }}
     steps:
@@ -217,30 +197,35 @@ jobs:
             exit 1
           fi
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
-
-      - name: Verify the signature and provenance
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/verify-image.sh "${IMAGE}@${DIGEST}" "$GITHUB_REF_NAME"
-
       - name: Check that the image works
         run: bash scripts/check-image.sh "${IMAGE}@${DIGEST}"
 
-  tag:
-    name: Tag the image
+  # Signed only once checked, so that a signature means the image passed the checks: a run
+  # that fails before this leaves only unsigned digests.
+  publish:
+    name: Sign and tag the image
     runs-on: ubuntu-latest
     needs: [version, build, check]
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
+      # For the keyless signature and attestation: Sigstore exchanges the job's OIDC token
+      # for a certificate naming this workflow, tag and commit.
+      id-token: write
+      attestations: write
     env:
+      IMAGE: ${{ needs.version.outputs.image }}
       DIGEST: ${{ needs.build.outputs.digest }}
       VERSION: ${{ needs.version.outputs.version }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
     steps:
+      - name: Fetch Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+
       - name: Sign in to GHCR
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -248,8 +233,47 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # A re-run of every job rebuilds, and builds are not reproducible: X.Y.Z must keep
+      # naming the image it was given.
+      - name: Check that X.Y.Z names no other image
+        run: |
+          error="${RUNNER_TEMP}/tag-lookup.txt"
+          if tagged=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "${IMAGE}:${VERSION}" 2> "$error"); then
+            if [ "$tagged" != "$DIGEST" ]; then
+              echo "::error::${IMAGE}:${VERSION} names ${tagged} already: release a new version instead."
+              exit 1
+            fi
+          elif ! grep -q 'not found' "$error"; then
+            cat "$error"
+            echo "::error::Could not find out whether ${IMAGE}:${VERSION} exists."
+            exit 1
+          fi
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
+
+      # Keyless: the public Rekor log keeps the signature for good.
+      - name: Sign the image
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Attest its build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          # gh attestation verify reads the attestation from GitHub, and GHCR's support for
+          # attaching it to the image is unsettled.
+          push-to-registry: false
+          # Only needed with push-to-registry, and would take artifact-metadata: write.
+          create-storage-record: false
+
+      - name: Verify the signature and provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/verify-image.sh "${IMAGE}@${DIGEST}" "$GITHUB_REF_NAME"
+
       # X.Y.Z, and X.Y unless it is a prerelease, so that X.Y names the latest X.Y.Z.
-      - name: Tag the checked digest
+      - name: Tag the signed digest
         run: |
           tags=(--tag "${IMAGE}:${VERSION}")
           if [ "$PRERELEASE" = false ]; then
@@ -267,7 +291,7 @@ jobs:
           for tag in "${tags[@]}"; do
             tagged=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "${IMAGE}:${tag}")
             if [ "$tagged" != "$DIGEST" ]; then
-              echo "::error::${IMAGE}:${tag} names ${tagged}, not the checked ${DIGEST}."
+              echo "::error::${IMAGE}:${tag} names ${tagged}, not the signed ${DIGEST}."
               exit 1
             fi
           done
@@ -275,11 +299,12 @@ jobs:
   release:
     name: GitHub release
     runs-on: ubuntu-latest
-    needs: [version, build, tag]
+    needs: [version, build, publish]
     timeout-minutes: 5
     permissions:
       contents: write
     env:
+      IMAGE: ${{ needs.version.outputs.image }}
       DIGEST: ${{ needs.build.outputs.digest }}
       VERSION: ${{ needs.version.outputs.version }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
